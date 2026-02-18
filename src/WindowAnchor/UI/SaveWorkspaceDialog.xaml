@@ -1,0 +1,35 @@
+<ui:FluentWindow
+    x:Class="WindowAnchor.UI.SaveWorkspaceDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    Title="Save Workspace"
+    Width="400" Height="200"
+    WindowStartupLocation="CenterOwner"
+    ResizeMode="NoResize"
+    ExtendsContentIntoTitleBar="True">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <ui:TitleBar Grid.Row="0" Title="Save Workspace" ShowMinimize="False" ShowMaximize="False"/>
+
+        <StackPanel Grid.Row="1" Margin="24,12,24,24" VerticalAlignment="Center">
+            <TextBlock Text="Workspace name" FontSize="13" Margin="0,0,0,8"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+            <ui:TextBox x:Name="WorkspaceNameInput"
+                        PlaceholderText="e.g. Work — dual monitor"
+                        FontSize="14"
+                        Margin="0,0,0,16"
+                        KeyDown="OnKeyDown"/>
+            <ui:Button Content="Save Workspace"
+                       Icon="{ui:SymbolIcon Save24}"
+                       Appearance="Primary"
+                       HorizontalAlignment="Right"
+                       Click="Save_Click"/>
+        </StackPanel>
+    </Grid>
+</ui:FluentWindow>

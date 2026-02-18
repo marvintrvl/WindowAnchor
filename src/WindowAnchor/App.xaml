@@ -1,0 +1,36 @@
+﻿<Application x:Class="WindowAnchor.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             xmlns:tb="clr-namespace:H.NotifyIcon;assembly=H.NotifyIcon.Wpf"
+             xmlns:local="clr-namespace:WindowAnchor"
+             ShutdownMode="OnExplicitShutdown">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ui:ThemesDictionary/>
+                <ui:ControlsDictionary/>
+            </ResourceDictionary.MergedDictionaries>
+
+            <tb:TaskbarIcon x:Key="TrayIcon"
+                            IconSource="/Resources/windowanchor.ico"
+                            ToolTipText="WindowAnchor — Active"
+                            Visibility="Visible"
+                            MenuActivation="RightClick">
+                <tb:TaskbarIcon.ContextMenu>
+                    <ContextMenu Opened="OnTrayMenuOpened">
+                        <MenuItem Header="Restore Windows Now" Click="OnRestoreNowClick"/>
+                        <MenuItem Header="Save Current Layout" Click="OnSaveNowClick"/>
+                        <Separator/>
+                        <MenuItem Header="Workspaces ▸" x:Name="WorkspacesMenu"/>
+                        <MenuItem Header="Save Workspace As..." Click="OnSaveWorkspaceClick"/>
+                        <Separator/>
+                        <MenuItem Header="Settings..." Click="OnOpenSettingsClick"/>
+                        <Separator/>
+                        <MenuItem Header="Exit" Click="OnExitClick"/>
+                    </ContextMenu>
+                </tb:TaskbarIcon.ContextMenu>
+            </tb:TaskbarIcon>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

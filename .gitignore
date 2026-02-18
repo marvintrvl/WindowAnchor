@@ -1,0 +1,80 @@
+# ── Build outputs ──────────────────────────────────────────────
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+[Ll]og/
+[Ll]ogs/
+publish/
+
+# ── .NET / Visual Studio ──────────────────────────────────────
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.rsuser
+*.csproj.user
+*.dbmdl
+*.jfm
+*.pfx
+*.publishsettings
+launchSettings.json
+
+# ── NuGet ──────────────────────────────────────────────────────
+**/packages/*
+*.nupkg
+.nuget/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# ── Rider / JetBrains ─────────────────────────────────────────
+.idea/
+*.sln.iml
+
+# ── AI / Copilot temp files ───────────────────────────────────
+.cursorrules
+.cursorignore
+_chat.md
+.copilot/
+.github/copilot/
+*.aider*
+.aider*/
+.claude/
+
+# ── OS-generated files ────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# ── User-specific files ───────────────────────────────────────
+*.suo
+*.cache
+*.dll
+*.exe
+*.pdb
+!**/Resources/*.ico
+
+# ── Test results ───────────────────────────────────────────────
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+TestResult.xml
+*.trx
+*.coverage
+*.coveragexml
+
+# ── Misc ───────────────────────────────────────────────────────
+*.swp
+*.swo
+*~
+*.tmp
+*.bak
+*.orig
+WindowAnchor.md
+docs/
