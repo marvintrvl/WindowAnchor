@@ -25,17 +25,38 @@ public class WindowService
         "MSTaskSwWClass", "ReBarWindow32", "TopLevelWindowForOverflowXamlIsland"
     };
 
-    public List<WindowRecord> SnapshotAllWindows()
+    /// <summary>
+    /// Snapshots all visible top-level user windows.
+    /// When <paramref name="monitors"/> is supplied (from
+    /// <see cref="MonitorService.GetCurrentMonitors"/>), each record is tagged with the
+    /// monitor it belongs to via <see cref="WindowRecord.MonitorId"/> etc.
+    /// </summary>
+    public List<WindowRecord> SnapshotAllWindows(List<MonitorInfo>? monitors = null)
     {
         var records = new List<WindowRecord>();
+
+        // Build Explorer folder map once before iterating — uses Shell.Application COM to
+        // get the folder open in each File Explorer window, keyed by HWND.
+        var explorerFolderMap = BuildExplorerFolderMap();
 
         NativeMethodsWindow.EnumWindows((hWnd, lParam) =>
         {
             if (ShouldIncludeWindow(hWnd))
             {
-                var record = CaptureWindowRecord(hWnd);
+                var record = CaptureWindowRecord(hWnd, explorerFolderMap);
                 if (record != null)
                 {
+                    // Tag with monitor while HWND is still valid
+                    if (monitors != null)
+                    {
+                        var mon = MonitorService.GetMonitorForWindow(hWnd, monitors);
+                        if (mon != null)
+                        {
+                            record.MonitorId    = mon.MonitorId;
+                            record.MonitorIndex = mon.Index;
+                            record.MonitorName  = mon.FriendlyName;
+                        }
+                    }
                     records.Add(record);
                 }
             }
@@ -43,6 +64,53 @@ public class WindowService
         }, IntPtr.Zero);
 
         return records;
+    }
+
+    /// <summary>
+    /// Uses the Shell.Application COM object (always available on Windows, no extra reference
+    /// required) to enumerate all open File Explorer windows and return a map of
+    /// HWND → folder path. Only windows where <c>win.Name == "File Explorer"</c> are included.
+    /// Failures are silently swallowed so a COM error never breaks a snapshot.
+    /// </summary>
+    private static Dictionary<IntPtr, string> BuildExplorerFolderMap()
+    {
+        var map = new Dictionary<IntPtr, string>();
+        try
+        {
+            var shellType = Type.GetTypeFromProgID("Shell.Application");
+            if (shellType == null) return map;
+            dynamic shell = Activator.CreateInstance(shellType)!;
+            dynamic windows = shell.Windows();
+            int count = (int)windows.Count;
+            for (int i = 0; i < count; i++)
+            {
+                try
+                {
+                    dynamic win = windows.Item(i);
+                    if (win == null) continue;
+
+                    // Filter to File Explorer windows only (not Internet Explorer)
+                    string winName = (win.Name as string) ?? "";
+                    if (!winName.Equals("File Explorer", StringComparison.OrdinalIgnoreCase) &&
+                        !winName.Equals("Windows Explorer", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    // LocationURL is a file:/// URI — convert to a local path
+                    string locationUrl = (win.LocationURL as string) ?? "";
+                    if (string.IsNullOrEmpty(locationUrl)) continue;
+
+                    if (!Uri.TryCreate(locationUrl, UriKind.Absolute, out var uri)) continue;
+                    string folderPath = Uri.UnescapeDataString(uri.LocalPath);
+
+                    // HWND comes back as int from the COM automation layer
+                    IntPtr hwnd = new IntPtr((int)win.HWND);
+                    map[hwnd] = folderPath;
+                }
+                catch { /* Skip any individual window that fails */ }
+            }
+        }
+        catch { /* COM unavailable — return empty map, caller degrades gracefully */ }
+        return map;
     }
 
     private bool ShouldIncludeWindow(IntPtr hWnd)
@@ -77,7 +145,7 @@ public class WindowService
         return true;
     }
 
-    private WindowRecord? CaptureWindowRecord(IntPtr hWnd)
+    private WindowRecord? CaptureWindowRecord(IntPtr hWnd, Dictionary<IntPtr, string>? explorerFolderMap = null)
     {
         var placement = new NativeMethodsWindow.WindowPlacement();
         placement.Length = Marshal.SizeOf(typeof(NativeMethodsWindow.WindowPlacement));
@@ -138,6 +206,15 @@ public class WindowService
         // lookups to run on windows where Tier 1 would have succeeded.
         string snippet = fullTitle.Length > 200 ? fullTitle.Substring(0, 200) : fullTitle;
 
+        // For File Explorer windows, resolve the open folder via the pre-built COM map
+        string folderPath = "";
+        if (explorerFolderMap != null &&
+            processName.Equals("explorer", StringComparison.OrdinalIgnoreCase) &&
+            explorerFolderMap.TryGetValue(hWnd, out string? fp))
+        {
+            folderPath = fp ?? "";
+        }
+
         return new WindowRecord
         {
             ExecutablePath = exePath,
@@ -149,7 +226,8 @@ public class WindowService
             NormalTop = placement.RcNormalPosition.Top,
             NormalRight = placement.RcNormalPosition.Right,
             NormalBottom = placement.RcNormalPosition.Bottom,
-            SavedDpi = NativeMethodsWindow.GetDpiForWindow(hWnd)
+            SavedDpi = NativeMethodsWindow.GetDpiForWindow(hWnd),
+            FolderPath = folderPath,
         };
     }
 
@@ -222,86 +300,6 @@ public class WindowService
             Right  = (int)(saved.Right  * scale),
             Bottom = (int)(saved.Bottom * scale)
         };
-    }
-
-    public void RestoreWindows(MonitorProfile profile)
-    {
-        AppLogger.Info($"RestoreWindows: {profile.Windows.Count} saved windows");
-        int restoredCount = 0;
-
-        // Track which saved records have already been consumed so that multiple
-        // live windows of the same app (e.g. two Explorer windows) each get
-        // their own saved record instead of both matching the same one.
-        var consumedSavedIndices = new HashSet<int>();
-
-        NativeMethodsWindow.EnumWindows((hWnd, lParam) =>
-        {
-            if (ShouldIncludeWindow(hWnd))
-            {
-                var current = CaptureWindowRecord(hWnd);
-                if (current == null) return true;
-
-                // Primary match: ExecutablePath (case-insensitive) + ClassName
-                // Using ClassName in primary match prevents explorer.exe shell
-                // utility windows from matching File Explorer (CabinetWClass) records.
-                WindowRecord? match = null;
-                int matchIndex = -1;
-
-                if (!string.IsNullOrEmpty(current.ExecutablePath))
-                {
-                    for (int i = 0; i < profile.Windows.Count; i++)
-                    {
-                        if (consumedSavedIndices.Contains(i)) continue;
-                        var w = profile.Windows[i];
-                        if (!string.IsNullOrEmpty(w.ExecutablePath) &&
-                            w.ExecutablePath.Equals(current.ExecutablePath, StringComparison.OrdinalIgnoreCase) &&
-                            w.ClassName == current.ClassName)
-                        {
-                            match = w;
-                            matchIndex = i;
-                            break;
-                        }
-                    }
-                }
-
-                // Fallback match: ClassName + first 10 chars of TitleSnippet
-                if (match == null)
-                {
-                    string currentTitle10 = current.TitleSnippet.Length >= 10
-                        ? current.TitleSnippet.Substring(0, 10)
-                        : current.TitleSnippet;
-
-                    for (int i = 0; i < profile.Windows.Count; i++)
-                    {
-                        if (consumedSavedIndices.Contains(i)) continue;
-                        var w = profile.Windows[i];
-                        if (w.ClassName == current.ClassName &&
-                            w.TitleSnippet.Length >= currentTitle10.Length &&
-                            w.TitleSnippet.Substring(0, currentTitle10.Length) == currentTitle10)
-                        {
-                            match = w;
-                            matchIndex = i;
-                            break;
-                        }
-                    }
-                }
-
-                if (match != null)
-                {
-                    consumedSavedIndices.Add(matchIndex);
-                    AppLogger.Info($"MATCH: {current.ProcessName} ({current.ClassName}) → ({match.NormalLeft},{match.NormalTop})");
-                    RestoreWindow(hWnd, match);
-                    restoredCount++;
-                }
-                else
-                {
-                    AppLogger.Info($"NO MATCH: {current.ProcessName} '{current.TitleSnippet}' ({current.ClassName})");
-                }
-            }
-            return true;
-        }, IntPtr.Zero);
-
-        AppLogger.Info($"RestoreWindows complete: {restoredCount}/{profile.Windows.Count} windows restored");
     }
 
     /// <summary>

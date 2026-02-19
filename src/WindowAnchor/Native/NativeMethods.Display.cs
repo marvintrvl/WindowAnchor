@@ -105,6 +105,22 @@ public static class NativeMethodsDisplay
         public string                        MonitorDevicePath;
     }
 
+    // ── Source device name (GDI device name per adapter/source) ─────────────────
+
+    /// <summary>
+    /// Used with DisplayConfigDeviceInfoGetSourceName (type = 1) to retrieve the
+    /// GDI device name (e.g. "\\.\DISPLAY1") for a display source. This is the
+    /// same string that <c>GetMonitorInfo.szDevice</c> returns, allowing us to
+    /// cross-reference QueryDisplayConfig paths with EnumDisplayMonitors handles.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct DisplayConfigSourceDeviceName
+    {
+        public DisplayConfigDeviceInfoHeader Header;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string ViewGdiDeviceName;   // e.g. "\\.\DISPLAY1"
+    }
+
     // ── Functions ─────────────────────────────────────────────────────────────
 
     [DllImport("user32.dll")]
@@ -125,4 +141,8 @@ public static class NativeMethodsDisplay
     [DllImport("user32.dll")]
     public static extern int DisplayConfigGetDeviceInfo(
         ref DisplayConfigTargetDeviceName deviceName);
+
+    [DllImport("user32.dll")]
+    public static extern int DisplayConfigGetDeviceInfo(
+        ref DisplayConfigSourceDeviceName deviceName);
 }

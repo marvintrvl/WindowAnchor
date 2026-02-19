@@ -10,9 +10,9 @@
     <ApplicationIcon>Resources\windowanchor.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- Release packaging -->
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
-    <FileVersion>1.0.0.0</FileVersion>
-    <Version>1.0.0</Version>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <FileVersion>1.1.0.0</FileVersion>
+    <Version>1.1.0</Version>
     <Product>WindowAnchor</Product>
     <Company>WindowAnchor</Company>
     <Description>Workspace restoration tool — saves and restores open apps, files, and window positions across monitor changes and reboots.</Description>

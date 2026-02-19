@@ -9,6 +9,13 @@ using WindowAnchor.Models;
 
 namespace WindowAnchor.Services;
 
+/// <summary>Progress update emitted by <see cref="WorkspaceService.TakeSnapshot"/> for each window processed.</summary>
+/// <param name="Current">1-based index of the window currently being processed (0 = pre-loop setup).</param>
+/// <param name="Total">Total number of windows to process.</param>
+/// <param name="AppName">Process name of the window being processed (or a stage description).</param>
+/// <param name="Detail">Window title snippet or a short stage description.</param>
+public record struct SaveProgressReport(int Current, int Total, string AppName, string Detail);
+
 public class WorkspaceService
 {
     private readonly StorageService   _storageService;
@@ -28,115 +35,242 @@ public class WorkspaceService
         _jumpListService = jumpListService;
     }
 
-    // ── Profile proxies ──────────────────────────────────────────────────────
+    // ── Storage proxies ────────────────────────────────────────────
 
-    public void SaveProfile(MonitorProfile profile)       => _storageService.SaveProfile(profile);
-    public MonitorProfile? LoadProfile(string fp)         => _storageService.LoadProfile(fp);
-    public bool HasProfile(string fp)                     => _storageService.HasProfile(fp);
     public string GetLastKnownFingerprint()               => _storageService.GetLastKnownFingerprint();
     public void SetLastKnownFingerprint(string fp)        => _storageService.SetLastKnownFingerprint(fp);
     public void SaveWorkspace(WorkspaceSnapshot snapshot) => _storageService.SaveWorkspace(snapshot);
     public List<WorkspaceSnapshot> GetAllWorkspaces()     => _storageService.LoadAllWorkspaces();
 
+    /// <summary>
+    /// Returns the most-recently saved workspace whose
+    /// <see cref="WorkspaceSnapshot.MonitorFingerprint"/> matches <paramref name="fingerprint"/>,
+    /// or <c>null</c> when no match exists.
+    /// </summary>
+    public WorkspaceSnapshot? FindWorkspaceByFingerprint(string fingerprint)
+        => _storageService.LoadAllWorkspaces()
+            .Where(w => w.MonitorFingerprint == fingerprint)
+            .OrderByDescending(w => w.SavedAt)
+            .FirstOrDefault();
+
+    /// <summary>Returns the current monitor fingerprint (hash of the connected display configuration).</summary>
+    public string GetCurrentMonitorFingerprint() => _monitorService.GetCurrentMonitorFingerprint();
+
+    /// <summary>
+    /// Enumerates the current monitors and counts live windows per monitor.
+    /// Used by the Save Workspace dialog to populate the monitor checkbox list.
+    /// </summary>
+    public List<(MonitorInfo Monitor, int WindowCount)> GetMonitorDataForDialog()
+    {
+        var monitors = _monitorService.GetCurrentMonitors();
+        var windows  = _windowService.SnapshotAllWindows(monitors);
+        return monitors
+            .Select(m => (m, windows.Count(w => w.MonitorId == m.MonitorId)))
+            .ToList();
+    }
+
     // ── Snapshot ─────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Captures all visible windows and builds a <see cref="WorkspaceSnapshot"/>
-    /// using Tier 1 (title parsing) then Tier 2 (jump-list) file detection.
+    /// Captures visible windows and builds a <see cref="WorkspaceSnapshot"/>.
     /// </summary>
-    public WorkspaceSnapshot TakeSnapshot(string name)
+    /// <param name="name">Workspace name shown to the user.</param>
+    /// <param name="saveFiles">
+    ///   When <c>true</c> (default), run Tier 1/2/3 file detection and populate
+    ///   <see cref="WorkspaceEntry.FilePath"/> / <see cref="WorkspaceEntry.LaunchArg"/>.
+    ///   When <c>false</c>, only window positions are saved.
+    /// </param>
+    /// <param name="monitorIds">
+    ///   Restrict the snapshot to windows on specific monitors (by
+    ///   <see cref="MonitorInfo.MonitorId"/>).  Pass <c>null</c> (default) to include all.
+    /// </param>
+    public WorkspaceSnapshot TakeSnapshot(
+        string name,
+        bool saveFiles = true,
+        HashSet<string>? monitorIds = null,
+        IProgress<SaveProgressReport>? progress = null)
     {
         string fingerprint = _monitorService.GetCurrentMonitorFingerprint();
-        var windows = _windowService.SnapshotAllWindows();
+
+        // Enumerate monitors first so every WindowRecord is tagged with monitor info
+        var allMonitors = _monitorService.GetCurrentMonitors();
+
+        // Determine which monitors to include (null = all)
+        var monitorsToSave = monitorIds == null
+            ? allMonitors
+            : allMonitors.Where(m => monitorIds.Contains(m.MonitorId)).ToList();
+
+        var windows = _windowService.SnapshotAllWindows(allMonitors);
+
+        // Filter windows to only include those on the selected monitors
+        var selectedMonitorIdSet = new HashSet<string>(monitorsToSave.Select(m => m.MonitorId));
+        if (monitorIds != null)
+            windows = windows.Where(w => selectedMonitorIdSet.Contains(w.MonitorId)).ToList();
 
         var entries = new List<WorkspaceEntry>();
 
-        // Build the jump-list index once for the whole snapshot pass (avoids re-parsing
-        // every .automaticDestinations-ms file once per window, which caused ~20s delays).
-        _jumpListService.BuildSnapshotCache();
+        // Build the jump-list index once (only needed when saving files)
+        if (saveFiles)
+        {
+            progress?.Report(new SaveProgressReport(0, windows.Count, "Building file detection cache\u2026", ""));
+            _jumpListService.BuildSnapshotCache();
+        }
 
+        int progressIdx = 0;
         try
         {
         foreach (var w in windows)
         {
-            // ── Tier 1: parse file path from window title ──────────────────
-            var (titlePath, titleConf) = TitleParser.ExtractFilePath(w.ProcessName, w.TitleSnippet);
-
-            string? filePath   = titlePath;
-            int     confidence = titleConf;
-            string  source     = titleConf > 0 ? "TITLE_PARSE" : "NONE";
-
-            // ── Tier 2: jump-list lookup if Tier 1 gave nothing confident ──
-            // Only attempt for apps that produce jump lists (need an exe path).
-            if (confidence < 80 && !string.IsNullOrEmpty(w.ExecutablePath))
+            // Report progress for this window before processing it
+            progress?.Report(new SaveProgressReport(++progressIdx, windows.Count, w.ProcessName, w.TitleSnippet));
+            // ── Self-exclusion: never save WindowAnchor's own windows ──────
+            if (w.ProcessName.Equals("WindowAnchor", StringComparison.OrdinalIgnoreCase))
             {
-                try
-                {
-                    var jlFiles = _jumpListService.GetRecentFilesForApp(w.ExecutablePath, maxFiles: 5);
-                    if (jlFiles.Count > 0)
-                    {
-                        // Only accept a jump-list result when a filename actually appears in the
-                        // current window title. The old fallback of "?? jlFiles[0]" blindly used
-                        // the most-recently-opened file regardless of which document is currently
-                        // open, causing wrong filenames in the UI and wrong files being relaunched
-                        // on restore (e.g. "Relevant code.docx" shown instead of "Diplomarbeit.docx").
-                        string titleLower = w.TitleSnippet.ToLowerInvariant();
-                        string? jlBest = jlFiles.FirstOrDefault(p =>
-                            titleLower.Contains(Path.GetFileNameWithoutExtension(p).ToLowerInvariant()));
-
-                        if (jlBest != null)
-                        {
-                            filePath   = jlBest;
-                            confidence = 80;
-                            source     = "JUMPLIST";
-                        }
-                        // No title match → leave filePath/confidence from Tier 1 unchanged so the
-                        // correctly parsed filename is still shown in the UI and launchArg stays
-                        // null rather than pointing at the wrong file.
-                    }
-                }
-                catch { /* Jump list failures must not stop snapshot */ }
+                AppLogger.Info("TakeSnapshot: skipping WindowAnchor's own window");
+                continue;
             }
 
-            // Build launch arg: only include high-confidence paths
-            string? launchArg = confidence >= 80 ? filePath : null;
-
-            // VS Code: launch arg is the folder, not the file
-            if (w.ProcessName.Equals("Code", StringComparison.OrdinalIgnoreCase) &&
-                launchArg != null && File.Exists(launchArg))
+            // ── Explorer special case ──────────────────────────────────────
+            if (w.ProcessName.Equals("explorer", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrEmpty(w.FolderPath))
             {
-                launchArg = Path.GetDirectoryName(launchArg);
+                entries.Add(new WorkspaceEntry
+                {
+                    ExecutablePath  = w.ExecutablePath,
+                    ProcessName     = w.ProcessName,
+                    WindowClassName = w.ClassName,
+                    FilePath        = saveFiles ? w.FolderPath : null,
+                    FileConfidence  = saveFiles ? 95 : 0,
+                    FileSource      = saveFiles ? "EXPLORER_FOLDER" : "NONE",
+                    LaunchArg       = saveFiles ? w.FolderPath : null,
+                    Position        = w,
+                    MonitorId       = w.MonitorId,
+                    MonitorIndex    = w.MonitorIndex,
+                    MonitorName     = w.MonitorName,
+                });
+                continue;
+            }
+
+            string? filePath   = null;
+            int     confidence = 0;
+            string  source     = "NONE";
+            string? launchArg  = null;
+
+            if (saveFiles)
+            {
+                // ── Tier 1: parse file path from window title ──────────────
+                var (titlePath, titleConf) = TitleParser.ExtractFilePath(w.ProcessName, w.TitleSnippet);
+                filePath   = titlePath;
+                confidence = titleConf;
+                source     = titleConf > 0 ? "TITLE_PARSE" : "NONE";
+
+                // ── Tier 2: jump-list lookup ───────────────────────────────
+                if (confidence < 80 && !string.IsNullOrEmpty(w.ExecutablePath))
+                {
+                    try
+                    {
+                        var jlFiles = _jumpListService.GetRecentFilesForApp(w.ExecutablePath, maxFiles: 5);
+                        if (jlFiles.Count > 0)
+                        {
+                            string titleLower = w.TitleSnippet.ToLowerInvariant();
+                            string? jlBest = jlFiles.FirstOrDefault(p =>
+                                titleLower.Contains(Path.GetFileNameWithoutExtension(p).ToLowerInvariant()));
+                            if (jlBest != null)
+                            {
+                                filePath   = jlBest;
+                                confidence = 80;
+                                source     = "JUMPLIST";
+                            }
+                        }
+                    }
+                    catch { /* Jump list failures must not stop snapshot */ }
+                }
+
+                // ── Tier 3: search common user folders for bare filename ───
+                if (confidence < 80 && !string.IsNullOrEmpty(filePath) && !Path.IsPathRooted(filePath))
+                {
+                    try
+                    {
+                        string? found = SearchFileInCommonLocations(filePath);
+                        if (found != null) { filePath = found; confidence = 85; source = "FILE_SEARCH"; }
+                    }
+                    catch { }
+                }
+
+                launchArg = confidence >= 80 ? filePath : null;
+
+                // VS Code: launch arg is the folder, not the file
+                if (w.ProcessName.Equals("Code", StringComparison.OrdinalIgnoreCase) &&
+                    launchArg != null && File.Exists(launchArg))
+                {
+                    launchArg = Path.GetDirectoryName(launchArg);
+                }
             }
 
             entries.Add(new WorkspaceEntry
             {
-                ExecutablePath   = w.ExecutablePath,
-                ProcessName      = w.ProcessName,
-                WindowClassName  = w.ClassName,
-                FilePath         = filePath,
-                FileConfidence   = confidence,
-                FileSource       = source,
-                LaunchArg        = launchArg,
-                Position         = w,
+                ExecutablePath  = w.ExecutablePath,
+                ProcessName     = w.ProcessName,
+                WindowClassName = w.ClassName,
+                FilePath        = filePath,
+                FileConfidence  = confidence,
+                FileSource      = source,
+                LaunchArg       = launchArg,
+                Position        = w,
+                MonitorId       = w.MonitorId,
+                MonitorIndex    = w.MonitorIndex,
+                MonitorName     = w.MonitorName,
             });
         }
         }
         finally
         {
-            _jumpListService.ClearSnapshotCache();
+            if (saveFiles)
+                _jumpListService.ClearSnapshotCache();
         }
+
+        progress?.Report(new SaveProgressReport(windows.Count, windows.Count, "Saving workspace file\u2026", ""));
 
         var snapshot = new WorkspaceSnapshot
         {
             Name               = name,
             MonitorFingerprint = fingerprint,
             SavedAt            = DateTime.UtcNow,
+            SavedWithFiles     = saveFiles,
+            Monitors           = monitorsToSave,
             Entries            = entries,
         };
 
         _storageService.SaveWorkspace(snapshot);
-        AppLogger.Info($"TakeSnapshot saved '{name}' — {entries.Count} entries");
+        AppLogger.Info($"TakeSnapshot saved '{name}' — {entries.Count} entries across {monitorsToSave.Count} monitor(s), saveFiles={saveFiles}");
         return snapshot;
+    }
+
+    // ── Selective restore ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Restores only the entries that belong to the specified monitors.
+    /// When <paramref name="monitorIds"/> is <c>null</c> all entries are restored (same as
+    /// <see cref="RestoreWorkspaceAsync"/>).
+    /// </summary>
+    public Task RestoreWorkspaceSelectiveAsync(
+        WorkspaceSnapshot snapshot,
+        HashSet<string>? monitorIds,
+        CancellationToken ct = default)
+    {
+        if (monitorIds == null)
+            return RestoreWorkspaceAsync(snapshot, ct);
+
+        var filtered = new WorkspaceSnapshot
+        {
+            Name               = snapshot.Name,
+            SavedAt            = snapshot.SavedAt,
+            MonitorFingerprint = snapshot.MonitorFingerprint,
+            SavedWithFiles     = snapshot.SavedWithFiles,
+            Monitors           = snapshot.Monitors.Where(m => monitorIds.Contains(m.MonitorId)).ToList(),
+            Entries            = snapshot.Entries.Where(e => monitorIds.Contains(e.MonitorId)).ToList(),
+        };
+        return RestoreWorkspaceAsync(filtered, ct);
     }
 
     // ── Restore ──────────────────────────────────────────────────────────────
@@ -145,7 +279,7 @@ public class WorkspaceService
     /// Restores a workspace snapshot using a 5-phase approach:
     /// <list type="number">
     ///   <item>Immediately reposition already-running windows.</item>
-    ///   <item>Launch missing apps.</item>
+    ///   <item>Launch missing apps; open saved documents even if the app exe is already running.</item>
     ///   <item>3-second wait for app initialisation.</item>
     ///   <item>Reposition newly appeared windows.</item>
     ///   <item>2-second wait + second pass for slow launchers (Office, IDEs).</item>
@@ -156,38 +290,71 @@ public class WorkspaceService
         AppLogger.Info($"RestoreWorkspaceAsync '{snapshot.Name}' — {snapshot.Entries.Count} entries");
 
         // ── Phase 1: reposition already-running windows ───────────────────
+        // correctlyMatchedEntries tracks entries whose live window already had the right
+        // document open (title matched). Only those entries are skipped in Phase 2.
         var liveWindows = _windowService.GetAllWindowsWithPids();
         var restoredEntries = new HashSet<int>();
+        var correctlyMatchedEntries = new HashSet<int>();
 
-        MatchAndRestore(snapshot.Entries, liveWindows, restoredEntries);
+        MatchAndRestore(snapshot.Entries, liveWindows, restoredEntries, correctlyMatchedEntries);
 
         if (ct.IsCancellationRequested) return;
 
-        // ── Phase 2: launch missing apps ──────────────────────────────────
+        // ── Phase 2: open documents and launch missing apps ───────────────
+        // Document entries (have a LaunchArg): open the file unless it was already matched
+        // with the correct title in Phase 1. Shell-executing the file works whether the
+        // app is already running (opens in the existing instance via DDE/COM) or not.
+        //
+        // Plain app entries (no LaunchArg): only launch when the exe is not already running.
         bool anyLaunched = false;
         var runningExes = liveWindows.Values
             .Select(v => v.Record.ExecutablePath.ToLowerInvariant())
             .ToHashSet();
 
-        foreach (var entry in snapshot.Entries)
+        for (int i = 0; i < snapshot.Entries.Count; i++)
         {
             if (ct.IsCancellationRequested) return;
 
-            string exeLower = entry.ExecutablePath.ToLowerInvariant();
-            if (runningExes.Contains(exeLower)) continue;  // already running
+            var entry = snapshot.Entries[i];
             if (string.IsNullOrEmpty(entry.ExecutablePath)) continue;
 
-            try
+            if (!string.IsNullOrEmpty(entry.LaunchArg))
             {
-                var psi = BuildProcessStartInfo(entry);
-                Process.Start(psi);
-                anyLaunched = true;
-                AppLogger.Info($"Launched: {entry.ExecutablePath} arg={entry.LaunchArg ?? "(none)"}");
+                // Document entry: skip only when the right document is already open.
+                if (correctlyMatchedEntries.Contains(i)) continue;
+
+                try
+                {
+                    // Shell-executing the file opens it in the registered handler.
+                    // If the app is already running, it uses DDE/COM to open in the
+                    // existing instance instead of spawning a second process.
+                    var psi = BuildProcessStartInfo(entry);
+                    Process.Start(psi);
+                    anyLaunched = true;
+                    AppLogger.Info($"Opened document: {entry.LaunchArg}");
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn($"Failed to open document '{entry.LaunchArg}': {ex.Message}");
+                }
             }
-            catch (Exception ex)
+            else
             {
-                // App may be uninstalled — skip and continue
-                AppLogger.Warn($"Failed to launch '{entry.ExecutablePath}': {ex.Message}");
+                // Plain app entry: only launch when not already running.
+                string exeLower = entry.ExecutablePath.ToLowerInvariant();
+                if (runningExes.Contains(exeLower)) continue;
+
+                try
+                {
+                    var psi = BuildProcessStartInfo(entry);
+                    Process.Start(psi);
+                    anyLaunched = true;
+                    AppLogger.Info($"Launched: {entry.ExecutablePath}");
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn($"Failed to launch '{entry.ExecutablePath}': {ex.Message}");
+                }
             }
         }
 
@@ -199,7 +366,7 @@ public class WorkspaceService
 
         // ── Phase 4: reposition newly appeared windows ────────────────────
         liveWindows = _windowService.GetAllWindowsWithPids();
-        MatchAndRestore(snapshot.Entries, liveWindows, restoredEntries);
+        MatchAndRestore(snapshot.Entries, liveWindows, restoredEntries, correctlyMatchedEntries);
 
         if (ct.IsCancellationRequested) return;
 
@@ -208,7 +375,7 @@ public class WorkspaceService
         if (ct.IsCancellationRequested) return;
 
         liveWindows = _windowService.GetAllWindowsWithPids();
-        MatchAndRestore(snapshot.Entries, liveWindows, restoredEntries);
+        MatchAndRestore(snapshot.Entries, liveWindows, restoredEntries, correctlyMatchedEntries);
 
         AppLogger.Info($"RestoreWorkspaceAsync complete");
     }
@@ -216,15 +383,27 @@ public class WorkspaceService
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Matches live windows to snapshot entries by exe path + class name, then
-    /// falls back to exe path + title prefix. Calls <see cref="WindowService.RestoreSingleWindow"/>
-    /// for each match, and marks the entry index in <paramref name="restoredEntries"/> so
-    /// entries are not repositioned twice (important because Phase 4 and 5 re-use the same set).
+    /// Matches live windows to snapshot entries and calls
+    /// <see cref="WindowService.RestoreSingleWindow"/> for each match.
+    /// <para>
+    /// Matching priority (highest → lowest):
+    /// <list type="number">
+    ///   <item>For document entries (have a <see cref="WorkspaceEntry.LaunchArg"/>):
+    ///     exe path + live title contains the saved document filename.
+    ///     A match here is recorded in <paramref name="correctlyMatchedEntries"/> so that
+    ///     Phase 2 knows the right document is already on screen.</item>
+    ///   <item>exe path + window class name.</item>
+    ///   <item>exe path + first 10 chars of saved title snippet.</item>
+    /// </list>
+    /// </para>
+    /// <paramref name="restoredEntries"/> prevents the same entry from being repositioned
+    /// twice across Phase 1 / 4 / 5 calls.
     /// </summary>
     private void MatchAndRestore(
         List<WorkspaceEntry> entries,
         Dictionary<IntPtr, (uint Pid, WindowRecord Record)> liveWindows,
-        HashSet<int> restoredEntries)
+        HashSet<int> restoredEntries,
+        HashSet<int>? correctlyMatchedEntries = null)
     {
         // Build a consumed-hwnd set so each window only gets one entry applied.
         var consumedHwnds = new HashSet<IntPtr>();
@@ -237,20 +416,45 @@ public class WorkspaceService
             if (string.IsNullOrEmpty(entry.ExecutablePath)) continue;
 
             IntPtr bestHwnd = IntPtr.Zero;
+            bool titleMatched = false;
 
-            // Primary: exe + class
-            foreach (var (hwnd, (_, rec)) in liveWindows)
+            // ── Tier 0: document-aware match (exe + title contains document name) ──
+            // This is the highest-priority match for document entries: we want
+            // "Diplomarbeit.docx - Word" to match only a Word window that actually
+            // has Diplomarbeit.docx open, not just any Word window.
+            if (!string.IsNullOrEmpty(entry.LaunchArg))
             {
-                if (consumedHwnds.Contains(hwnd)) continue;
-                if (rec.ExecutablePath.Equals(entry.ExecutablePath, StringComparison.OrdinalIgnoreCase) &&
-                    rec.ClassName == entry.WindowClassName)
+                string expectedName = Path.GetFileNameWithoutExtension(entry.LaunchArg)
+                                          .ToLowerInvariant();
+                foreach (var (hwnd, (_, rec)) in liveWindows)
                 {
-                    bestHwnd = hwnd;
-                    break;
+                    if (consumedHwnds.Contains(hwnd)) continue;
+                    if (rec.ExecutablePath.Equals(entry.ExecutablePath, StringComparison.OrdinalIgnoreCase) &&
+                        rec.TitleSnippet.ToLowerInvariant().Contains(expectedName))
+                    {
+                        bestHwnd = hwnd;
+                        titleMatched = true;
+                        break;
+                    }
                 }
             }
 
-            // Fallback: exe + title prefix (10 chars)
+            // ── Tier 1: exe + class ───────────────────────────────────────────────
+            if (bestHwnd == IntPtr.Zero)
+            {
+                foreach (var (hwnd, (_, rec)) in liveWindows)
+                {
+                    if (consumedHwnds.Contains(hwnd)) continue;
+                    if (rec.ExecutablePath.Equals(entry.ExecutablePath, StringComparison.OrdinalIgnoreCase) &&
+                        rec.ClassName == entry.WindowClassName)
+                    {
+                        bestHwnd = hwnd;
+                        break;
+                    }
+                }
+            }
+
+            // ── Tier 2: exe + title prefix (10 chars) ────────────────────────────
             if (bestHwnd == IntPtr.Zero)
             {
                 string prefix = entry.Position.TitleSnippet.Length >= 10
@@ -273,10 +477,85 @@ public class WorkspaceService
 
             consumedHwnds.Add(bestHwnd);
             restoredEntries.Add(i);
+            if (titleMatched) correctlyMatchedEntries?.Add(i);
             entry.WasRestored = true;
 
             _windowService.RestoreSingleWindow(bestHwnd, entry.Position);
-            AppLogger.Info($"Restored entry[{i}] {entry.ProcessName} → hwnd {bestHwnd}");
+            AppLogger.Info($"Restored entry[{i}] {entry.ProcessName} → hwnd {bestHwnd} (titleMatched={titleMatched})");
+        }
+    }
+
+    /// <summary>
+    /// Searches common user-accessible locations for a file with the given <paramref name="filename"/>.
+    /// Returns the full path when it is found at <em>exactly one</em> location, or <c>null</c>
+    /// when zero or multiple matches are found (multiple matches are ambiguous — don't guess).
+    /// Searched roots: Documents, Desktop, Downloads, OneDrive (if present).
+    /// </summary>
+    private static string? SearchFileInCommonLocations(string filename)
+    {
+        var searchRoots = new List<string>
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads"),
+        };
+
+        // Include all OneDrive variants: personal (%OneDrive%), consumer (%OneDriveConsumer%),
+        // and business/commercial (%OneDriveCommercial%). Any of these may be set depending on
+        // whether the user has a personal, work, or both OneDrive accounts configured.
+        foreach (var envVar in new[] { "OneDrive", "OneDriveConsumer", "OneDriveCommercial" })
+        {
+            string value = Environment.GetEnvironmentVariable(envVar) ?? "";
+            if (!string.IsNullOrEmpty(value) && Directory.Exists(value))
+                searchRoots.Add(value);
+        }
+
+        var matches = new List<string>();
+
+        foreach (var root in searchRoots.Where(Directory.Exists)
+                                        .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            SearchDirectoryRecursive(root, filename, matches);
+            if (matches.Count > 1) return null;   // ambiguous — don't guess
+        }
+
+        return matches.Count == 1 ? matches[0] : null;
+    }
+
+    /// <summary>
+    /// Recursive file search that isolates failures at the individual directory level.
+    /// <para>
+    /// <c>Directory.EnumerateFiles(..., SearchOption.AllDirectories)</c> throws as soon as it
+    /// encounters a cloud-only OneDrive placeholder directory, abandoning the rest of the tree.
+    /// This helper catches the exception per directory so that sibling folders continue to be
+    /// searched even when one subtree is online-only or access-denied.
+    /// </para>
+    /// </summary>
+    private static void SearchDirectoryRecursive(string directory, string filename, List<string> matches)
+    {
+        // Enumerate files in this exact directory (no recursion flag — errors are per-folder)
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(directory, filename))
+            {
+                if (!matches.Contains(file, StringComparer.OrdinalIgnoreCase))
+                    matches.Add(file);
+                if (matches.Count > 1) return;  // already ambiguous — stop early
+            }
+        }
+        catch { /* online-only placeholder, access-denied, etc. — skip files in this dir */ }
+
+        if (matches.Count > 1) return;
+
+        // Enumerate subdirectories; each gets its own try/catch when recursed into
+        IEnumerable<string> subDirs;
+        try { subDirs = Directory.EnumerateDirectories(directory).ToList(); }
+        catch { return; }  // can't list subdirs of this folder — just stop here
+
+        foreach (var sub in subDirs)
+        {
+            SearchDirectoryRecursive(sub, filename, matches);
+            if (matches.Count > 1) return;
         }
     }
 

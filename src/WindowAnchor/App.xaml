@@ -19,11 +19,7 @@
                             MenuActivation="RightClick">
                 <tb:TaskbarIcon.ContextMenu>
                     <ContextMenu Opened="OnTrayMenuOpened">
-                        <MenuItem Header="Restore Windows Now" Click="OnRestoreNowClick"/>
-                        <MenuItem Header="Save Current Layout" Click="OnSaveNowClick"/>
-                        <Separator/>
-                        <MenuItem Header="Workspaces ▸" x:Name="WorkspacesMenu"/>
-                        <MenuItem Header="Save Workspace As..." Click="OnSaveWorkspaceClick"/>
+                        <MenuItem Header="Workspaces" x:Name="WorkspacesMenu"/>
                         <Separator/>
                         <MenuItem Header="Settings..." Click="OnOpenSettingsClick"/>
                         <Separator/>

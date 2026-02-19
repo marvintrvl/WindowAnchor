@@ -84,4 +84,33 @@ public static class NativeMethodsWindow
     public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
 
     public const uint MONITOR_DEFAULTTONEAREST = 2;
+
+    // ── Monitor geometry (EnumDisplayMonitors / GetMonitorInfo) ────────────────
+
+    /// <summary>
+    /// Extended monitor info struct. Must set cbSize before calling GetMonitorInfo.
+    /// dwFlags bit 0 = MONITORINFOF_PRIMARY.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    public struct MonitorInfoEx
+    {
+        public int    cbSize;
+        public Rect   rcMonitor;   // Full monitor bounds in virtual desktop coords
+        public Rect   rcWork;      // Work area (excludes taskbar)
+        public uint   dwFlags;     // MONITORINFOF_PRIMARY = 1
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string szDevice;    // GDI device name, e.g. "\\\\.\\DISPLAY1"
+    }
+
+    public const uint MONITORINFOF_PRIMARY = 1;
+
+    public delegate bool MonitorEnumProc(
+        IntPtr hMonitor, IntPtr hdcMonitor, ref Rect lprcMonitor, IntPtr dwData);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumDisplayMonitors(
+        IntPtr hdc, IntPtr lprcClip, MonitorEnumProc lpfnEnum, IntPtr dwData);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MonitorInfoEx lpmi);
 }

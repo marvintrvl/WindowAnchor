@@ -4,10 +4,36 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
     Title="Save Workspace"
-    Width="400" Height="200"
+    Width="500" SizeToContent="Height" MaxHeight="620"
     WindowStartupLocation="CenterOwner"
     ResizeMode="NoResize"
     ExtendsContentIntoTitleBar="True">
+
+    <ui:FluentWindow.Resources>
+        <Style x:Key="LinkBtnStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="6,3"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Foreground" Value="{DynamicResource SystemAccentColorPrimaryBrush}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Opacity" Value="0.8"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </ui:FluentWindow.Resources>
 
     <Grid>
         <Grid.RowDefinitions>
@@ -17,19 +43,111 @@
 
         <ui:TitleBar Grid.Row="0" Title="Save Workspace" ShowMinimize="False" ShowMaximize="False"/>
 
-        <StackPanel Grid.Row="1" Margin="24,12,24,24" VerticalAlignment="Center">
-            <TextBlock Text="Workspace name" FontSize="13" Margin="0,0,0,8"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+        <StackPanel Grid.Row="1" Margin="24,18,24,24">
+
+            <!-- Workspace Name -->
+            <TextBlock Text="Workspace Name" FontSize="13" FontWeight="Medium"
+                       Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,0,0,6"/>
             <ui:TextBox x:Name="WorkspaceNameInput"
-                        PlaceholderText="e.g. Work — dual monitor"
+                        PlaceholderText="e.g. Work — triple monitor"
                         FontSize="14"
-                        Margin="0,0,0,16"
+                        Margin="0,0,0,20"
                         KeyDown="OnKeyDown"/>
-            <ui:Button Content="Save Workspace"
-                       Icon="{ui:SymbolIcon Save24}"
-                       Appearance="Primary"
-                       HorizontalAlignment="Right"
-                       Click="Save_Click"/>
+
+            <!-- Save Files Option -->
+            <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="16,13" Margin="0,0,0,14">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center" Margin="0,0,8,0">
+                        <TextBlock Text="Save open files" FontSize="13" FontWeight="Medium"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                        <TextBlock Text="Detect and relaunch currently open documents on restore"
+                                   FontSize="11" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                   Margin="0,2,0,0"/>
+                    </StackPanel>
+                    <CheckBox x:Name="SaveFilesCheckBox" Grid.Column="1"
+                              IsChecked="True" VerticalAlignment="Center"/>
+                </Grid>
+            </Border>
+
+            <!-- Monitor selection header -->
+            <Grid Margin="0,0,0,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Which monitors to save" FontSize="13" FontWeight="Medium"
+                           Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                           VerticalAlignment="Center"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Content="All" Style="{StaticResource LinkBtnStyle}"
+                            Click="OnSelectAll" FontSize="12"/>
+                    <TextBlock Text="·" Margin="2,0" VerticalAlignment="Center"
+                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                    <Button Content="None" Style="{StaticResource LinkBtnStyle}"
+                            Click="OnDeselectAll" FontSize="12"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- Monitor list -->
+            <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="8" Margin="0,0,0,20">
+                <ItemsControl x:Name="MonitorList" Padding="6,4">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Padding="10,8" CornerRadius="6">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Background" Value="Transparent"/>
+                                        <Style.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter Property="Background"
+                                                        Value="{DynamicResource SubtleFillColorSecondaryBrush}"/>
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                              VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding DisplayHeader}" FontSize="13"
+                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding ResolutionLabel}" FontSize="11"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                                   Margin="0,1,0,0"/>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="2" Text="{Binding WindowCountLabel}"
+                                               FontSize="12"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                               VerticalAlignment="Center" Margin="12,0,0,0"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </Border>
+
+            <!-- Action buttons -->
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <ui:Button Content="Cancel" Appearance="Secondary"
+                           Margin="0,0,8,0" Click="OnCancel"/>
+                <ui:Button Content="Save Workspace" Appearance="Primary"
+                           Icon="{ui:SymbolIcon Save24}" Click="OnSave"/>
+            </StackPanel>
         </StackPanel>
     </Grid>
 </ui:FluentWindow>

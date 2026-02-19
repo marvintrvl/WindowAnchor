@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Diagnostics;
+using System.Linq;
 using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Win32;
@@ -60,28 +61,63 @@ public partial class App : System.Windows.Application
         _coordinator?.HandleDisplayChangeAsync();
     }
 
-    private void OnRestoreNowClick(object sender, RoutedEventArgs e)
-    {
-        _coordinator?.RestoreLayout();
-    }
-
-    private void OnSaveNowClick(object sender, RoutedEventArgs e)
-    {
-        _coordinator?.SaveCurrentLayout();
-    }
-
-    private void OnSaveWorkspaceClick(object sender, RoutedEventArgs e)
-    {
-        var dialog = new UI.SaveWorkspaceDialog();
-        if (dialog.ShowDialog() == true)
-        {
-            _coordinator?.SaveWorkspaceSnapshot(dialog.WorkspaceName);
-        }
-    }
     private void OnOpenSettingsClick(object sender, RoutedEventArgs e)
     {
         var settings = new UI.SettingsWindow(_workspaceService!, _storageService!, _coordinator!);
         settings.Show();
+    }
+
+    private async void ShowSaveWorkspaceDialog()
+    {
+        // Build monitor list with per-monitor window counts for the dialog
+        System.Collections.Generic.List<(WindowAnchor.Models.MonitorInfo Monitor, int WindowCount)> monitorData = new();
+        try
+        {
+            monitorData = _workspaceService!.GetMonitorDataForDialog();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"ShowSaveWorkspaceDialog: could not enumerate monitors: {ex.Message}");
+        }
+
+        var dialog = new UI.SaveWorkspaceDialog(monitorData);
+        if (dialog.ShowDialog() != true) return;
+
+        // Read all dialog properties on the UI thread before Task.Run.
+        var name       = dialog.WorkspaceName;
+        var saveFiles  = dialog.SaveFiles;
+        var monitorIds = dialog.SelectedMonitorIds;
+
+        // Show progress window when file detection is enabled (can take several seconds).
+        UI.SaveProgressWindow? progressWindow = null;
+        if (saveFiles)
+        {
+            progressWindow = new UI.SaveProgressWindow(name);
+            progressWindow.Show();
+        }
+
+        var progress = progressWindow != null
+            ? new Progress<Services.SaveProgressReport>(r => progressWindow.ApplyReport(r))
+            : (IProgress<Services.SaveProgressReport>?)null;
+
+        try
+        {
+            await System.Threading.Tasks.Task.Run(
+                () => _workspaceService!.TakeSnapshot(name, saveFiles: saveFiles, monitorIds: monitorIds, progress: progress));
+            AppLogger.Info($"Workspace '{name}' saved (files={saveFiles})");
+            ShowBalloon("Workspace Saved",
+                $"\u201c{name}\u201d saved \u2014 {(monitorIds == null ? "all monitors" : $"{monitorIds.Count} monitor(s)")}");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("ShowSaveWorkspaceDialog: TakeSnapshot failed", ex);
+            System.Windows.MessageBox.Show($"Failed to save workspace: {ex.Message}", "WindowAnchor",
+                System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+        }
+        finally
+        {
+            progressWindow?.Close();
+        }
     }
 
     private void OnTrayMenuOpened(object sender, RoutedEventArgs e)
@@ -91,7 +127,6 @@ public partial class App : System.Windows.Application
 
     private void PopulateWorkspacesMenu()
     {
-        // Find the "Workspaces ▸" MenuItem inside the tray ContextMenu
         var trayMenu = _trayIcon?.ContextMenu;
         if (trayMenu == null) return;
 
@@ -108,21 +143,39 @@ public partial class App : System.Windows.Application
 
         workspacesItem.Items.Clear();
 
-        var workspaces = _workspaceService?.GetAllWorkspaces() ?? new System.Collections.Generic.List<WindowAnchor.Models.WorkspaceSnapshot>();
+        var workspaces = _workspaceService?.GetAllWorkspaces()
+            ?? new System.Collections.Generic.List<WindowAnchor.Models.WorkspaceSnapshot>();
 
         if (workspaces.Count == 0)
         {
-            workspacesItem.Items.Add(new System.Windows.Controls.MenuItem { Header = "(no saved workspaces)", IsEnabled = false });
-            return;
+            workspacesItem.Items.Add(new System.Windows.Controls.MenuItem
+            {
+                Header = "(no saved workspaces)", IsEnabled = false
+            });
+        }
+        else
+        {
+            foreach (var ws in workspaces.OrderByDescending(w => w.SavedAt))
+            {
+                var item = new System.Windows.Controls.MenuItem
+                {
+                    Header = $"Restore: {ws.Name}"
+                };
+                var captured = ws;
+                item.Click += (_, _) => OnRestoreWorkspaceClick(captured);
+                workspacesItem.Items.Add(item);
+            }
         }
 
-        foreach (var ws in workspaces)
-        {
-            var item = new System.Windows.Controls.MenuItem { Header = $"Restore: {ws.Name}" };
-            var captured = ws;
-            item.Click += (_, _) => OnRestoreWorkspaceClick(captured);
-            workspacesItem.Items.Add(item);
-        }
+        // Always append Save + Manage at the bottom
+        workspacesItem.Items.Add(new System.Windows.Controls.Separator());
+        var saveItem = new System.Windows.Controls.MenuItem { Header = "Save Current Workspace..." };
+        saveItem.Click += (_, _) => ShowSaveWorkspaceDialog();
+        workspacesItem.Items.Add(saveItem);
+
+        var manageItem = new System.Windows.Controls.MenuItem { Header = "Manage Workspaces" };
+        manageItem.Click += (_, _) => OnOpenSettingsClick(manageItem, new RoutedEventArgs());
+        workspacesItem.Items.Add(manageItem);
     }
 
     private void OnRestoreWorkspaceClick(WindowAnchor.Models.WorkspaceSnapshot snapshot)
