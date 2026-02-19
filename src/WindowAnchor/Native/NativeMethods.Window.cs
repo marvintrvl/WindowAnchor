@@ -4,6 +4,10 @@ using System.Text;
 
 namespace WindowAnchor.Native;
 
+/// <summary>
+/// P/Invoke declarations for window enumeration, geometry, and monitor queries.
+/// All structs use explicit sequential layout to match the Win32 ABI exactly.
+/// </summary>
 public static class NativeMethodsWindow
 {
     [StructLayout(LayoutKind.Sequential)]

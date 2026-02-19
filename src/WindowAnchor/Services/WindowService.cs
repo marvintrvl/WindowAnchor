@@ -11,11 +11,17 @@ using WindowAnchor.Native;
 
 namespace WindowAnchor.Services;
 
+/// <summary>
+/// Enumerates, captures, and restores top-level application windows via P/Invoke.
+/// Uses <c>EnumWindows</c>, <c>GetWindowPlacement</c>, <c>QueryFullProcessImageName</c>,
+/// and <c>SetWindowPlacement</c> for DPI-aware position handling.
+/// </summary>
 public class WindowService
 {
+    // Skip-list of well-known OS-chrome window classes that should never be saved.
     private static readonly string[] OsWindowClassSkipList = new[]
     {
-        // Spec skip-list
+        // Shell and DWM infrastructure
         "Shell_TrayWnd", "DV2ControlHost", "MsgrIMEWindowClass",
         "SysShadow", "Button", "Windows.UI.Core.CoreWindow",
         "Progman", "WorkerW",

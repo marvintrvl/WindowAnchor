@@ -4,10 +4,18 @@ using System.Linq;
 
 namespace WindowAnchor.Models;
 
+/// <summary>
+/// The top-level save artifact produced by <see cref="WindowAnchor.Services.WorkspaceService.TakeSnapshot"/>.
+/// Contains the monitor configuration at save time, the set of captured windows grouped
+/// by monitor, and metadata controlling restore behaviour.
+/// </summary>
 public class WorkspaceSnapshot
 {
+    /// <summary>User-visible name of this workspace.</summary>
     public string   Name               { get; set; } = "";
+    /// <summary>8-character hex fingerprint of the monitor set, used for auto-restore matching.</summary>
     public string   MonitorFingerprint { get; set; } = "";
+    /// <summary>UTC timestamp of when the snapshot was taken.</summary>
     public DateTime SavedAt            { get; set; }
 
     /// <summary>

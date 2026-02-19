@@ -2,6 +2,11 @@ using System.Text.Json.Serialization;
 
 namespace WindowAnchor.Models;
 
+/// <summary>
+/// Represents one saved application window within a <see cref="WorkspaceSnapshot"/>.
+/// Combines app identity, optional open-file tracking, DPI-aware position, and
+/// the monitor the window was on when the snapshot was taken.
+/// </summary>
 public class WorkspaceEntry
 {
     // ── App identity ─────────────────────────────────────────────────────────

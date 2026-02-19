@@ -16,6 +16,15 @@ namespace WindowAnchor.Services;
 /// <param name="Detail">Window title snippet or a short stage description.</param>
 public record struct SaveProgressReport(int Current, int Total, string AppName, string Detail);
 
+/// <summary>
+/// Orchestrates the save and restore pipeline for workspaces.
+/// Coordinates <see cref="MonitorService"/>, <see cref="WindowService"/>,
+/// <see cref="StorageService"/>, and <see cref="JumpListService"/>.
+/// </summary>
+/// <remarks>
+/// This is the primary service called by both <see cref="LayoutCoordinator"/>
+/// and UI code. Storage and tray operations are dispatched to the correct contexts internally.
+/// </remarks>
 public class WorkspaceService
 {
     private readonly StorageService   _storageService;

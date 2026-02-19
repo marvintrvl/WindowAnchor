@@ -9,10 +9,25 @@ using WindowAnchor.Native;
 
 namespace WindowAnchor.Services;
 
+/// <summary>
+/// Enumerates physical displays and computes stable monitor fingerprints.
+/// All identifiers are derived from EDID data via <c>DisplayConfigGetDeviceInfo</c>
+/// so they survive resolution and refresh-rate changes.
+/// </summary>
 public class MonitorService
 {
     // ── Monitor fingerprint ──────────────────────────────────────────────────
 
+    /// <summary>
+    /// Computes a stable 8-character hex fingerprint for the current set of connected
+    /// active displays. The fingerprint is the first 8 hex characters of a SHA-256 hash
+    /// over the sorted EDID manufacturer ID, product code, and connector instance of each
+    /// monitor. It changes only when the physical set of monitors changes.
+    /// </summary>
+    /// <returns>
+    /// An 8-character lowercase hex string, or a diagnostic string such as
+    /// <c>"no_monitors"</c> or <c>"error_query_config"</c> on failure.
+    /// </returns>
     public string GetCurrentMonitorFingerprint()
     {
         var monitorIds = new List<string>();

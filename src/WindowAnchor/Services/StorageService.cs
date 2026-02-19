@@ -7,13 +7,23 @@ using WindowAnchor.Models;
 
 namespace WindowAnchor.Services;
 
+/// <summary>
+/// Persists and loads workspace data to and from the user's application-data directory.
+/// All files live under <c>%AppData%\WindowAnchor\</c>. This service contains no
+/// business logic — it only handles JSON serialisation and file I/O.
+/// </summary>
+/// <remarks>
+/// On first construction <see cref="MigrateToV2"/> runs a one-time conversion of
+/// legacy Monitor Profile files (<c>profiles/*.profile.json</c>) into the current
+/// <see cref="WorkspaceSnapshot"/> format.
+/// </remarks>
 public class StorageService
 {
     private readonly string _baseDir;
     private readonly string _workspacesDir;
     private readonly string _legacyProfilesDir;   // kept solely for v2 migration
     private readonly string _lastFingerprintFile;
-    // Spec: WriteIndented = true, CamelCase naming policy
+    // Human-readable JSON: indented output with camelCase property names.
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         WriteIndented = true,
@@ -31,6 +41,7 @@ public class StorageService
         MigrateToV2();
     }
 
+    /// <summary>Creates the base and workspaces directories if they do not already exist.</summary>
     private void EnsureDirectories()
     {
         Directory.CreateDirectory(_baseDir);
@@ -128,6 +139,10 @@ public class StorageService
 
     // ── Workspace Snapshots ───────────────────────────────────────────────────
 
+    /// <summary>
+    /// Serialises <paramref name="snapshot"/> to <c>workspaces/{name}.workspace.json</c>.
+    /// If a file with the same sanitised name already exists it is overwritten.
+    /// </summary>
     public void SaveWorkspace(WorkspaceSnapshot snapshot)
     {
         string sanitized = string.Concat(snapshot.Name.Split(Path.GetInvalidFileNameChars()));
@@ -136,6 +151,10 @@ public class StorageService
         File.WriteAllText(path, json);
     }
 
+    /// <summary>
+    /// Deserialises and returns all <c>*.workspace.json</c> files from the workspaces directory.
+    /// Files that cannot be parsed are silently skipped.
+    /// </summary>
     public List<WorkspaceSnapshot> LoadAllWorkspaces()
     {
         var list = new List<WorkspaceSnapshot>();
@@ -154,6 +173,10 @@ public class StorageService
         return list;
     }
 
+    /// <summary>
+    /// Renames a saved workspace: deletes the old file and writes a new one under
+    /// <paramref name="newName"/>, updating <see cref="WorkspaceSnapshot.Name"/> in place.
+    /// </summary>
     public void RenameWorkspace(WorkspaceSnapshot snapshot, string newName)
     {
         // Delete old file
@@ -166,6 +189,7 @@ public class StorageService
         SaveWorkspace(snapshot);
     }
 
+    /// <summary>Deletes the workspace file that corresponds to <paramref name="snapshot"/>.</summary>
     public void DeleteWorkspace(WorkspaceSnapshot snapshot)
     {
         string sanitized = string.Concat(snapshot.Name.Split(Path.GetInvalidFileNameChars()));
@@ -173,6 +197,7 @@ public class StorageService
         if (File.Exists(path)) File.Delete(path);
     }
 
+    /// <summary>Deletes the workspace file for the workspace identified by <paramref name="name"/>.</summary>
     public void DeleteWorkspace(string name)
     {
         string sanitized = string.Concat(name.Split(Path.GetInvalidFileNameChars()));

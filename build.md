@@ -46,3 +46,9 @@ Remove-Item -Recurse -Force src\WindowAnchor\bin, src\WindowAnchor\obj -ErrorAct
 ```powershell
 Remove-Item -Recurse -Force src\WindowAnchor\bin, src\WindowAnchor\obj -ErrorAction SilentlyContinue; dotnet publish src\WindowAnchor\WindowAnchor.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
 ```
+
+## Build standalone .exe
+
+```powershell
+dotnet publish src/WindowAnchor/WindowAnchor.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true
+```

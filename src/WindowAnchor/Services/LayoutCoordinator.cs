@@ -6,6 +6,11 @@ using WindowAnchor.Models;
 
 namespace WindowAnchor.Services;
 
+/// <summary>
+/// Bridges display-change events from the UI layer to <see cref="WorkspaceService"/>.
+/// Owns the debounce timer for <c>WM_DISPLAYCHANGE</c>, the auto-restore logic,
+/// and all system-tray notification balloons.
+/// </summary>
 public class LayoutCoordinator
 {
     private readonly MonitorService  _monitorService;
@@ -21,6 +26,12 @@ public class LayoutCoordinator
         _workspaceService = workspaceService;
     }
 
+    /// <summary>
+    /// Called by <c>App.xaml.cs</c> whenever a <c>WM_DISPLAYCHANGE</c> message is received.
+    /// Debounces the event by 1 second, computes the new monitor fingerprint, and
+    /// auto-restores the matching workspace (if any). Cancels any in-flight invocation
+    /// so that rapid display changes do not trigger multiple concurrent restores.
+    /// </summary>
     public async void HandleDisplayChangeAsync()
     {
         _displayChangeCts?.Cancel();
@@ -89,6 +100,10 @@ public class LayoutCoordinator
 
     // ── Balloon helper ─────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Dispatches a system-tray balloon notification to the UI thread.
+    /// Safe to call from any thread.
+    /// </summary>
     private static void NotifyBalloon(string title, string message,
         H.NotifyIcon.Core.NotificationIcon icon = H.NotifyIcon.Core.NotificationIcon.Info)
     {

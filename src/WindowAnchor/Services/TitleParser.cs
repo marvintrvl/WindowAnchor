@@ -5,6 +5,10 @@ using System.Text.RegularExpressions;
 
 namespace WindowAnchor.Services;
 
+/// <summary>
+/// Stateless Tier-1 file-path extractor. Applies per-application regular expressions
+/// to a window title and returns the best-guess file path with a confidence score.
+/// </summary>
 public static class TitleParser
 {
     private static readonly Dictionary<string, string> AppTitlePatterns = new()
@@ -23,6 +27,17 @@ public static class TitleParser
         ["typora"] = @"^(?<file>.+) - Typora$"
     };
 
+    /// <summary>
+    /// Attempts to extract an open-file path from <paramref name="windowTitle"/> using
+    /// a known pattern for <paramref name="processName"/>.
+    /// </summary>
+    /// <param name="processName">The process name without extension (e.g. <c>"notepad"</c>).</param>
+    /// <param name="windowTitle">The full window title string.</param>
+    /// <returns>
+    /// A tuple of the extracted path (or <c>null</c>) and a confidence score
+    /// from 0 to 100. A score of 90 means a rooted path was verified on disk;
+    /// 40 means only a bare filename was found.
+    /// </returns>
     public static (string? filePath, int confidence) ExtractFilePath(string processName, string windowTitle)
     {
         string normalizedProc = processName.ToLower().Replace(".exe", "");

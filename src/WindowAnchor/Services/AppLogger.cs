@@ -17,9 +17,13 @@ public static class AppLogger
     private static readonly object _lock = new();
     private const long MaxSizeBytes = 2 * 1024 * 1024; // 2 MB
 
+    /// <summary>Writes an informational entry to the log.</summary>
     public static void Info(string message)  => Write("INFO ", message);
+    /// <summary>Writes a warning entry to the log.</summary>
     public static void Warn(string message)  => Write("WARN ", message);
+    /// <summary>Writes an error entry to the log.</summary>
     public static void Error(string message) => Write("ERROR", message);
+    /// <summary>Writes an error entry including the exception type and message.</summary>
     public static void Error(string message, Exception ex)
         => Write("ERROR", $"{message} — {ex.GetType().Name}: {ex.Message}");
 

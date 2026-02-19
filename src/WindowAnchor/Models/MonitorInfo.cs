@@ -19,7 +19,10 @@ public class MonitorInfo
     /// <summary>0-based index. Displayed as "Monitor (Index+1)" in the UI.</summary>
     public int    Index          { get; set; }
 
+    /// <summary>Physical width of the monitor in pixels at save time.</summary>
     public int    WidthPixels    { get; set; }
+    /// <summary>Physical height of the monitor in pixels at save time.</summary>
     public int    HeightPixels   { get; set; }
+    /// <summary><c>true</c> if this is the primary monitor in the Windows display configuration.</summary>
     public bool   IsPrimary      { get; set; }
 }
