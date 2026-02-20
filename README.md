@@ -2,6 +2,8 @@
 
 **WindowAnchor** is a modern, Fluent-designed window management utility for Windows 11. It allows you to capture your entire workspace — including window positions, sizes, and even open files — and restore them with a single click or automatically when your monitor configuration changes.
 
+[![VirusTotal](https://img.shields.io/badge/VirusTotal-0%2F70%20clean-success)](https://www.virustotal.com/gui/file/b758f3e749e9884e6be18d0d62f4ac0bd6061f56560c3816be0f950abe6cd9ba/detection)
+
 <!-- [IMAGE: Main Settings Window showcasing modern Fluent UI] -->
 ![Settings Overview](docs/screenshots/settings_overview.png)
 
@@ -53,6 +55,32 @@ Please check the [**Contributing Guidelines**](CONTRIBUTING.md) before submittin
 ```powershell
 dotnet publish src/WindowAnchor/WindowAnchor.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true
 ```
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=marvintrvl/WindowAnchor&type=Date)](https://star-history.com/#marvintrvl/WindowAnchor&Date)
+
+##  Roadmap
+
+### v1.2 (Next Release) — *Stability & Control*
+- **Selective Window Save**: A checkbox list to choose exactly which windows get saved (exclude private/temporary windows).
+- **Default Workspace**: Configure a default workspace to load on startup or monitor reconnect.
+- **Keyboard Shortcuts**: Global hotkeys for quick save, restore, and workspace switching.
+- **Browser Session Restore**: Better integration with Chrome/Edge to restore previous sessions.
+
+### v1.3 — *UX Refinements*
+- **Monitor Renaming**: Personalize "Generic PnP" monitors with custom names like "Left Monitor".
+- **Switch Workspace**: Instantly switch between contexts by closing current apps and opening a different workspace.
+- **Smart VS Code Tracking**: Deep detection of `.code-workspace` files for perfect dev-environment restoration.
+
+### v1.4+ — *Power User Features*
+- **Workspace Scheduler**: Automatically switch workspaces based on time of day or calendar events.
+- **Per-App Launch Rules**: Define global rules for apps (e.g., "Always launch Slack on Monitor 2").
+- **Workspace Templates**: Pre-made community-driven templates for developers, creators, and students.
+
+### v2.0 & Beyond
+- **Browser Extension**: Deep tab-level restoration via dedicated Chrome/Edge/Firefox extensions.
+- **Cloud Sync**: Sync your workspace configurations across multiple devices.
 
 ##  License
 This project is licensed under the MIT License.
