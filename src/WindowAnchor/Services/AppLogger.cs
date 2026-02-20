@@ -17,6 +17,8 @@ public static class AppLogger
     private static readonly object _lock = new();
     private const long MaxSizeBytes = 2 * 1024 * 1024; // 2 MB
 
+    /// <summary>Writes a verbose diagnostic entry — use for file-detection tracing.</summary>
+    public static void Debug(string message) => Write("DEBUG", message);
     /// <summary>Writes an informational entry to the log.</summary>
     public static void Info(string message)  => Write("INFO ", message);
     /// <summary>Writes a warning entry to the log.</summary>

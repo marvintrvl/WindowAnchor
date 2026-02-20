@@ -13,18 +13,28 @@ public static class TitleParser
 {
     private static readonly Dictionary<string, string> AppTitlePatterns = new()
     {
-        ["notepad"] = @"^(?<file>.+) - Notepad$",
-        ["notepad++"] = @"^(?<file>.+) - Notepad\+\+$",
-        ["code"] = @"^(?<file>.+) - Visual Studio Code$",
-        ["devenv"] = @"^(?<file>.+) - Microsoft Visual Studio$",
-        ["winword"] = @"^(?<file>.+) - Word$",
-        ["excel"] = @"^(?<file>.+) - Excel$",
-        ["powerpnt"] = @"^(?<file>.+) - PowerPoint$",
-        ["mspaint"] = @"^(?<file>.+) - Paint$",
-        ["wordpad"] = @"^(?<file>.+) - WordPad$",
-        ["sublime_text"] = @"^(?<file>.+) - Sublime Text$",
-        ["obsidian"] = @"^(?<file>.+) - Obsidian$",
-        ["typora"] = @"^(?<file>.+) - Typora$"
+        // Built-in editors
+        ["notepad"]       = @"^(?<file>.+) - Notepad$",
+        ["notepad++"]     = @"^(?<file>.+) - Notepad\+\+$",
+        ["notepad3"]      = @"^(?<file>.+) - Notepad3$",
+        ["wordpad"]       = @"^(?<file>.+) - WordPad$",
+        ["mspaint"]       = @"^(?<file>.+) - Paint$",
+        // Code editors / IDEs
+        ["code"]          = @"^(?<file>.+) - Visual Studio Code$",
+        ["cursor"]        = @"^(?<file>.+) - Cursor$",
+        ["devenv"]        = @"^(?<file>.+) - Microsoft Visual Studio$",
+        ["sublime_text"]  = @"^(?<file>.+) - Sublime Text(?:\s\d+)?$",
+        ["atom"]          = @"^(?<file>.+) - Atom$",
+        // Microsoft Office
+        ["winword"]       = @"^(?<file>.+) - Word$",
+        ["excel"]         = @"^(?<file>.+) - Excel$",
+        ["powerpnt"]      = @"^(?<file>.+) - PowerPoint$",
+        // Adobe
+        ["acrord32"]      = @"^(?<file>.+) - Adobe Acrobat Reader.*$",
+        ["acrobat"]       = @"^(?<file>.+) - Adobe Acrobat.*$",
+        // Notes / writing
+        ["obsidian"]      = @"^(?<file>.+) - Obsidian$",
+        ["typora"]        = @"^(?<file>.+) - Typora$",
     };
 
     /// <summary>

@@ -19,6 +19,76 @@ public class JumpListService
     // Null means the cache has not been built yet for this snapshot pass.
     private Dictionary<string, List<string>>? _snapshotCache;
 
+    // Direct exe cache: lazily populated during a snapshot pass.
+    // Keyed by lower exe path → files parsed from THAT App's own jump-list file
+    // (resolved via CRC-64/Jones AppID hash). More reliable than the handler-based
+    // cache for apps that are not the system default for their file types.
+    private Dictionary<string, List<string>>? _directExeCache;
+
+    // Process-name cache: lazily built during a snapshot pass alongside the handler cache.
+    // Keyed by lower process name (no extension) → list of file paths.
+    // Used as a third-tier fallback when the registry handler lookup returns a wrapper
+    // exe (e.g. AppVLP.exe for Microsoft 365 Click-to-Run) instead of the real app.
+    private Dictionary<string, List<string>>? _processNameCache;
+
+    // Well-known mapping of file extension → process name (no .exe, lower-case).
+    // Used to build `_processNameCache` without relying on registry handler resolution.
+    private static readonly Dictionary<string, string> ExtensionToProcessName =
+        new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Word
+        [".doc"]  = "winword", [".docx"] = "winword", [".docm"] = "winword",
+        [".dot"]  = "winword", [".dotx"] = "winword", [".dotm"] = "winword",
+        [".rtf"]  = "winword", [".odt"]  = "winword",
+        // Excel
+        [".xls"]  = "excel", [".xlsx"] = "excel", [".xlsm"] = "excel",
+        [".xlsb"] = "excel", [".xlt"]  = "excel", [".xltx"] = "excel",
+        [".csv"]  = "excel", [".ods"]  = "excel",
+        // PowerPoint
+        [".ppt"]  = "powerpnt", [".pptx"] = "powerpnt", [".pptm"] = "powerpnt",
+        [".pot"]  = "powerpnt", [".potx"] = "powerpnt", [".pps"]  = "powerpnt",
+        [".ppsx"] = "powerpnt", [".odp"]  = "powerpnt",
+        // Adobe Acrobat / Reader
+        [".pdf"]  = "acrord32",
+        // Notepad / plain text
+        [".txt"]  = "notepad", [".log"]  = "notepad",
+        // Notepad++
+        [".npp"]  = "notepad++",
+    };
+
+    // CRC-64 look-up table for the Jones polynomial (same algorithm Windows shell uses
+    // to name .automaticDestinations-ms files from their AppID hash).
+    private static readonly ulong[] Crc64Table = BuildCrc64Table();
+
+    private static ulong[] BuildCrc64Table()
+    {
+        const ulong poly = 0xAD93D23594C935A9UL;
+        var table = new ulong[256];
+        for (uint i = 0; i < 256; i++)
+        {
+            ulong crc = i;
+            for (int j = 0; j < 8; j++)
+                crc = (crc & 1) != 0 ? (crc >> 1) ^ poly : crc >> 1;
+            table[i] = crc;
+        }
+        return table;
+    }
+
+    /// <summary>
+    /// Computes the CRC-64/Jones hash that Windows uses to name an app's
+    /// <c>.automaticDestinations-ms</c> file from its AppID.
+    /// For apps without an explicit AUMID the AppID defaults to the lowercase full exe path,
+    /// encoded as UTF-16 LE before hashing.
+    /// </summary>
+    private static ulong ComputeAppIdHash(string appId)
+    {
+        byte[] bytes = Encoding.Unicode.GetBytes(appId.ToLowerInvariant());
+        ulong crc = 0;
+        foreach (byte b in bytes)
+            crc = (crc >> 8) ^ Crc64Table[(crc ^ b) & 0xFF];
+        return crc;
+    }
+
     public JumpListService()
     {
         _jumpListDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -33,7 +103,9 @@ public class JumpListService
     /// </summary>
     public void BuildSnapshotCache()
     {
-        _snapshotCache = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        _snapshotCache   = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        _directExeCache  = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        _processNameCache = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
         if (!Directory.Exists(_jumpListDir)) return;
 
@@ -44,38 +116,90 @@ public class JumpListService
                 string ext = Path.GetExtension(path);
                 if (string.IsNullOrEmpty(ext)) continue;
 
+                // ── Handler-based index (existing) ─────────────────────────────────────
+                // May resolve to a wrapper exe (e.g. AppVLP.exe for Click-to-Run Office)
+                // rather than the real process, but kept for non-Office apps.
                 string? handler = GetDefaultHandlerExe(ext);
-                if (handler == null) continue;
-
-                if (!_snapshotCache.TryGetValue(handler, out var list))
+                if (handler != null)
                 {
-                    list = new List<string>();
-                    _snapshotCache[handler] = list;
+                    if (!_snapshotCache.TryGetValue(handler, out var hList))
+                    {
+                        hList = new List<string>();
+                        _snapshotCache[handler] = hList;
+                    }
+                    if (!hList.Contains(path, StringComparer.OrdinalIgnoreCase))
+                        hList.Add(path);
                 }
 
-                if (!list.Contains(path, StringComparer.OrdinalIgnoreCase))
-                    list.Add(path);
+                // ── Process-name-based index (new) ─────────────────────────────────────
+                // Keyed by the canonical process name derived from the file extension,
+                // bypassing handler resolution entirely. Reliable for Office Click-to-Run
+                // where the registry handler is AppVLP.exe, not WINWORD.EXE.
+                if (ExtensionToProcessName.TryGetValue(ext, out string? procName))
+                {
+                    if (!_processNameCache.TryGetValue(procName, out var pList))
+                    {
+                        pList = new List<string>();
+                        _processNameCache[procName] = pList;
+                    }
+                    if (!pList.Contains(path, StringComparer.OrdinalIgnoreCase))
+                        pList.Add(path);
+                }
             }
         }
     }
 
     /// <summary>Releases the snapshot index built by <see cref="BuildSnapshotCache"/>.</summary>
-    public void ClearSnapshotCache() => _snapshotCache = null;
+    public void ClearSnapshotCache()
+    {
+        _snapshotCache    = null;
+        _directExeCache   = null;
+        _processNameCache = null;
+    }
 
     /// <summary>
     /// Returns up to <paramref name="maxFiles"/> recently-opened file paths whose Windows default
     /// handler matches <paramref name="executablePath"/>. Uses the pre-built snapshot cache when
     /// available (O(1) lookup); falls back to a full disk scan otherwise.
+    /// <para>
+    /// Resolution order:
+    /// <list type="number">
+    ///   <item>Direct lookup — reads the jump-list file that belongs to this exact exe
+    ///     (via CRC-64 AppID hash). Works even when the exe is not the system default handler.</item>
+    ///   <item>Handler-based lookup — matches files whose default handler is this exe.</item>
+    /// </list>
+    /// </para>
     /// </summary>
     public List<string> GetRecentFilesForApp(string executablePath, int maxFiles = 10)
     {
-        string exeNorm = executablePath.ToLowerInvariant();
+        string exeNorm   = executablePath.ToLowerInvariant();
+        string procName  = Path.GetFileNameWithoutExtension(exeNorm); // e.g. "winword"
 
         // Fast path: use pre-built cache
         if (_snapshotCache != null)
         {
-            if (_snapshotCache.TryGetValue(exeNorm, out var cached))
+            // 1. Direct per-exe jump-list lookup via CRC-64 AppID hash.
+            //    Works for non-default-handler apps (Notepad++, etc.).
+            if (!_directExeCache!.TryGetValue(exeNorm, out var directFiles))
+            {
+                directFiles = GetRecentFilesForExeDirect(executablePath, maxFiles);
+                _directExeCache[exeNorm] = directFiles;
+            }
+            if (directFiles.Count > 0)
+                return directFiles.Take(maxFiles).ToList();
+
+            // 2. Handler-based index (registry shell\open\command → exe path).
+            //    Works for most apps but fails for Office Click-to-Run because the
+            //    registry command starts with AppVLP.exe, not WINWORD.EXE.
+            if (_snapshotCache.TryGetValue(exeNorm, out var cached) && cached.Count > 0)
                 return cached.Take(maxFiles).ToList();
+
+            // 3. Process-name-based index — bypasses handler resolution entirely.
+            //    Matches by known extension-to-process mappings (e.g. .docx → winword).
+            //    This is the reliable path for Office 365 / Click-to-Run installations.
+            if (_processNameCache!.TryGetValue(procName, out var byName) && byName.Count > 0)
+                return byName.Take(maxFiles).ToList();
+
             return new List<string>();
         }
 
@@ -103,6 +227,23 @@ public class JumpListService
         }
 
         return files;
+    }
+
+    /// <summary>
+    /// Reads recent files directly from the jump-list file that belongs to the given executable,
+    /// computed via the CRC-64/Jones AppID hash (the same algorithm Windows shell uses to name
+    /// <c>.automaticDestinations-ms</c> files). This is reliable even when the exe is not the
+    /// system default handler for its file types (e.g. Notepad++ when Notepad is the default).
+    /// </summary>
+    public List<string> GetRecentFilesForExeDirect(string executablePath, int maxFiles = 10)
+    {
+        ulong hash    = ComputeAppIdHash(executablePath.ToLowerInvariant());
+        string prefix = hash.ToString("x16");
+        string jlPath = Path.Combine(_jumpListDir, prefix + ".automaticDestinations-ms");
+
+        if (!File.Exists(jlPath)) return new List<string>();
+
+        return ParseJumpListFile(jlPath).Take(maxFiles).ToList();
     }
 
     /// <summary>
@@ -211,7 +352,8 @@ public class JumpListService
                     stream.ReadExactly(data);
 
                     string? path = ExtractPathFromLnk(data);
-                    if (!string.IsNullOrEmpty(path) && File.Exists(path) &&
+                    if (!string.IsNullOrEmpty(path) &&
+                        (File.Exists(path) || Directory.Exists(path)) &&
                         !files.Contains(path, StringComparer.OrdinalIgnoreCase))
                     {
                         files.Add(path);

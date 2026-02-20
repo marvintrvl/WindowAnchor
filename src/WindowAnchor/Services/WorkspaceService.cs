@@ -167,52 +167,140 @@ public class WorkspaceService
 
             if (saveFiles)
             {
+                AppLogger.Debug($"[FileDetect] ── {w.ProcessName} | title: \"{w.TitleSnippet}\" | exe: {w.ExecutablePath}");
+
                 // ── Tier 1: parse file path from window title ──────────────
                 var (titlePath, titleConf) = TitleParser.ExtractFilePath(w.ProcessName, w.TitleSnippet);
                 filePath   = titlePath;
                 confidence = titleConf;
                 source     = titleConf > 0 ? "TITLE_PARSE" : "NONE";
 
+                if (titleConf > 0)
+                    AppLogger.Debug($"[FileDetect]   T1 TITLE_PARSE  conf={titleConf}  path=\"{titlePath}\"");
+                else
+                    AppLogger.Debug($"[FileDetect]   T1 no match (process not in TitleParser or title format mismatch)");
+
+                // ── Tier 1.5: exact jump-list filename match for bare T1 names ──
+                // When T1 extracted only a bare filename (conf=40, no directory separator),
+                // search a larger jump-list pool for the exact same filename.
+                // This handles files that are open but have scrolled past position 10 in the
+                // jump list, making them invisible to T2's default candidate window.
+                if (confidence == 40 && !string.IsNullOrEmpty(filePath) && !Path.IsPathRooted(filePath))
+                {
+                    try
+                    {
+                        var jlPool = _jumpListService.GetRecentFilesForApp(w.ExecutablePath, maxFiles: 50);
+                        AppLogger.Debug($"[FileDetect]   T1.5 exact-filename search in pool of {jlPool.Count}");
+                        string? exact = jlPool.FirstOrDefault(p =>
+                            Path.GetFileName(p).Equals(filePath, StringComparison.OrdinalIgnoreCase));
+                        if (exact != null)
+                        {
+                            filePath   = exact;
+                            confidence = 90;
+                            source     = "JUMPLIST_EXACT";
+                            AppLogger.Debug($"[FileDetect]   T1.5 JUMPLIST_EXACT: \"{exact}\"");
+                        }
+                        else
+                        {
+                            AppLogger.Debug($"[FileDetect]   T1.5 no exact match found");
+                        }
+                    }
+                    catch (Exception ex) { AppLogger.Warn($"[FileDetect]   T1.5 exception: {ex.Message}"); }
+                }
+
                 // ── Tier 2: jump-list lookup ───────────────────────────────
                 if (confidence < 80 && !string.IsNullOrEmpty(w.ExecutablePath))
                 {
                     try
                     {
-                        var jlFiles = _jumpListService.GetRecentFilesForApp(w.ExecutablePath, maxFiles: 5);
+                        var jlFiles = _jumpListService.GetRecentFilesForApp(w.ExecutablePath, maxFiles: 30);
+                        AppLogger.Debug($"[FileDetect]   T2 jump-list returned {jlFiles.Count} candidate(s)");
+                        foreach (var jf in jlFiles)
+                            AppLogger.Debug($"[FileDetect]      JL candidate: \"{jf}\"");
+
                         if (jlFiles.Count > 0)
                         {
                             string titleLower = w.TitleSnippet.ToLowerInvariant();
-                            string? jlBest = jlFiles.FirstOrDefault(p =>
-                                titleLower.Contains(Path.GetFileNameWithoutExtension(p).ToLowerInvariant()));
+
+                            // Match using the full filename (including extension) to avoid
+                            // false positives from short or common filename stems.
+                            // Sort by filename length descending so the most specific
+                            // (longest) match wins when multiple candidates qualify.
+                            string? jlBest = jlFiles
+                                .Where(p =>
+                                {
+                                    string name = Path.GetFileName(p);
+                                    string stem = Path.GetFileNameWithoutExtension(p);
+                                    if (stem.Length < 3) return false;
+                                    return titleLower.Contains(name.ToLowerInvariant()) ||
+                                           titleLower.Contains(stem.ToLowerInvariant());
+                                })
+                                .OrderByDescending(p => Path.GetFileNameWithoutExtension(p).Length)
+                                .FirstOrDefault();
+
                             if (jlBest != null)
                             {
                                 filePath   = jlBest;
                                 confidence = 80;
                                 source     = "JUMPLIST";
+                                AppLogger.Debug($"[FileDetect]   T2 JUMPLIST match: \"{jlBest}\"");
+                            }
+                            else
+                            {
+                                // Log why none matched: show what the title contains vs what candidates had
+                                AppLogger.Debug($"[FileDetect]   T2 no JL candidate matched title \"{w.TitleSnippet}\"");
+                                foreach (var jf in jlFiles)
+                                    AppLogger.Debug($"[FileDetect]      no-match detail: stem=\"{Path.GetFileNameWithoutExtension(jf)}\"  titleContains={titleLower.Contains(Path.GetFileNameWithoutExtension(jf).ToLowerInvariant())}");
                             }
                         }
+                        else
+                        {
+                            AppLogger.Debug($"[FileDetect]   T2 jump-list empty for this exe");
+                        }
                     }
-                    catch { /* Jump list failures must not stop snapshot */ }
+                    catch (Exception ex) { AppLogger.Warn($"[FileDetect]   T2 exception: {ex.Message}"); }
                 }
 
                 // ── Tier 3: search common user folders for bare filename ───
                 if (confidence < 80 && !string.IsNullOrEmpty(filePath) && !Path.IsPathRooted(filePath))
                 {
+                    AppLogger.Debug($"[FileDetect]   T3 searching common folders for bare name \"{filePath}\"");
                     try
                     {
                         string? found = SearchFileInCommonLocations(filePath);
-                        if (found != null) { filePath = found; confidence = 85; source = "FILE_SEARCH"; }
+                        if (found != null)
+                        {
+                            filePath = found; confidence = 85; source = "FILE_SEARCH";
+                            AppLogger.Debug($"[FileDetect]   T3 FILE_SEARCH found: \"{found}\"");
+                        }
+                        else
+                        {
+                            AppLogger.Debug($"[FileDetect]   T3 not found (zero or ambiguous matches)");
+                        }
                     }
-                    catch { }
+                    catch (Exception ex) { AppLogger.Warn($"[FileDetect]   T3 exception: {ex.Message}"); }
                 }
 
                 launchArg = confidence >= 80 ? filePath : null;
+                AppLogger.Debug($"[FileDetect]   RESULT  source={source}  conf={confidence}  launchArg=\"{launchArg ?? "(null)"}\"");
 
-                // VS Code: launch arg is the folder, not the file
-                if (w.ProcessName.Equals("Code", StringComparison.OrdinalIgnoreCase) &&
-                    launchArg != null && File.Exists(launchArg))
+                // VS Code / Cursor (Electron-based editors): launch arg must be a folder or
+                // a .code-workspace file, never a bare source file.
+                bool isVsCodeLike = w.ProcessName.Equals("Code",   StringComparison.OrdinalIgnoreCase)
+                                 || w.ProcessName.Equals("Cursor", StringComparison.OrdinalIgnoreCase);
+                if (isVsCodeLike && launchArg != null)
                 {
-                    launchArg = Path.GetDirectoryName(launchArg);
+                    if (Directory.Exists(launchArg))
+                    {
+                        // Jump-list returned a workspace folder directly — use as-is.
+                    }
+                    else if (File.Exists(launchArg) &&
+                             !launchArg.EndsWith(".code-workspace", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Tier 1/3 returned a source file — promote to the containing folder.
+                        launchArg = Path.GetDirectoryName(launchArg);
+                    }
+                    // .code-workspace files are kept as-is (VS Code accepts them directly).
                 }
             }
 
@@ -314,11 +402,25 @@ public class WorkspaceService
         // with the correct title in Phase 1. Shell-executing the file works whether the
         // app is already running (opens in the existing instance via DDE/COM) or not.
         //
-        // Plain app entries (no LaunchArg): only launch when the exe is not already running.
+        // Plain app entries (no LaunchArg): only launch when the exe is not already running
+        // AND when no document entry for the same exe is pending in this pass.
+        // If we launch the bare exe first (e.g. WINWORD.EXE with no file) and a document
+        // entry for the same exe follows, Windows DDE will route the document into the
+        // already-running bare instance instead of spawning a new window. That consumes
+        // the bare instance's slot while leaving zero windows for Praktikumsbericht/etc.
+        // Skipping the bare launch lets the document entry start the exe properly.
         bool anyLaunched = false;
         var runningExes = liveWindows.Values
             .Select(v => v.Record.ExecutablePath.ToLowerInvariant())
             .ToHashSet();
+
+        // Pre-scan: collect exe paths that will be started by a document entry this pass.
+        var exesWithPendingDocLaunch = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var e in snapshot.Entries)
+        {
+            if (!string.IsNullOrEmpty(e.LaunchArg) && !string.IsNullOrEmpty(e.ExecutablePath))
+                exesWithPendingDocLaunch.Add(e.ExecutablePath.ToLowerInvariant());
+        }
 
         for (int i = 0; i < snapshot.Entries.Count; i++)
         {
@@ -352,6 +454,15 @@ public class WorkspaceService
                 // Plain app entry: only launch when not already running.
                 string exeLower = entry.ExecutablePath.ToLowerInvariant();
                 if (runningExes.Contains(exeLower)) continue;
+
+                // Skip if a document entry for the same exe is pending in this pass.
+                // Shell-executing that document will start the app; a bare launch here
+                // would open the start screen and steal the DDE slot.
+                if (exesWithPendingDocLaunch.Contains(exeLower))
+                {
+                    AppLogger.Debug($"Phase2: skipping bare launch of {Path.GetFileName(entry.ExecutablePath)} — document entry pending for same exe");
+                    continue;
+                }
 
                 try
                 {
