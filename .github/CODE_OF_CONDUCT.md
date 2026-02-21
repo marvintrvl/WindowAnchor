@@ -10,4 +10,4 @@ We pledge to make participation in our community a harassment-free experience fo
 
 ## Enforcement
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported by
-opening an issue or contacting the project maintainer at [your-email].
+opening an issue or contacting the project maintainer at por07105@gmail.com.
