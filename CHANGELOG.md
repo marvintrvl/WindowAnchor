@@ -4,6 +4,22 @@ All notable changes to WindowAnchor will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.2.0] - 2026-03-01
+
+### Added
+- **Default Workspace Setting** — Choose what happens when WindowAnchor starts: restore a specific workspace, restore the most recently saved one, ask via a picker dialog, or do nothing. Configured under Settings → Startup.
+- **Selective Window Save** — The save dialog now shows a per-window checkbox list grouped by monitor. Password managers (KeePass, 1Password, Bitwarden, etc.) and incognito/private browser windows are unchecked by default.
+- **Global Keyboard Shortcuts** — Six built-in hotkeys for quick save, restore default, restore workspace #1/#2/#3, and open settings (default: Ctrl+Alt+S/R/1/2/3/W). Shortcuts are fully customisable in Settings → Keyboard Shortcuts.
+- **Workspace Ordering** — Reorder workspaces via Move Up/Move Down in the context menu. The first three workspaces map to the Ctrl+Alt+1/2/3 hotkeys. Slot badges (#1, #2, #3) and a ★ default indicator are displayed in the workspace list.
+- **Set as Default from Context Menu** — Right-click any workspace row → "Set as Default" to mark it as the startup workspace, or "Remove as Default" to clear it.
+- **Browser Session Restore** — Chromium-based browsers (Chrome, Edge, Opera, Brave) launched without a specific URL now receive `--restore-last-session` to reopen previous tabs.
+- **Settings Persistence** — All new settings (startup behaviour, hotkey customisations, workspace order) are saved to `%AppData%\WindowAnchor\settings.json`.
+
+### Changed
+- Save Workspace dialog redesigned from per-monitor checkboxes to a per-window checkbox list with smart exclusions.
+- Settings window expanded with Startup Behavior, Keyboard Shortcuts, and workspace ordering sections.
+- Tray menu and hotkey-based workspace restore now honour the user's custom display order.
+
 ## [1.1.1] - 2026-02-20
 
 ### Fixed

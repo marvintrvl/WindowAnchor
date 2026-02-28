@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -16,6 +17,7 @@ public partial class SettingsWindow : FluentWindow
     private readonly WorkspaceService  _workspaceService;
     private readonly StorageService    _storageService;
     private readonly LayoutCoordinator _coordinator;
+    private readonly SettingsService   _settingsService;
     private bool _suppressToggle;
 
     // ── View-model rows ──────────────────────────────────────────────────────
@@ -37,40 +39,385 @@ public partial class SettingsWindow : FluentWindow
         public bool   IsEditing { get => _isEditing; set { _isEditing = value; OnPropertyChanged(); } }
         public string EditName  { get => _editName;  set { _editName  = value; OnPropertyChanged(); } }
 
+        // ── Display order & default indicator ─────────────────────────────
+        private int _position;
+        public int Position
+        {
+            get => _position;
+            set { _position = value; OnPropertyChanged(); OnPropertyChanged(nameof(SlotLabel)); OnPropertyChanged(nameof(SlotBadgeVisibility)); }
+        }
+        public string     SlotLabel           => $"#{_position}";
+        public Visibility SlotBadgeVisibility => _position <= 3 ? Visibility.Visible : Visibility.Collapsed;
+
+        private bool _isDefault;
+        public bool IsDefault
+        {
+            get => _isDefault;
+            set { _isDefault = value; OnPropertyChanged(); OnPropertyChanged(nameof(DefaultStarVisibility)); }
+        }
+        public Visibility DefaultStarVisibility => _isDefault ? Visibility.Visible : Visibility.Collapsed;
+
         public event PropertyChangedEventHandler? PropertyChanged;
         private void OnPropertyChanged([CallerMemberName] string? n = null)
             => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(n));
     }
 
+    // ── Hotkey row view-model ────────────────────────────────────────────────
+
+    internal sealed class HotkeyRow : INotifyPropertyChanged
+    {
+        public string ActionId   { get; init; } = "";
+        public string ActionName { get; init; } = "";
+
+        private ModifierKeys _modifiers;
+        public ModifierKeys Modifiers
+        {
+            get => _modifiers;
+            set { _modifiers = value; OnPropertyChanged(); DisplayShortcut = HotkeyService.FormatShortcut(value, _key); }
+        }
+
+        private Key _key;
+        public Key Key
+        {
+            get => _key;
+            set { _key = value; OnPropertyChanged(); DisplayShortcut = HotkeyService.FormatShortcut(_modifiers, value); }
+        }
+
+        private string _displayShortcut = "";
+        public string DisplayShortcut
+        {
+            get => _displayShortcut;
+            set { _displayShortcut = value; OnPropertyChanged(); }
+        }
+
+        private bool _isRecording;
+        public bool IsRecording
+        {
+            get => _isRecording;
+            set { _isRecording = value; OnPropertyChanged(); }
+        }
+
+        private bool _isCustom;
+        public bool IsCustom
+        {
+            get => _isCustom;
+            set { _isCustom = value; OnPropertyChanged(); OnPropertyChanged(nameof(ResetVisibility)); }
+        }
+        public Visibility ResetVisibility => _isCustom ? Visibility.Visible : Visibility.Collapsed;
+
+        // Default values for reset
+        public ModifierKeys DefaultModifiers { get; init; }
+        public Key          DefaultKey       { get; init; }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+        private void OnPropertyChanged([CallerMemberName] string? n = null)
+            => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(n));
+    }
+
+    private readonly List<HotkeyRow> _hotkeyRows = new();
+    private HotkeyRow? _recordingRow;
+
     // ── Constructor ──────────────────────────────────────────────────────────
 
-    public SettingsWindow(WorkspaceService workspaceService, StorageService storageService, LayoutCoordinator coordinator)
+    public SettingsWindow(
+        WorkspaceService workspaceService,
+        StorageService   storageService,
+        LayoutCoordinator coordinator,
+        SettingsService  settingsService)
     {
         _workspaceService = workspaceService;
         _storageService   = storageService;
         _coordinator      = coordinator;
+        _settingsService  = settingsService;
         InitializeComponent();
+        PreviewKeyDown += OnHotkeyRecordKeyDown;
         Loaded += (_, _) =>
         {
             // Set toggle without firing handler
             _suppressToggle = true;
             AutostartToggle.IsChecked = AutostartService.IsEnabled();
             _suppressToggle = false;
+
+            // Populate startup behavior controls
+            InitialiseStartupBehaviorUI();
+            InitialiseHotkeyUI();
+
             Refresh();
         };
+    }
+
+    // ── Startup-behavior UI ──────────────────────────────────────────────────
+
+    private void InitialiseStartupBehaviorUI()
+    {
+        _suppressToggle = true;
+
+        var settings = _settingsService.Settings;
+        int comboIndex = settings.StartupBehavior switch
+        {
+            StartupBehavior.RestoreDefault  => 1,
+            StartupBehavior.RestoreLastUsed => 2,
+            StartupBehavior.AskUser         => 3,
+            _                               => 0,
+        };
+        StartupBehaviorCombo.SelectedIndex = comboIndex;
+
+        RefreshDefaultWorkspaceCombo();
+        DefaultWorkspacePanel.Visibility = settings.StartupBehavior == StartupBehavior.RestoreDefault
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        _suppressToggle = false;
+    }
+
+    private void RefreshDefaultWorkspaceCombo()
+    {
+        DefaultWorkspaceCombo.Items.Clear();
+        var workspaces = _workspaceService.GetAllWorkspaces().OrderByDescending(w => w.SavedAt);
+        int selectedIdx = -1;
+        int idx = 0;
+        foreach (var ws in workspaces)
+        {
+            DefaultWorkspaceCombo.Items.Add(new ComboBoxItem { Content = ws.Name, Tag = ws.Name });
+            if (ws.Name == _settingsService.Settings.DefaultWorkspaceName)
+                selectedIdx = idx;
+            idx++;
+        }
+        if (selectedIdx >= 0) DefaultWorkspaceCombo.SelectedIndex = selectedIdx;
+        else if (DefaultWorkspaceCombo.Items.Count > 0) DefaultWorkspaceCombo.SelectedIndex = 0;
+    }
+
+    private void OnStartupBehaviorChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressToggle) return;
+        if (StartupBehaviorCombo.SelectedItem is not ComboBoxItem item) return;
+
+        var behavior = (item.Tag as string) switch
+        {
+            "RestoreDefault"  => StartupBehavior.RestoreDefault,
+            "RestoreLastUsed" => StartupBehavior.RestoreLastUsed,
+            "AskUser"         => StartupBehavior.AskUser,
+            _                 => StartupBehavior.None,
+        };
+
+        _settingsService.Settings.StartupBehavior = behavior;
+        _settingsService.Save();
+
+        DefaultWorkspacePanel.Visibility = behavior == StartupBehavior.RestoreDefault
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        if (behavior == StartupBehavior.RestoreDefault)
+            RefreshDefaultWorkspaceCombo();
+    }
+
+    private void OnDefaultWorkspaceChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressToggle) return;
+        if (DefaultWorkspaceCombo.SelectedItem is ComboBoxItem item)
+        {
+            _settingsService.Settings.DefaultWorkspaceName = item.Tag as string;
+            _settingsService.Save();
+        }
+    }
+
+    // ── Hotkey UI ────────────────────────────────────────────────────────────
+
+    private void InitialiseHotkeyUI()
+    {
+        _suppressToggle = true;
+        HotkeysToggle.IsChecked = _settingsService.Settings.HotkeysEnabled;
+        _suppressToggle = false;
+
+        // Build HotkeyRow list from resolved shortcuts (defaults + custom overrides)
+        _hotkeyRows.Clear();
+        var resolved = HotkeyService.GetResolvedShortcuts(_settingsService.Settings);
+        for (int i = 0; i < HotkeyService.Defaults.Length; i++)
+        {
+            var def = HotkeyService.Defaults[i];
+            var res = resolved[i];
+            bool isCustom = res.Modifiers != def.Modifiers || res.Key != def.Key;
+            _hotkeyRows.Add(new HotkeyRow
+            {
+                ActionId         = def.ActionId,
+                ActionName       = def.ActionName,
+                Modifiers        = res.Modifiers,
+                Key              = res.Key,
+                DisplayShortcut  = res.DisplayShortcut,
+                DefaultModifiers = def.Modifiers,
+                DefaultKey       = def.Key,
+                IsCustom         = isCustom,
+            });
+        }
+        HotkeyList.ItemsSource = _hotkeyRows;
+    }
+
+    private void OnHotkeysToggleChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressToggle) return;
+        bool enabled = HotkeysToggle.IsChecked == true;
+        _settingsService.Settings.HotkeysEnabled = enabled;
+        _settingsService.Save();
+
+        // Notify the app to register/unregister hotkeys
+        if (System.Windows.Application.Current is App app)
+            app.ApplyHotkeySettings();
+    }
+
+    // ── Hotkey recording ─────────────────────────────────────────────────────
+
+    private void OnChangeHotkey(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button btn) return;
+        if (btn.Tag is not HotkeyRow row) return;
+
+        // Cancel any existing recording
+        CancelHotkeyRecording();
+
+        _recordingRow = row;
+        row.IsRecording = true;
+        row.DisplayShortcut = "Press keys\u2026";
+    }
+
+    private void OnResetHotkey(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button btn) return;
+        if (btn.Tag is not HotkeyRow row) return;
+
+        CancelHotkeyRecording();
+
+        row.Modifiers = row.DefaultModifiers;
+        row.Key       = row.DefaultKey;
+        row.IsCustom  = false;
+
+        SaveCustomHotkeys();
+    }
+
+    private void OnHotkeyRecordKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (_recordingRow == null) return;
+
+        // Escape → cancel recording
+        if (e.Key == Key.Escape)
+        {
+            CancelHotkeyRecording();
+            e.Handled = true;
+            return;
+        }
+
+        // Resolve the actual key (Alt combos send Key.System)
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+
+        // Ignore standalone modifier presses
+        if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
+            or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
+            return;
+
+        var mods = Keyboard.Modifiers;
+        // Require at least one modifier
+        if (mods == ModifierKeys.None) return;
+
+        _recordingRow.Modifiers = mods;
+        _recordingRow.Key       = key;
+        _recordingRow.IsRecording = false;
+        _recordingRow.IsCustom  = mods != _recordingRow.DefaultModifiers || key != _recordingRow.DefaultKey;
+        _recordingRow = null;
+
+        SaveCustomHotkeys();
+        e.Handled = true;
+    }
+
+    private void CancelHotkeyRecording()
+    {
+        if (_recordingRow == null) return;
+        // Restore previous display text
+        _recordingRow.DisplayShortcut = HotkeyService.FormatShortcut(_recordingRow.Modifiers, _recordingRow.Key);
+        _recordingRow.IsRecording = false;
+        _recordingRow = null;
+    }
+
+    private void SaveCustomHotkeys()
+    {
+        // Build list of custom (non-default) bindings
+        var customs = new List<HotkeyBinding>();
+        foreach (var row in _hotkeyRows)
+        {
+            if (row.IsCustom)
+            {
+                customs.Add(new HotkeyBinding
+                {
+                    ActionId  = row.ActionId,
+                    Modifiers = HotkeyService.FormatModifiers(row.Modifiers),
+                    KeyName   = row.Key.ToString(),
+                });
+            }
+        }
+        _settingsService.Settings.CustomHotkeys = customs.Count > 0 ? customs : null;
+        _settingsService.Save();
+
+        // Re-register hotkeys with new bindings
+        if (System.Windows.Application.Current is App app)
+            app.ApplyHotkeySettings();
     }
 
     // ── Refresh ──────────────────────────────────────────────────────────────
 
     private void Refresh()
     {
-        var wsRows = _workspaceService.GetAllWorkspaces()
-            .OrderByDescending(w => w.SavedAt)
-            .Select(w => new WorkspaceRow { Source = w })
-            .ToList();
+        var all = _workspaceService.GetAllWorkspaces();
+        var ordered = GetOrderedWorkspaces(all);
+        string? defaultName = _settingsService.Settings.DefaultWorkspaceName;
+
+        var wsRows = new List<WorkspaceRow>();
+        for (int i = 0; i < ordered.Count; i++)
+        {
+            var ws = ordered[i];
+            wsRows.Add(new WorkspaceRow
+            {
+                Source    = ws,
+                Position  = i + 1,
+                IsDefault = !string.IsNullOrEmpty(defaultName)
+                    && ws.Name.Equals(defaultName, StringComparison.OrdinalIgnoreCase),
+            });
+        }
+
         WorkspacesList.ItemsSource = wsRows;
         WorkspaceCountText.Text    = $"{wsRows.Count} workspace{(wsRows.Count == 1 ? "" : "s")} saved";
         WorkspacesEmpty.Visibility = wsRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// Returns workspaces in the user's preferred order.
+    /// Names in <see cref="AppSettings.WorkspaceOrder"/> come first (in order),
+    /// followed by any remaining workspaces sorted by save date.
+    /// </summary>
+    private List<WorkspaceSnapshot> GetOrderedWorkspaces(List<WorkspaceSnapshot> all)
+    {
+        var order = _settingsService.Settings.WorkspaceOrder;
+        if (order == null || order.Count == 0)
+            return all.OrderByDescending(w => w.SavedAt).ToList();
+
+        var result = new List<WorkspaceSnapshot>();
+        foreach (var name in order)
+        {
+            var ws = all.FirstOrDefault(w => w.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (ws != null) result.Add(ws);
+        }
+        // Append workspaces not listed in the order
+        foreach (var ws in all.OrderByDescending(w => w.SavedAt))
+        {
+            if (!result.Any(r => r.Name.Equals(ws.Name, StringComparison.OrdinalIgnoreCase)))
+                result.Add(ws);
+        }
+        return result;
+    }
+
+    /// <summary>Persists the current display order into settings.</summary>
+    private void PersistWorkspaceOrder()
+    {
+        if (WorkspacesList.ItemsSource is not List<WorkspaceRow> rows) return;
+        _settingsService.Settings.WorkspaceOrder = rows.Select(r => r.Name).ToList();
+        _settingsService.Save();
     }
 
     // ── Autostart toggle ──────────────────────────────────────────────────────
@@ -88,16 +435,14 @@ public partial class SettingsWindow : FluentWindow
 
     private async void OnSaveNewWorkspace(object sender, RoutedEventArgs e)
     {
-        var monitorData = await Task.Run(() => _workspaceService.GetMonitorDataForDialog());
-        var dialog = new SaveWorkspaceDialog(monitorData) { Owner = this };
+        var windowPreview = await Task.Run(() => _workspaceService.GetWindowPreviewForDialog());
+        var dialog = new SaveWorkspaceDialog(windowPreview) { Owner = this };
         if (dialog.ShowDialog() != true) return;
 
         // Read all dialog properties on the UI thread before entering Task.Run.
-        // WorkspaceName/SaveFiles/SelectedMonitorIds access WPF dependency properties
-        // (TextBox.Text, CheckBox.IsChecked) which throw VerifyAccess on a background thread.
-        var name       = dialog.WorkspaceName;
-        var saveFiles  = dialog.SaveFiles;
-        var monitorIds = dialog.SelectedMonitorIds;
+        var name            = dialog.WorkspaceName;
+        var saveFiles       = dialog.SaveFiles;
+        var selectedWindows = dialog.SelectedWindows;
 
         // Show progress window when file detection is enabled (can take several seconds).
         SaveProgressWindow? progressWindow = null;
@@ -114,7 +459,8 @@ public partial class SettingsWindow : FluentWindow
         IsEnabled = false;
         try
         {
-            await Task.Run(() => _workspaceService.TakeSnapshot(name, saveFiles, monitorIds, progress));
+            await Task.Run(() => _workspaceService.TakeSnapshot(name, saveFiles,
+                selectedWindows: selectedWindows, progress: progress));
             Refresh();
         }
         catch (Exception ex)
@@ -163,6 +509,53 @@ public partial class SettingsWindow : FluentWindow
 
         menu.Items.Add(new Separator());
 
+        // ── Reorder: Move Up / Move Down ─────────────────────────────────
+        if (row.Position > 1)
+        {
+            var moveUp = new System.Windows.Controls.MenuItem { Header = "Move Up" };
+            moveUp.Icon = new Wpf.Ui.Controls.SymbolIcon { Symbol = Wpf.Ui.Controls.SymbolRegular.ArrowUp24 };
+            moveUp.Click += (_, _) => MoveWorkspace(row, -1);
+            menu.Items.Add(moveUp);
+        }
+
+        if (WorkspacesList.ItemsSource is List<WorkspaceRow> rows && row.Position < rows.Count)
+        {
+            var moveDown = new System.Windows.Controls.MenuItem { Header = "Move Down" };
+            moveDown.Icon = new Wpf.Ui.Controls.SymbolIcon { Symbol = Wpf.Ui.Controls.SymbolRegular.ArrowDown24 };
+            moveDown.Click += (_, _) => MoveWorkspace(row, +1);
+            menu.Items.Add(moveDown);
+        }
+
+        menu.Items.Add(new Separator());
+
+        // ── Set / remove default workspace ───────────────────────────────
+        if (row.IsDefault)
+        {
+            var clearDefault = new System.Windows.Controls.MenuItem { Header = "Remove as Default" };
+            clearDefault.Icon = new Wpf.Ui.Controls.SymbolIcon { Symbol = Wpf.Ui.Controls.SymbolRegular.StarOff24 };
+            clearDefault.Click += (_, _) =>
+            {
+                _settingsService.Settings.DefaultWorkspaceName = null;
+                _settingsService.Save();
+                Refresh();
+            };
+            menu.Items.Add(clearDefault);
+        }
+        else
+        {
+            var setDefault = new System.Windows.Controls.MenuItem { Header = "Set as Default" };
+            setDefault.Icon = new Wpf.Ui.Controls.SymbolIcon { Symbol = Wpf.Ui.Controls.SymbolRegular.Star24 };
+            setDefault.Click += (_, _) =>
+            {
+                _settingsService.Settings.DefaultWorkspaceName = row.Name;
+                _settingsService.Save();
+                Refresh();
+            };
+            menu.Items.Add(setDefault);
+        }
+
+        menu.Items.Add(new Separator());
+
         var rename = new System.Windows.Controls.MenuItem { Header = "Rename…" };
         rename.Icon = new Wpf.Ui.Controls.SymbolIcon { Symbol = Wpf.Ui.Controls.SymbolRegular.Edit24 };
         rename.Click += (_, _) => DoRenameWorkspace(row);
@@ -176,6 +569,27 @@ public partial class SettingsWindow : FluentWindow
         menu.PlacementTarget = btn;
         menu.Placement       = System.Windows.Controls.Primitives.PlacementMode.Bottom;
         menu.IsOpen          = true;
+    }
+
+    private void MoveWorkspace(WorkspaceRow row, int direction)
+    {
+        if (WorkspacesList.ItemsSource is not List<WorkspaceRow> rows) return;
+        int oldIdx = rows.IndexOf(row);
+        int newIdx = oldIdx + direction;
+        if (newIdx < 0 || newIdx >= rows.Count) return;
+
+        // Swap in the list
+        (rows[oldIdx], rows[newIdx]) = (rows[newIdx], rows[oldIdx]);
+
+        // Update positions
+        for (int i = 0; i < rows.Count; i++)
+            rows[i].Position = i + 1;
+
+        // Rebind to force UI update
+        WorkspacesList.ItemsSource = null;
+        WorkspacesList.ItemsSource = rows;
+
+        PersistWorkspaceOrder();
     }
 
     private void DoSelectiveRestore(WorkspaceRow row)

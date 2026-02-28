@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
@@ -10,32 +11,52 @@ namespace WindowAnchor.UI;
 
 public partial class SaveWorkspaceDialog : FluentWindow
 {
-    // ── Public results (read after DialogResult = true) ───────────────────────
-    public string           WorkspaceName     => WorkspaceNameInput.Text.Trim();
-    public bool             SaveFiles         => SaveFilesCheckBox.IsChecked == true;
-    public HashSet<string>? SelectedMonitorIds
+    // ── Public results (read after DialogResult = true) ───────────────────
+    public string WorkspaceName  => WorkspaceNameInput.Text.Trim();
+    public bool   SaveFiles      => SaveFilesCheckBox.IsChecked == true;
+
+    /// <summary>
+    /// Returns the list of <see cref="WindowRecord"/>s the user checked.
+    /// Pass this to <see cref="Services.WorkspaceService.TakeSnapshot"/> as <c>selectedWindows</c>.
+    /// </summary>
+    public List<WindowRecord> SelectedWindows =>
+        _monitorGroups
+            .SelectMany(g => g.Windows)
+            .Where(w => w.IsSelected)
+            .Select(w => w.Record)
+            .ToList();
+
+    // ── Smart-exclusion lists ─────────────────────────────────────────────
+
+    /// <summary>Process names that are auto-unchecked by default (password managers etc.).</summary>
+    private static readonly HashSet<string> AutoExcludeProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
-        get
-        {
-            if (_monitorItems.Count == 0) return null;   // no monitors → save all
-            var selected = _monitorItems
-                .Where(m => m.IsSelected)
-                .Select(m => m.MonitorId)
-                .ToHashSet();
-            // if every monitor is selected, return null (means "all") so callers
-            // don't need to build a filter set
-            return selected.Count == _monitorItems.Count ? null : selected;
-        }
+        "keepass", "keepassxc", "1password", "bitwarden", "lastpass",
+        "dashlane", "keeper", "roboform", "enpass",
+    };
+
+    /// <summary>Title substrings that indicate a private / incognito window.</summary>
+    private static readonly string[] PrivateTitlePatterns = new[]
+    {
+        "InPrivate",          // Edge
+        "Incognito",          // Chrome / Brave
+        "Private Browsing",   // Firefox
+        "Private Window",     // Opera
+    };
+
+    // ── View-models ───────────────────────────────────────────────────────
+
+    public sealed class MonitorWindowGroup
+    {
+        public string MonitorHeader { get; init; } = "";
+        public List<WindowCheckItem> Windows { get; init; } = new();
     }
 
-    // ── View-model ────────────────────────────────────────────────────────────
-
-    public sealed class MonitorCheckItem : INotifyPropertyChanged
+    public sealed class WindowCheckItem : INotifyPropertyChanged
     {
-        public string MonitorId      { get; init; } = "";
-        public string DisplayHeader  { get; init; } = "";
-        public string ResolutionLabel{ get; init; } = "";
-        public string WindowCountLabel { get; init; } = "";
+        public WindowRecord Record       { get; init; } = null!;
+        public string       DisplayName  { get; init; } = "";
+        public string       TitleSnippet { get; init; } = "";
 
         private bool _isSelected = true;
         public bool IsSelected
@@ -49,42 +70,59 @@ public partial class SaveWorkspaceDialog : FluentWindow
             => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(n));
     }
 
-    private readonly List<MonitorCheckItem> _monitorItems = new();
+    private readonly List<MonitorWindowGroup> _monitorGroups = new();
 
-    // ── Constructor ───────────────────────────────────────────────────────────
+    // ── Constructor ───────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Opens the Save Workspace dialog.
-    /// </summary>
-    /// <param name="monitors">
-    ///   Monitors to show as checkboxes.  Each tuple carries the
-    ///   <see cref="MonitorInfo"/> and the number of windows currently on that monitor.
-    ///   Pass an empty list (or omit) when the caller cannot enumerate monitors.
+    /// <param name="windowData">
+    ///   Monitor + windows data returned by
+    ///   <see cref="Services.WorkspaceService.GetWindowPreviewForDialog"/>.
     /// </param>
-    public SaveWorkspaceDialog(IEnumerable<(MonitorInfo Monitor, int WindowCount)>? monitors = null)
+    public SaveWorkspaceDialog(List<(MonitorInfo Monitor, List<WindowRecord> Windows)> windowData)
     {
         InitializeComponent();
 
-        if (monitors != null)
+        foreach (var (mon, windows) in windowData)
         {
-            foreach (var (mon, count) in monitors)
+            string primaryTag = mon.IsPrimary ? " (Primary)" : "";
+            var group = new MonitorWindowGroup
             {
-                string primaryTag = mon.IsPrimary ? " (Primary)" : "";
-                _monitorItems.Add(new MonitorCheckItem
+                MonitorHeader = $"Monitor {mon.Index + 1}: {mon.FriendlyName}{primaryTag}  \u2014  " +
+                                $"{mon.WidthPixels}\u00d7{mon.HeightPixels}  ({windows.Count} window{(windows.Count == 1 ? "" : "s")})",
+                Windows = windows.Select(w => new WindowCheckItem
                 {
-                    MonitorId       = mon.MonitorId,
-                    DisplayHeader   = $"Monitor {mon.Index + 1}: {mon.FriendlyName}{primaryTag}",
-                    ResolutionLabel = $"{mon.WidthPixels}\u00d7{mon.HeightPixels}",
-                    WindowCountLabel= $"{count} window{(count == 1 ? "" : "s")}",
-                });
-            }
+                    Record       = w,
+                    DisplayName  = w.ProcessName,
+                    TitleSnippet = w.TitleSnippet,
+                    IsSelected   = !ShouldAutoExclude(w),
+                }).ToList(),
+            };
+            _monitorGroups.Add(group);
         }
 
-        MonitorList.ItemsSource = _monitorItems;
+        WindowGroupList.ItemsSource = _monitorGroups;
         Loaded += (_, _) => WorkspaceNameInput.Focus();
     }
 
-    // ── Button handlers ───────────────────────────────────────────────────────
+    // ── Smart exclusion ───────────────────────────────────────────────────
+
+    private static bool ShouldAutoExclude(WindowRecord w)
+    {
+        // Password managers
+        if (AutoExcludeProcesses.Contains(w.ProcessName))
+            return true;
+
+        // Incognito / private browser windows
+        foreach (var pattern in PrivateTitlePatterns)
+        {
+            if (w.TitleSnippet.Contains(pattern, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    // ── Button handlers ───────────────────────────────────────────────────
 
     private void OnSave(object sender, RoutedEventArgs e)   => TryCommit();
     private void OnCancel(object sender, RoutedEventArgs e) => Close();
@@ -95,12 +133,14 @@ public partial class SaveWorkspaceDialog : FluentWindow
         if (e.Key == System.Windows.Input.Key.Escape) Close();
     }
 
-    private void OnSelectAll  (object sender, RoutedEventArgs e) => SetAll(true);
-    private void OnDeselectAll(object sender, RoutedEventArgs e) => SetAll(false);
+    private void OnSelectAllWindows(object sender, RoutedEventArgs e) => SetAllWindows(true);
+    private void OnDeselectAllWindows(object sender, RoutedEventArgs e) => SetAllWindows(false);
 
-    private void SetAll(bool value)
+    private void SetAllWindows(bool value)
     {
-        foreach (var item in _monitorItems) item.IsSelected = value;
+        foreach (var g in _monitorGroups)
+            foreach (var w in g.Windows)
+                w.IsSelected = value;
     }
 
     private void TryCommit()
@@ -113,10 +153,11 @@ public partial class SaveWorkspaceDialog : FluentWindow
             return;
         }
 
-        if (_monitorItems.Count > 0 && _monitorItems.All(m => !m.IsSelected))
+        bool anySelected = _monitorGroups.Any(g => g.Windows.Any(w => w.IsSelected));
+        if (!anySelected)
         {
             System.Windows.MessageBox.Show(
-                "Please select at least one monitor to save.", "No Monitor Selected",
+                "Please select at least one window to save.", "No Windows Selected",
                 System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
             return;
         }

@@ -78,6 +78,22 @@ public class WorkspaceService
             .ToList();
     }
 
+    /// <summary>
+    /// Returns current monitors paired with all visible windows on each monitor.
+    /// Used by the Save Workspace dialog to show a per-window checkbox list.
+    /// </summary>
+    public List<(MonitorInfo Monitor, List<WindowRecord> Windows)> GetWindowPreviewForDialog()
+    {
+        var monitors = _monitorService.GetCurrentMonitors();
+        var windows  = _windowService.SnapshotAllWindows(monitors)
+            .Where(w => !w.ProcessName.Equals("WindowAnchor", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        return monitors
+            .Select(m => (m, windows.Where(w => w.MonitorId == m.MonitorId).ToList()))
+            .ToList();
+    }
+
     // ── Snapshot ─────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -93,23 +109,78 @@ public class WorkspaceService
     ///   Restrict the snapshot to windows on specific monitors (by
     ///   <see cref="MonitorInfo.MonitorId"/>).  Pass <c>null</c> (default) to include all.
     /// </param>
+    /// <param name="selectedWindows">
+    ///   When non-null, use this pre-filtered window list instead of enumerating
+    ///   from scratch.  This is fed from the selective-save dialog.
+    /// </param>
     public WorkspaceSnapshot TakeSnapshot(
         string name,
         bool saveFiles = true,
         HashSet<string>? monitorIds = null,
-        IProgress<SaveProgressReport>? progress = null)
+        IProgress<SaveProgressReport>? progress = null,
+        List<WindowRecord>? selectedWindows = null)
     {
         string fingerprint = _monitorService.GetCurrentMonitorFingerprint();
 
         // Enumerate monitors first so every WindowRecord is tagged with monitor info
         var allMonitors = _monitorService.GetCurrentMonitors();
 
+        List<WindowRecord> windows;
+
+        if (selectedWindows != null)
+        {
+            // Use the pre-filtered list from the selective-save dialog
+            windows = selectedWindows;
+            // Determine monitors to save from the windows that were selected
+            var usedMonitorIds = new HashSet<string>(windows.Select(w => w.MonitorId));
+            var monitorsToSaveFromSelection = allMonitors.Where(m => usedMonitorIds.Contains(m.MonitorId)).ToList();
+
+            var selEntries = new List<WorkspaceEntry>();
+            if (saveFiles)
+            {
+                progress?.Report(new SaveProgressReport(0, windows.Count, "Building file detection cache\u2026", ""));
+                _jumpListService.BuildSnapshotCache();
+            }
+
+            int selProgressIdx = 0;
+            try
+            {
+                foreach (var w in windows)
+                {
+                    progress?.Report(new SaveProgressReport(++selProgressIdx, windows.Count, w.ProcessName, w.TitleSnippet));
+                    selEntries.Add(BuildEntryForWindow(w, saveFiles));
+                }
+            }
+            finally
+            {
+                if (saveFiles) _jumpListService.ClearSnapshotCache();
+            }
+
+            progress?.Report(new SaveProgressReport(windows.Count, windows.Count, "Saving workspace file\u2026", ""));
+
+            var selSnapshot = new WorkspaceSnapshot
+            {
+                Name               = name,
+                MonitorFingerprint = fingerprint,
+                SavedAt            = DateTime.UtcNow,
+                SavedWithFiles     = saveFiles,
+                Monitors           = monitorsToSaveFromSelection,
+                Entries            = selEntries,
+            };
+
+            _storageService.SaveWorkspace(selSnapshot);
+            AppLogger.Info($"TakeSnapshot saved '{name}' — {selEntries.Count} entries (selective), saveFiles={saveFiles}");
+            return selSnapshot;
+        }
+
+        // ── Original path: enumerate windows from scratch ─────────────────
+
         // Determine which monitors to include (null = all)
         var monitorsToSave = monitorIds == null
             ? allMonitors
             : allMonitors.Where(m => monitorIds.Contains(m.MonitorId)).ToList();
 
-        var windows = _windowService.SnapshotAllWindows(allMonitors);
+        windows = _windowService.SnapshotAllWindows(allMonitors);
 
         // Filter windows to only include those on the selected monitors
         var selectedMonitorIdSet = new HashSet<string>(monitorsToSave.Select(m => m.MonitorId));
@@ -341,6 +412,149 @@ public class WorkspaceService
         _storageService.SaveWorkspace(snapshot);
         AppLogger.Info($"TakeSnapshot saved '{name}' — {entries.Count} entries across {monitorsToSave.Count} monitor(s), saveFiles={saveFiles}");
         return snapshot;
+    }
+
+    // ── Per-window entry builder (shared by both snapshot paths) ──────────
+
+    /// <summary>
+    /// Builds a <see cref="WorkspaceEntry"/> for a single window, running file-detection
+    /// tiers when <paramref name="saveFiles"/> is <c>true</c>.  Assumes the jump-list
+    /// snapshot cache is already populated.
+    /// </summary>
+    private WorkspaceEntry BuildEntryForWindow(WindowRecord w, bool saveFiles)
+    {
+        // Explorer special case
+        if (w.ProcessName.Equals("explorer", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrEmpty(w.FolderPath))
+        {
+            return new WorkspaceEntry
+            {
+                ExecutablePath  = w.ExecutablePath,
+                ProcessName     = w.ProcessName,
+                WindowClassName = w.ClassName,
+                FilePath        = saveFiles ? w.FolderPath : null,
+                FileConfidence  = saveFiles ? 95 : 0,
+                FileSource      = saveFiles ? "EXPLORER_FOLDER" : "NONE",
+                LaunchArg       = saveFiles ? w.FolderPath : null,
+                Position        = w,
+                MonitorId       = w.MonitorId,
+                MonitorIndex    = w.MonitorIndex,
+                MonitorName     = w.MonitorName,
+            };
+        }
+
+        string? filePath   = null;
+        int     confidence = 0;
+        string  source     = "NONE";
+        string? launchArg  = null;
+
+        if (saveFiles)
+        {
+            AppLogger.Debug($"[FileDetect] ── {w.ProcessName} | title: \"{w.TitleSnippet}\" | exe: {w.ExecutablePath}");
+
+            var (titlePath, titleConf) = TitleParser.ExtractFilePath(w.ProcessName, w.TitleSnippet);
+            filePath   = titlePath;
+            confidence = titleConf;
+            source     = titleConf > 0 ? "TITLE_PARSE" : "NONE";
+
+            if (titleConf > 0)
+                AppLogger.Debug($"[FileDetect]   T1 TITLE_PARSE  conf={titleConf}  path=\"{titlePath}\"");
+            else
+                AppLogger.Debug($"[FileDetect]   T1 no match");
+
+            // Tier 1.5
+            if (confidence == 40 && !string.IsNullOrEmpty(filePath) && !Path.IsPathRooted(filePath))
+            {
+                try
+                {
+                    var jlPool = _jumpListService.GetRecentFilesForApp(w.ExecutablePath, maxFiles: 50);
+                    string? exact = jlPool.FirstOrDefault(p =>
+                        Path.GetFileName(p).Equals(filePath, StringComparison.OrdinalIgnoreCase));
+                    if (exact != null)
+                    {
+                        filePath   = exact;
+                        confidence = 90;
+                        source     = "JUMPLIST_EXACT";
+                    }
+                }
+                catch (Exception ex) { AppLogger.Warn($"[FileDetect]   T1.5 exception: {ex.Message}"); }
+            }
+
+            // Tier 2
+            if (confidence < 80 && !string.IsNullOrEmpty(w.ExecutablePath))
+            {
+                try
+                {
+                    var jlFiles = _jumpListService.GetRecentFilesForApp(w.ExecutablePath, maxFiles: 30);
+                    if (jlFiles.Count > 0)
+                    {
+                        string titleLower = w.TitleSnippet.ToLowerInvariant();
+                        string? jlBest = jlFiles
+                            .Where(p =>
+                            {
+                                string name = Path.GetFileName(p);
+                                string stem = Path.GetFileNameWithoutExtension(p);
+                                if (stem.Length < 3) return false;
+                                return titleLower.Contains(name.ToLowerInvariant()) ||
+                                       titleLower.Contains(stem.ToLowerInvariant());
+                            })
+                            .OrderByDescending(p => Path.GetFileNameWithoutExtension(p).Length)
+                            .FirstOrDefault();
+
+                        if (jlBest != null)
+                        {
+                            filePath   = jlBest;
+                            confidence = 80;
+                            source     = "JUMPLIST";
+                        }
+                    }
+                }
+                catch (Exception ex) { AppLogger.Warn($"[FileDetect]   T2 exception: {ex.Message}"); }
+            }
+
+            // Tier 3
+            if (confidence < 80 && !string.IsNullOrEmpty(filePath) && !Path.IsPathRooted(filePath))
+            {
+                try
+                {
+                    string? found = SearchFileInCommonLocations(filePath);
+                    if (found != null)
+                    {
+                        filePath = found; confidence = 85; source = "FILE_SEARCH";
+                    }
+                }
+                catch (Exception ex) { AppLogger.Warn($"[FileDetect]   T3 exception: {ex.Message}"); }
+            }
+
+            launchArg = confidence >= 80 ? filePath : null;
+
+            bool isVsCodeLike = w.ProcessName.Equals("Code",   StringComparison.OrdinalIgnoreCase)
+                             || w.ProcessName.Equals("Cursor", StringComparison.OrdinalIgnoreCase);
+            if (isVsCodeLike && launchArg != null)
+            {
+                if (Directory.Exists(launchArg)) { /* folder — keep as-is */ }
+                else if (File.Exists(launchArg) &&
+                         !launchArg.EndsWith(".code-workspace", StringComparison.OrdinalIgnoreCase))
+                    launchArg = Path.GetDirectoryName(launchArg);
+            }
+
+            AppLogger.Debug($"[FileDetect]   RESULT  source={source}  conf={confidence}  launchArg=\"{launchArg ?? "(null)"}\"");
+        }
+
+        return new WorkspaceEntry
+        {
+            ExecutablePath  = w.ExecutablePath,
+            ProcessName     = w.ProcessName,
+            WindowClassName = w.ClassName,
+            FilePath        = filePath,
+            FileConfidence  = confidence,
+            FileSource      = source,
+            LaunchArg       = launchArg,
+            Position        = w,
+            MonitorId       = w.MonitorId,
+            MonitorIndex    = w.MonitorIndex,
+            MonitorName     = w.MonitorName,
+        };
     }
 
     // ── Selective restore ─────────────────────────────────────────────────────
@@ -683,6 +897,7 @@ public class WorkspaceService
     /// Builds a <see cref="ProcessStartInfo"/> for launching an app to restore a workspace entry.
     /// <c>UseShellExecute = true</c> is mandatory so file associations are honoured.
     /// VS Code is special-cased to use <c>code.exe &lt;folder&gt;</c>.
+    /// Browsers are special-cased to use <c>--restore-last-session</c> (or equivalent).
     /// </summary>
     public ProcessStartInfo BuildProcessStartInfo(WorkspaceEntry entry)
     {
@@ -708,11 +923,48 @@ public class WorkspaceService
             };
         }
 
+        // ── Browser restore-session support ───────────────────────────────
+        // When launching a browser that has no specific LaunchArg (no URL), pass
+        // the restore-session flag so the browser reopens whatever tabs the user
+        // had open when the workspace was saved.
+        if (IsBrowserProcess(entry.ProcessName))
+        {
+            string flag = GetBrowserRestoreFlag(entry.ProcessName);
+            AppLogger.Info($"Browser detected ({entry.ProcessName}) — launching with {flag}");
+            return new ProcessStartInfo
+            {
+                FileName        = entry.ExecutablePath,
+                Arguments       = flag,
+                UseShellExecute = false,
+            };
+        }
+
         return new ProcessStartInfo
         {
             FileName        = entry.ExecutablePath,
             UseShellExecute = true,
         };
+    }
+
+    // ── Browser detection helpers ─────────────────────────────────────────
+
+    private static readonly HashSet<string> BrowserProcessNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "chrome", "msedge", "opera", "brave",
+    };
+
+    /// <summary>Returns <c>true</c> if the process name is a known browser.</summary>
+    public static bool IsBrowserProcess(string processName) =>
+        BrowserProcessNames.Contains(processName);
+
+    /// <summary>
+    /// Returns the command-line flag that tells the browser to restore its
+    /// previous session. Chromium-based browsers all use the same flag.
+    /// </summary>
+    private static string GetBrowserRestoreFlag(string processName)
+    {
+        // Chrome, Edge, Opera, Brave (all Chromium-based)
+        return "--restore-last-session";
     }
 }
 

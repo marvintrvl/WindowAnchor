@@ -1,11 +1,15 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using H.NotifyIcon;
 using Wpf.Ui.Appearance;
+using WindowAnchor.Models;
 using WindowAnchor.Services;
 
 namespace WindowAnchor;
@@ -17,6 +21,8 @@ public partial class App : System.Windows.Application
     private MonitorService?     _monitorService;
     private WorkspaceService?   _workspaceService;
     private StorageService?     _storageService;
+    private SettingsService?    _settingsService;
+    private HotkeyService?     _hotkeyService;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -47,11 +53,72 @@ public partial class App : System.Windows.Application
         _workspaceService = workspaceService;
         _coordinator      = new LayoutCoordinator(_monitorService, windowService, workspaceService);
 
+        // Settings + hotkeys
+        _settingsService = new SettingsService();
+        _hotkeyService   = new HotkeyService();
+        _hotkeyService.Initialise();
+        ApplyHotkeySettings();
+
         string initialFingerprint = _monitorService.GetCurrentMonitorFingerprint();
         AppLogger.Info($"Initial monitor fingerprint: {initialFingerprint}");
         if (minimized) AppLogger.Info("Started with --minimized — staying in tray.");
 
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+
+        // ── Startup workspace restore (deferred so the tray icon settles) ──
+        var startupBehavior = _settingsService.Settings.StartupBehavior;
+        if (startupBehavior != StartupBehavior.None)
+        {
+            _ = Dispatcher.InvokeAsync(async () =>
+            {
+                await Task.Delay(2000);
+                await HandleStartupRestoreAsync(startupBehavior);
+            }, DispatcherPriority.Background);
+        }
+    }
+
+    // ── Startup workspace restore ─────────────────────────────────────────
+
+    private async Task HandleStartupRestoreAsync(StartupBehavior behavior)
+    {
+        try
+        {
+            var workspaces = _workspaceService!.GetAllWorkspaces();
+            if (workspaces.Count == 0) return;
+
+            WorkspaceSnapshot? target = null;
+
+            switch (behavior)
+            {
+                case StartupBehavior.RestoreDefault:
+                    string? defaultName = _settingsService!.Settings.DefaultWorkspaceName;
+                    if (!string.IsNullOrEmpty(defaultName))
+                        target = workspaces.FirstOrDefault(w =>
+                            w.Name.Equals(defaultName, StringComparison.OrdinalIgnoreCase));
+                    break;
+
+                case StartupBehavior.RestoreLastUsed:
+                    target = workspaces.OrderByDescending(w => w.SavedAt).FirstOrDefault();
+                    break;
+
+                case StartupBehavior.AskUser:
+                    var dialog = new UI.StartupWorkspaceDialog(workspaces);
+                    if (dialog.ShowDialog() == true)
+                        target = dialog.SelectedWorkspace;
+                    break;
+            }
+
+            if (target != null)
+            {
+                AppLogger.Info($"Startup restore: restoring '{target.Name}'");
+                await _coordinator!.RestoreWorkspaceAsync(target);
+                ShowBalloon("Workspace Restored", $"\u201c{target.Name}\u201d restored on startup");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("HandleStartupRestoreAsync failed", ex);
+        }
     }
 
     private void OnDisplaySettingsChanged(object? sender, EventArgs e)
@@ -63,30 +130,31 @@ public partial class App : System.Windows.Application
 
     private void OnOpenSettingsClick(object sender, RoutedEventArgs e)
     {
-        var settings = new UI.SettingsWindow(_workspaceService!, _storageService!, _coordinator!);
+        var settings = new UI.SettingsWindow(_workspaceService!, _storageService!, _coordinator!, _settingsService!);
         settings.Show();
     }
 
     private async void ShowSaveWorkspaceDialog()
     {
-        // Build monitor list with per-monitor window counts for the dialog
-        System.Collections.Generic.List<(WindowAnchor.Models.MonitorInfo Monitor, int WindowCount)> monitorData = new();
+        // Build per-monitor window lists for the selective-save dialog
+        List<(MonitorInfo Monitor, List<WindowRecord> Windows)> windowPreview;
         try
         {
-            monitorData = _workspaceService!.GetMonitorDataForDialog();
+            windowPreview = await Task.Run(() => _workspaceService!.GetWindowPreviewForDialog());
         }
         catch (Exception ex)
         {
-            AppLogger.Warn($"ShowSaveWorkspaceDialog: could not enumerate monitors: {ex.Message}");
+            AppLogger.Warn($"ShowSaveWorkspaceDialog: could not enumerate windows: {ex.Message}");
+            windowPreview = new();
         }
 
-        var dialog = new UI.SaveWorkspaceDialog(monitorData);
+        var dialog = new UI.SaveWorkspaceDialog(windowPreview);
         if (dialog.ShowDialog() != true) return;
 
         // Read all dialog properties on the UI thread before Task.Run.
-        var name       = dialog.WorkspaceName;
-        var saveFiles  = dialog.SaveFiles;
-        var monitorIds = dialog.SelectedMonitorIds;
+        var name            = dialog.WorkspaceName;
+        var saveFiles       = dialog.SaveFiles;
+        var selectedWindows = dialog.SelectedWindows;
 
         // Show progress window when file detection is enabled (can take several seconds).
         UI.SaveProgressWindow? progressWindow = null;
@@ -102,11 +170,12 @@ public partial class App : System.Windows.Application
 
         try
         {
-            await System.Threading.Tasks.Task.Run(
-                () => _workspaceService!.TakeSnapshot(name, saveFiles: saveFiles, monitorIds: monitorIds, progress: progress));
+            await Task.Run(
+                () => _workspaceService!.TakeSnapshot(name, saveFiles: saveFiles,
+                    selectedWindows: selectedWindows, progress: progress));
             AppLogger.Info($"Workspace '{name}' saved (files={saveFiles})");
             ShowBalloon("Workspace Saved",
-                $"\u201c{name}\u201d saved \u2014 {(monitorIds == null ? "all monitors" : $"{monitorIds.Count} monitor(s)")}");
+                $"\u201c{name}\u201d saved \u2014 {selectedWindows.Count} window(s)");
         }
         catch (Exception ex)
         {
@@ -143,8 +212,7 @@ public partial class App : System.Windows.Application
 
         workspacesItem.Items.Clear();
 
-        var workspaces = _workspaceService?.GetAllWorkspaces()
-            ?? new System.Collections.Generic.List<WindowAnchor.Models.WorkspaceSnapshot>();
+        var workspaces = GetOrderedWorkspaces();
 
         if (workspaces.Count == 0)
         {
@@ -155,7 +223,7 @@ public partial class App : System.Windows.Application
         }
         else
         {
-            foreach (var ws in workspaces.OrderByDescending(w => w.SavedAt))
+            foreach (var ws in workspaces)
             {
                 var item = new System.Windows.Controls.MenuItem
                 {
@@ -186,8 +254,88 @@ public partial class App : System.Windows.Application
     private void OnExitClick(object sender, RoutedEventArgs e)
     {
         AppLogger.Info("User requested exit.");
+        _hotkeyService?.Dispose();
         _trayIcon?.Dispose();
         Current.Shutdown();
+    }
+
+    // ── Hotkey integration ────────────────────────────────────────────────
+
+    /// <summary>
+    /// (Re)registers or unregisters all global hotkeys based on the current
+    /// settings.  Called from OnStartup and from SettingsWindow when the user
+    /// toggles the switch or changes a shortcut.
+    /// </summary>
+    public void ApplyHotkeySettings()
+    {
+        if (_hotkeyService == null || _settingsService == null) return;
+
+        _hotkeyService.UnregisterAll();
+
+        if (!_settingsService.Settings.HotkeysEnabled) return;
+
+        // Merge defaults with any user-customised shortcuts
+        var shortcuts = HotkeyService.GetResolvedShortcuts(_settingsService.Settings);
+
+        foreach (var shortcut in shortcuts)
+        {
+            Action? callback = shortcut.ActionId switch
+            {
+                "QuickSave"      => () => Dispatcher.Invoke(ShowSaveWorkspaceDialog),
+                "RestoreDefault" => () => Dispatcher.Invoke(RestoreDefaultWorkspace),
+                "RestoreSlot1"   => () => Dispatcher.Invoke(() => RestoreWorkspaceByIndex(0)),
+                "RestoreSlot2"   => () => Dispatcher.Invoke(() => RestoreWorkspaceByIndex(1)),
+                "RestoreSlot3"   => () => Dispatcher.Invoke(() => RestoreWorkspaceByIndex(2)),
+                "OpenSettings"   => () => Dispatcher.Invoke(() => OnOpenSettingsClick(this, new RoutedEventArgs())),
+                _ => null,
+            };
+
+            if (callback != null)
+                _hotkeyService.Register(shortcut.Modifiers, shortcut.Key, callback);
+        }
+    }
+
+    private void RestoreDefaultWorkspace()
+    {
+        string? name = _settingsService?.Settings.DefaultWorkspaceName;
+        if (string.IsNullOrEmpty(name)) return;
+
+        var ws = _workspaceService?.GetAllWorkspaces()
+            .FirstOrDefault(w => w.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (ws != null)
+            _ = _coordinator!.RestoreWorkspaceAsync(ws);
+    }
+
+    private void RestoreWorkspaceByIndex(int index)
+    {
+        var workspaces = GetOrderedWorkspaces();
+        if (index < workspaces.Count)
+            _ = _coordinator!.RestoreWorkspaceAsync(workspaces[index]);
+    }
+
+    /// <summary>
+    /// Returns workspaces in the user's preferred display order (matching the
+    /// Settings UI).  The first three entries map to Ctrl+Alt+1/2/3.
+    /// </summary>
+    private List<Models.WorkspaceSnapshot> GetOrderedWorkspaces()
+    {
+        var all   = _workspaceService?.GetAllWorkspaces() ?? new();
+        var order = _settingsService?.Settings.WorkspaceOrder;
+        if (order == null || order.Count == 0)
+            return all.OrderByDescending(w => w.SavedAt).ToList();
+
+        var result = new List<Models.WorkspaceSnapshot>();
+        foreach (var name in order)
+        {
+            var ws = all.FirstOrDefault(w => w.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (ws != null) result.Add(ws);
+        }
+        foreach (var ws in all.OrderByDescending(w => w.SavedAt))
+        {
+            if (!result.Any(r => r.Name.Equals(ws.Name, StringComparison.OrdinalIgnoreCase)))
+                result.Add(ws);
+        }
+        return result;
     }
 
     // ── Balloon helper ────────────────────────────────────────────────────────

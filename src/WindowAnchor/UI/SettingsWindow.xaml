@@ -128,6 +128,163 @@
                     </Grid>
                 </Border>
 
+                <!-- ══════════════════ STARTUP BEHAVIOR ══════════════════ -->
+
+                <StackPanel Orientation="Horizontal" Margin="4,8,0,8">
+                    <ui:SymbolIcon Symbol="Play24" FontSize="18"
+                                   Foreground="{DynamicResource SystemAccentColorPrimaryBrush}"
+                                   VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <TextBlock Text="Startup"
+                               FontSize="15" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="8"
+                        Padding="16,14" Margin="0,0,0,8">
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="On startup" FontSize="13" FontWeight="Medium"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                <TextBlock Text="Choose what happens when WindowAnchor starts"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            </StackPanel>
+                            <ComboBox x:Name="StartupBehaviorCombo" Grid.Column="1"
+                                      MinWidth="200" VerticalAlignment="Center"
+                                      SelectionChanged="OnStartupBehaviorChanged">
+                                <ComboBoxItem Content="Don't restore any workspace" Tag="None"/>
+                                <ComboBoxItem Content="Restore default workspace" Tag="RestoreDefault"/>
+                                <ComboBoxItem Content="Restore last-used workspace" Tag="RestoreLastUsed"/>
+                                <ComboBoxItem Content="Ask me which workspace" Tag="AskUser"/>
+                            </ComboBox>
+                        </Grid>
+
+                        <!-- Default workspace picker (only visible when RestoreDefault is selected) -->
+                        <Grid x:Name="DefaultWorkspacePanel" Visibility="Collapsed" Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="Default workspace" FontSize="13" FontWeight="Medium"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                <TextBlock Text="The workspace to restore automatically on startup"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            </StackPanel>
+                            <ComboBox x:Name="DefaultWorkspaceCombo" Grid.Column="1"
+                                      MinWidth="200" VerticalAlignment="Center"
+                                      SelectionChanged="OnDefaultWorkspaceChanged"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- ══════════════════ KEYBOARD SHORTCUTS ══════════════════ -->
+
+                <StackPanel Orientation="Horizontal" Margin="4,16,0,8">
+                    <ui:SymbolIcon Symbol="Keyboard24" FontSize="18"
+                                   Foreground="{DynamicResource SystemAccentColorPrimaryBrush}"
+                                   VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <TextBlock Text="Keyboard Shortcuts"
+                               FontSize="15" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="8"
+                        Padding="16,14" Margin="0,0,0,8">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="Enable global keyboard shortcuts"
+                                           FontSize="13" FontWeight="Medium"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                <TextBlock Text="Control WindowAnchor from anywhere with hotkeys"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            </StackPanel>
+                            <ui:ToggleSwitch x:Name="HotkeysToggle" Grid.Column="1"
+                                             VerticalAlignment="Center"
+                                             Checked="OnHotkeysToggleChanged"
+                                             Unchecked="OnHotkeysToggleChanged"/>
+                        </Grid>
+
+                        <Separator Margin="0,0,0,8" Opacity="0.3"/>
+
+                        <!-- Hotkey table -->
+                        <ItemsControl x:Name="HotkeyList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,3">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding ActionName}" FontSize="12"
+                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                                   VerticalAlignment="Center"/>
+                                        <!-- Shortcut badge (changes colour when recording) -->
+                                        <Border Grid.Column="1" CornerRadius="4" Padding="10,4" Margin="0,0,6,0">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background"
+                                                            Value="{DynamicResource SubtleFillColorSecondaryBrush}"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsRecording}" Value="True">
+                                                            <Setter Property="Background"
+                                                                    Value="{DynamicResource SystemAccentColorPrimaryBrush}"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock Text="{Binding DisplayShortcut}" FontSize="12"
+                                                       FontFamily="Consolas" VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground"
+                                                                Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsRecording}" Value="True">
+                                                                <Setter Property="Foreground" Value="White"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </Border>
+                                        <!-- Change button -->
+                                        <Button Grid.Column="2" Content="Change" FontSize="11"
+                                                Padding="8,3" Margin="0,0,2,0"
+                                                Tag="{Binding}" Click="OnChangeHotkey"
+                                                Style="{StaticResource MoreBtnStyle}"/>
+                                        <!-- Reset button (only visible when customised) -->
+                                        <Button Grid.Column="3" Content="Reset" FontSize="11"
+                                                Padding="8,3" Tag="{Binding}" Click="OnResetHotkey"
+                                                Visibility="{Binding ResetVisibility}"
+                                                Style="{StaticResource MoreBtnStyle}"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
                 <!-- ══════════════════ SAVED WORKSPACES ══════════════════ -->
 
                 <!-- Section header (Win11 Settings style) -->
@@ -223,10 +380,24 @@
                                             <StackPanel Grid.Column="0"
                                                         Style="{StaticResource HideWhenEditing}"
                                                         VerticalAlignment="Center">
-                                                <TextBlock Text="{Binding Name}"
-                                                           FontSize="13" FontWeight="Medium"
-                                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                                                           TextTrimming="CharacterEllipsis"/>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <!-- Slot badge (#1, #2, #3 for the first three) -->
+                                                    <Border CornerRadius="3" Padding="5,1" Margin="0,0,6,0"
+                                                            Background="{DynamicResource SystemAccentColorPrimaryBrush}"
+                                                            Visibility="{Binding SlotBadgeVisibility}">
+                                                        <TextBlock Text="{Binding SlotLabel}" FontSize="10"
+                                                                   FontWeight="Bold" Foreground="White"/>
+                                                    </Border>
+                                                    <!-- ★ for default workspace -->
+                                                    <TextBlock Text="★" FontSize="12" Margin="0,0,4,0"
+                                                               Foreground="{DynamicResource SystemAccentColorPrimaryBrush}"
+                                                               VerticalAlignment="Center"
+                                                               Visibility="{Binding DefaultStarVisibility}"/>
+                                                    <TextBlock Text="{Binding Name}"
+                                                               FontSize="13" FontWeight="Medium"
+                                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                </StackPanel>
                                                 <TextBlock Text="{Binding FingerprintLabel}"
                                                            FontSize="10" FontFamily="Consolas"
                                                            Foreground="{DynamicResource TextFillColorTertiaryBrush}"
