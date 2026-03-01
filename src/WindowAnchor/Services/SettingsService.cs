@@ -64,4 +64,35 @@ public class SettingsService
             AppLogger.Warn($"SettingsService: failed to save settings — {ex.Message}");
         }
     }
+
+    // ── Monitor alias helpers ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the user-defined alias for <paramref name="monitorId"/>,
+    /// or <paramref name="fallbackName"/> when no alias is set.
+    /// </summary>
+    public string ResolveMonitorName(string monitorId, string fallbackName)
+    {
+        if (Settings.MonitorAliases != null &&
+            Settings.MonitorAliases.TryGetValue(monitorId, out var alias) &&
+            !string.IsNullOrWhiteSpace(alias))
+            return alias;
+        return fallbackName;
+    }
+
+    /// <summary>Sets or removes a monitor alias and persists immediately.</summary>
+    public void SetMonitorAlias(string monitorId, string? alias)
+    {
+        Settings.MonitorAliases ??= new();
+        if (string.IsNullOrWhiteSpace(alias))
+            Settings.MonitorAliases.Remove(monitorId);
+        else
+            Settings.MonitorAliases[monitorId] = alias.Trim();
+
+        // Clean up empty dictionary
+        if (Settings.MonitorAliases.Count == 0)
+            Settings.MonitorAliases = null;
+
+        Save();
+    }
 }

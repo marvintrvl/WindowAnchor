@@ -354,4 +354,57 @@ public class WindowService
         File.WriteAllText(filePath, json);
         AppLogger.Info($"Wrote debug snapshot to {filePath} — {snapshot.Count} windows");
     }
+
+    // ── Close all user windows ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Gracefully closes all visible top-level user windows by posting WM_CLOSE.
+    /// WindowAnchor's own windows are excluded.  Apps with unsaved work will show
+    /// their own save-confirmation dialogs; the window stays open until the user
+    /// responds (or cancels).
+    /// Returns the number of windows that were sent a close message.
+    /// </summary>
+    public int CloseAllUserWindows()
+    {
+        int closed = 0;
+        var ownPid = (uint)Process.GetCurrentProcess().Id;
+
+        NativeMethodsWindow.EnumWindows((hWnd, _) =>
+        {
+            if (!ShouldIncludeWindow(hWnd)) return true;
+
+            NativeMethodsWindow.GetWindowThreadProcessId(hWnd, out uint pid);
+            if (pid == ownPid) return true;   // skip our own windows
+
+            NativeMethodsWindow.PostMessage(hWnd, NativeMethodsWindow.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+            closed++;
+            return true;
+        }, IntPtr.Zero);
+
+        AppLogger.Info($"CloseAllUserWindows: sent WM_CLOSE to {closed} windows");
+        return closed;
+    }
+
+    /// <summary>
+    /// Returns the number of visible top-level user windows (excluding
+    /// WindowAnchor's own windows).  Used to poll whether all windows have
+    /// finished closing after <see cref="CloseAllUserWindows"/>.
+    /// </summary>
+    public int CountUserWindows()
+    {
+        int count = 0;
+        var ownPid = (uint)Process.GetCurrentProcess().Id;
+
+        NativeMethodsWindow.EnumWindows((hWnd, _) =>
+        {
+            if (!ShouldIncludeWindow(hWnd)) return true;
+
+            NativeMethodsWindow.GetWindowThreadProcessId(hWnd, out uint pid);
+            if (pid != ownPid)
+                count++;
+            return true;
+        }, IntPtr.Zero);
+
+        return count;
+    }
 }

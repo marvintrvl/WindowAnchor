@@ -24,7 +24,8 @@ internal sealed class SelectiveRestoreDialog : FluentWindow
 
     public SelectiveRestoreDialog(
         WorkspaceSnapshot snapshot,
-        bool fingerprintMismatch)
+        bool fingerprintMismatch,
+        Services.SettingsService? settingsService = null)
     {
         Title                      = $"Restore: {snapshot.Name}";
         Width                      = 460;
@@ -100,6 +101,8 @@ internal sealed class SelectiveRestoreDialog : FluentWindow
             int    count = snapshot.Entries.Count(e => e.MonitorId == monitor.MonitorId);
             string res   = $"{monitor.WidthPixels}\u00D7{monitor.HeightPixels}";
             string flags = monitor.IsPrimary ? "  \u2022  Primary" : "";
+            string displayName = settingsService?.ResolveMonitorName(monitor.MonitorId, monitor.FriendlyName)
+                                 ?? monitor.FriendlyName;
 
             var cb = new System.Windows.Controls.CheckBox
             {
@@ -111,7 +114,7 @@ internal sealed class SelectiveRestoreDialog : FluentWindow
                     {
                         new System.Windows.Controls.TextBlock
                         {
-                            Text       = monitor.FriendlyName,
+                            Text       = displayName,
                             FontSize   = 13,
                             FontWeight = FontWeights.Medium,
                             Foreground = Res("TextFillColorPrimaryBrush"),

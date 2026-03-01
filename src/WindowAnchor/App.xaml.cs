@@ -130,7 +130,7 @@ public partial class App : System.Windows.Application
 
     private void OnOpenSettingsClick(object sender, RoutedEventArgs e)
     {
-        var settings = new UI.SettingsWindow(_workspaceService!, _storageService!, _coordinator!, _settingsService!);
+        var settings = new UI.SettingsWindow(_workspaceService!, _storageService!, _coordinator!, _settingsService!, _monitorService!);
         settings.Show();
     }
 
@@ -148,7 +148,7 @@ public partial class App : System.Windows.Application
             windowPreview = new();
         }
 
-        var dialog = new UI.SaveWorkspaceDialog(windowPreview);
+        var dialog = new UI.SaveWorkspaceDialog(windowPreview, _settingsService);
         if (dialog.ShowDialog() != true) return;
 
         // Read all dialog properties on the UI thread before Task.Run.
@@ -233,6 +233,19 @@ public partial class App : System.Windows.Application
                 item.Click += (_, _) => OnRestoreWorkspaceClick(captured);
                 workspacesItem.Items.Add(item);
             }
+
+            workspacesItem.Items.Add(new System.Windows.Controls.Separator());
+
+            foreach (var ws in workspaces)
+            {
+                var switchItem = new System.Windows.Controls.MenuItem
+                {
+                    Header = $"Switch to: {ws.Name}"
+                };
+                var captured = ws;
+                switchItem.Click += (_, _) => OnSwitchWorkspaceClick(captured);
+                workspacesItem.Items.Add(switchItem);
+            }
         }
 
         // Always append Save + Manage at the bottom
@@ -249,6 +262,11 @@ public partial class App : System.Windows.Application
     private void OnRestoreWorkspaceClick(WindowAnchor.Models.WorkspaceSnapshot snapshot)
     {
         _coordinator?.RestoreWorkspaceAsync(snapshot);
+    }
+
+    private void OnSwitchWorkspaceClick(WindowAnchor.Models.WorkspaceSnapshot snapshot)
+    {
+        _coordinator?.SwitchWorkspaceAsync(snapshot);
     }
 
     private void OnExitClick(object sender, RoutedEventArgs e)
@@ -286,7 +304,11 @@ public partial class App : System.Windows.Application
                 "RestoreSlot1"   => () => Dispatcher.Invoke(() => RestoreWorkspaceByIndex(0)),
                 "RestoreSlot2"   => () => Dispatcher.Invoke(() => RestoreWorkspaceByIndex(1)),
                 "RestoreSlot3"   => () => Dispatcher.Invoke(() => RestoreWorkspaceByIndex(2)),
+                "SwitchSlot1"    => () => Dispatcher.Invoke(() => SwitchWorkspaceByIndex(0)),
+                "SwitchSlot2"    => () => Dispatcher.Invoke(() => SwitchWorkspaceByIndex(1)),
+                "SwitchSlot3"    => () => Dispatcher.Invoke(() => SwitchWorkspaceByIndex(2)),
                 "OpenSettings"   => () => Dispatcher.Invoke(() => OnOpenSettingsClick(this, new RoutedEventArgs())),
+                "SwitchDefault"  => () => Dispatcher.Invoke(SwitchDefaultWorkspace),
                 _ => null,
             };
 
@@ -306,11 +328,29 @@ public partial class App : System.Windows.Application
             _ = _coordinator!.RestoreWorkspaceAsync(ws);
     }
 
+    private void SwitchDefaultWorkspace()
+    {
+        string? name = _settingsService?.Settings.DefaultWorkspaceName;
+        if (string.IsNullOrEmpty(name)) return;
+
+        var ws = _workspaceService?.GetAllWorkspaces()
+            .FirstOrDefault(w => w.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (ws != null)
+            _ = _coordinator!.SwitchWorkspaceAsync(ws);
+    }
+
     private void RestoreWorkspaceByIndex(int index)
     {
         var workspaces = GetOrderedWorkspaces();
         if (index < workspaces.Count)
             _ = _coordinator!.RestoreWorkspaceAsync(workspaces[index]);
+    }
+
+    private void SwitchWorkspaceByIndex(int index)
+    {
+        var workspaces = GetOrderedWorkspaces();
+        if (index < workspaces.Count)
+            _ = _coordinator!.SwitchWorkspaceAsync(workspaces[index]);
     }
 
     /// <summary>

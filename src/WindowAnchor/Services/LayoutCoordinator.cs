@@ -14,15 +14,17 @@ namespace WindowAnchor.Services;
 public class LayoutCoordinator
 {
     private readonly MonitorService  _monitorService;
+    private readonly WindowService   _windowService;
     private readonly WorkspaceService _workspaceService;
     private CancellationTokenSource? _displayChangeCts;
 
     public LayoutCoordinator(
         MonitorService  monitorService,
-        WindowService   _,                // kept for call-site compat; no longer used internally
+        WindowService   windowService,
         WorkspaceService workspaceService)
     {
         _monitorService  = monitorService;
+        _windowService   = windowService;
         _workspaceService = workspaceService;
     }
 
@@ -77,7 +79,8 @@ public class LayoutCoordinator
         await _workspaceService.RestoreWorkspaceAsync(snapshot, token);
         if (!token.IsCancellationRequested)
             NotifyBalloon("Workspace Restored",
-                $"\u201c{snapshot.Name}\u201d \u2014 {snapshot.Entries.Count} windows repositioned.");
+                $"\u201c{snapshot.Name}\u201d restored \u2014 other open windows were left untouched. " +
+                $"Use \u201cSwitch to Workspace\u201d to close everything else first.");
     }
 
     /// <summary>
@@ -96,6 +99,94 @@ public class LayoutCoordinator
         if (!token.IsCancellationRequested)
             NotifyBalloon("Workspace Restored",
                 $"\u201c{snapshot.Name}\u201d ({desc}) \u2014 restored successfully.");
+    }
+
+    /// <summary>
+    /// Instant context switch: gracefully closes all current user windows, waits
+    /// for them to finish (giving users time to respond to save-confirmation
+    /// dialogs), then restores the target workspace.
+    /// </summary>
+    /// <remarks>
+    /// <list type="number">
+    ///   <item>Post <c>WM_CLOSE</c> to every user window (triggers save prompts).</item>
+    ///   <item>Poll every 500 ms until all windows are gone (up to 2 minutes).</item>
+    ///   <item>If windows remain after the timeout the switch is aborted.</item>
+    ///   <item>Once the desktop is clear, restore the target workspace.</item>
+    /// </list>
+    /// </remarks>
+    public async Task SwitchWorkspaceAsync(WorkspaceSnapshot snapshot, CancellationToken token = default)
+    {
+        AppLogger.Info($"SwitchWorkspaceAsync: \u2018{snapshot.Name}\u2019");
+        NotifyBalloon("Switching\u2026",
+            $"Closing all windows\u2026 save any unsaved work, then they will close automatically.");
+
+        // Phase 1: send WM_CLOSE to every user window
+        int closed = _windowService.CloseAllUserWindows();
+        AppLogger.Info($"SwitchWorkspaceAsync: sent WM_CLOSE to {closed} windows");
+
+        if (closed == 0)
+        {
+            // Nothing to close — go straight to restore
+            await RestoreAfterSwitch(snapshot, token);
+            return;
+        }
+
+        // Phase 2: poll until all user windows are gone
+        //   Generous timeout (120 s) — users may need to respond to multiple
+        //   save-confirmation dialogs across several apps.
+        const int pollIntervalMs = 500;
+        const int timeoutMs      = 120_000;
+        int elapsed = 0;
+        int lastRemaining = -1;
+
+        while (elapsed < timeoutMs)
+        {
+            if (token.IsCancellationRequested) return;
+
+            await Task.Delay(pollIntervalMs, token).ConfigureAwait(false);
+            elapsed += pollIntervalMs;
+
+            int remaining = _windowService.CountUserWindows();
+
+            if (remaining == 0)
+            {
+                AppLogger.Info("SwitchWorkspaceAsync: all windows closed");
+                break;
+            }
+
+            // Notify the user how many windows are still open (only when count changes)
+            if (remaining != lastRemaining)
+            {
+                AppLogger.Info($"SwitchWorkspaceAsync: waiting for {remaining} window(s) to close");
+                NotifyBalloon("Waiting\u2026",
+                    $"{remaining} window{(remaining == 1 ? "" : "s")} still open \u2014 save your work to continue.");
+                lastRemaining = remaining;
+            }
+        }
+
+        if (token.IsCancellationRequested) return;
+
+        // Phase 3: check result
+        int finalRemaining = _windowService.CountUserWindows();
+        if (finalRemaining > 0)
+        {
+            AppLogger.Warn($"SwitchWorkspaceAsync: timed out with {finalRemaining} window(s) still open — aborting");
+            NotifyBalloon("Switch Cancelled",
+                $"{finalRemaining} window{(finalRemaining == 1 ? " is" : "s are")} still open. Workspace switch aborted.",
+                H.NotifyIcon.Core.NotificationIcon.Warning);
+            return;
+        }
+
+        // Phase 4: restore
+        await RestoreAfterSwitch(snapshot, token);
+    }
+
+    private async Task RestoreAfterSwitch(WorkspaceSnapshot snapshot, CancellationToken token)
+    {
+        await _workspaceService.RestoreWorkspaceAsync(snapshot, token);
+        if (!token.IsCancellationRequested)
+            NotifyBalloon("Workspace Switched",
+                $"Switched to \u201c{snapshot.Name}\u201d \u2014 {snapshot.Entries.Count} windows restored.");
     }
 
     // ── Balloon helper ─────────────────────────────────────────────────────

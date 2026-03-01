@@ -67,6 +67,13 @@ public static class NativeMethodsWindow
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     // SW_SHOWNORMAL = 1, SW_SHOWMINIMIZED = 2, SW_SHOWMAXIMIZED = 3, SW_RESTORE = 9
 
+    // ── Window close ──────────────────────────────────────────────────────
+    public const uint WM_CLOSE = 0x0010;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
     [DllImport("user32.dll")]
     public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
 

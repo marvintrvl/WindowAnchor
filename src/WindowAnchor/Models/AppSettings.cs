@@ -61,4 +61,9 @@ public class AppSettings
     /// Workspaces not in this list are appended at the end (sorted by save date).
     /// </summary>
     public List<string>? WorkspaceOrder { get; set; }
-}
+    // ── Monitor aliases ───────────────────────────────────────────────────
+    /// <summary>
+    /// User-defined friendly names for monitors, keyed by stable EDID-based MonitorId.
+    /// When set, the alias replaces the hardware FriendlyName throughout the UI.
+    /// </summary>
+    public Dictionary<string, string>? MonitorAliases { get; set; }}

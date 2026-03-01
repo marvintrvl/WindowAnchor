@@ -16,8 +16,10 @@
     - **Tier 2**: Uses Windows Jump-List integration to accurately identify and relaunch specific documents in supported apps (Office, VS Code, etc.).
 - **Selective Restore**: Choose exactly which monitors to restore via a picker dialog.
 - **Default Workspace & Startup Restore**: Set a default workspace to auto-restore on launch, restore the last-used one, or choose from a picker dialog.
-- **Global Keyboard Shortcuts**: Customisable hotkeys for quick save, restore, workspace switching (Ctrl+Alt+1/2/3) and settings.
+- **Global Keyboard Shortcuts**: Customisable hotkeys for quick save, restore, workspace switching (Ctrl+Alt+1/2/3), switch workspace (Ctrl+Alt+Shift+1/2/3) and settings.
 - **Workspace Ordering**: Reorder workspaces with Move Up/Down — the first three map to the hotkey slots.
+- **Monitor Renaming**: Assign custom names to monitors (e.g. “Left”, “Ultrawide”) — aliases replace hardware names throughout all dialogs.
+- **Switch Workspace**: Instantly switch contexts by closing all open windows and restoring a different workspace — via context menu, tray, or hotkey.
 - **Browser Session Restore**: Chromium browsers (Chrome, Edge, Opera, Brave) reopen with previous tabs via `--restore-last-session`.
 - **Save Progress Transparency**: A dedicated progress window tracks the discovery of file paths and jump-lists during the save process.
 - **Zero Dependencies**: Available as a high-performance, single-file standalone executable.
@@ -30,7 +32,7 @@
 
 WindowAnchor operates silently in your system tray, watching your display configuration. Using **Monitor Fingerprinting**, it identifies your current setup (e.g., "Home Office" vs. "Travel") and restores your preferred layout instantly.
 
-1. **Download**: Get the latest `WindowAnchor-v1.2.0.exe` from the [Releases](../../releases) page.
+1. **Download**: Get the latest `WindowAnchor-v1.3.0.exe` from the [Releases](../../releases) page.
 2. **Save**: Right-click the tray icon and select "Save Workspace...".
 3. **Restore**: Simply dock your laptop; WindowAnchor handles the rest.
 
@@ -67,16 +69,16 @@ dotnet publish src/WindowAnchor/WindowAnchor.csproj -c Release -r win-x64 --self
 
 ##  Roadmap
 
-### v1.2 (Current Release) — *Stability & Control* ✅
-- **Selective Window Save**: A checkbox list to choose exactly which windows get saved (exclude private/temporary windows).
-- **Default Workspace**: Configure a default workspace to load on startup or via hotkey.
-- **Keyboard Shortcuts**: Customisable global hotkeys for quick save, restore, and workspace switching.
-- **Workspace Ordering**: Reorder workspaces, see slot numbers (#1–#3), and set a default from the context menu.
-- **Browser Session Restore**: Chromium browsers (Chrome, Edge, Opera, Brave) restore previous tabs on launch.
+### v1.3 (Current Release) — *UX Improvements* ✅
+- **Monitor Renaming**: Personalise monitor names ("Generic PnP" → "Left Monitor") in Settings → Monitors.
+- **Switch Workspace**: Instant context switch — closes all windows and restores a different workspace.
+- **Switch Default hotkey**: Ctrl+Alt+Shift+W switches to the default workspace in one keystroke.
+- **Switch Slot hotkeys**: Ctrl+Alt+Shift+1/2/3 switch to workspace slots 1, 2, and 3 (close-everything-first variant of the Restore hotkeys).
 
-### v1.3 (Next Release) — *UX Refinements*
-- **Monitor Renaming**: Personalise "Generic PnP" monitors with custom names like "Left Monitor".
-- **Switch Workspace**: Instantly switch between contexts by closing current apps and opening a different workspace.
+### v1.2 — *Stability & Control* ✅
+- Selective Window Save, Default Workspace, Keyboard Shortcuts, Workspace Ordering, Browser Session Restore.
+
+### v1.4 (Next Release) — *Deeper Integration*
 - **Smart VS Code Tracking**: Deep detection of `.code-workspace` files for perfect dev-environment restoration.
 - **Firefox Session Restore**: CLI-based session restore for Firefox.
 

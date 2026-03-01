@@ -110,12 +110,16 @@ public sealed class HotkeyService : IDisposable
     /// </summary>
     public static readonly HotkeyInfo[] Defaults = new[]
     {
-        new HotkeyInfo("QuickSave",      "Quick Save",           "Ctrl + Alt + S", ModifierKeys.Control | ModifierKeys.Alt, Key.S),
-        new HotkeyInfo("RestoreDefault", "Restore Default",      "Ctrl + Alt + R", ModifierKeys.Control | ModifierKeys.Alt, Key.R),
-        new HotkeyInfo("RestoreSlot1",   "Restore Workspace 1",  "Ctrl + Alt + 1", ModifierKeys.Control | ModifierKeys.Alt, Key.D1),
-        new HotkeyInfo("RestoreSlot2",   "Restore Workspace 2",  "Ctrl + Alt + 2", ModifierKeys.Control | ModifierKeys.Alt, Key.D2),
-        new HotkeyInfo("RestoreSlot3",   "Restore Workspace 3",  "Ctrl + Alt + 3", ModifierKeys.Control | ModifierKeys.Alt, Key.D3),
-        new HotkeyInfo("OpenSettings",   "Open Settings",        "Ctrl + Alt + W", ModifierKeys.Control | ModifierKeys.Alt, Key.W),
+        new HotkeyInfo("QuickSave",      "Quick Save",               "Ctrl + Alt + S",           ModifierKeys.Control | ModifierKeys.Alt,                     Key.S),
+        new HotkeyInfo("RestoreDefault", "Restore Default",          "Ctrl + Alt + R",           ModifierKeys.Control | ModifierKeys.Alt,                     Key.R),
+        new HotkeyInfo("RestoreSlot1",   "Restore Workspace 1",      "Ctrl + Alt + 1",           ModifierKeys.Control | ModifierKeys.Alt,                     Key.D1),
+        new HotkeyInfo("RestoreSlot2",   "Restore Workspace 2",      "Ctrl + Alt + 2",           ModifierKeys.Control | ModifierKeys.Alt,                     Key.D2),
+        new HotkeyInfo("RestoreSlot3",   "Restore Workspace 3",      "Ctrl + Alt + 3",           ModifierKeys.Control | ModifierKeys.Alt,                     Key.D3),
+        new HotkeyInfo("SwitchSlot1",    "Switch to Workspace 1",    "Ctrl + Alt + Shift + 1",   ModifierKeys.Control | ModifierKeys.Alt | ModifierKeys.Shift, Key.D1),
+        new HotkeyInfo("SwitchSlot2",    "Switch to Workspace 2",    "Ctrl + Alt + Shift + 2",   ModifierKeys.Control | ModifierKeys.Alt | ModifierKeys.Shift, Key.D2),
+        new HotkeyInfo("SwitchSlot3",    "Switch to Workspace 3",    "Ctrl + Alt + Shift + 3",   ModifierKeys.Control | ModifierKeys.Alt | ModifierKeys.Shift, Key.D3),
+        new HotkeyInfo("OpenSettings",   "Open Settings",            "Ctrl + Alt + W",           ModifierKeys.Control | ModifierKeys.Alt,                     Key.W),
+        new HotkeyInfo("SwitchDefault",  "Switch to Default",        "Ctrl + Alt + Shift + W",   ModifierKeys.Control | ModifierKeys.Alt | ModifierKeys.Shift, Key.W),
     };
 
     // ── Shortcut resolution (merge defaults + custom overrides) ───────────

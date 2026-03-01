@@ -4,6 +4,18 @@ All notable changes to WindowAnchor will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.3.0] - 2026-03-01
+
+### Added
+- **Monitor Renaming** — Assign custom names to monitors in Settings → Monitors. Aliases replace hardware names (e.g. “Generic PnP Monitor”) throughout all dialogs: Save Workspace, Selective Restore, View & Edit Windows. Aliases are keyed by stable EDID-based MonitorId and persist across reboots.
+- **Switch Workspace** — Instant context switching: closes all open windows, then restores the target workspace. Available from the workspace context menu (“Switch to Workspace”), the system tray menu (“Switch to: …”), and via the new **Ctrl+Alt+Shift+W** hotkey (switches to the default workspace).
+- **Switch to Default hotkey** — New configurable `SwitchDefault` keyboard shortcut (default: Ctrl+Alt+Shift+W) for one-key context switching to the default workspace.
+- **Switch Slot hotkeys** — Three new `SwitchSlot1/2/3` keyboard shortcuts (default: Ctrl+Alt+Shift+1/2/3) for one-key context switching to workspace slots 1, 2, and 3 respectively (mirrors the Restore Ctrl+Alt+1/2/3 hotkeys but closes all open windows first).
+
+### Changed
+- Settings window now includes a “Monitors” section listing all connected displays with editable alias text fields.
+- System tray “Workspaces” submenu now shows both “Restore:” and “Switch to:” entries for each saved workspace.
+
 ## [1.2.0] - 2026-03-01
 
 ### Added

@@ -78,16 +78,23 @@ public partial class SaveWorkspaceDialog : FluentWindow
     ///   Monitor + windows data returned by
     ///   <see cref="Services.WorkspaceService.GetWindowPreviewForDialog"/>.
     /// </param>
-    public SaveWorkspaceDialog(List<(MonitorInfo Monitor, List<WindowRecord> Windows)> windowData)
+    /// <param name="settingsService">
+    ///   Optional; when supplied, monitor aliases are used instead of hardware names.
+    /// </param>
+    public SaveWorkspaceDialog(
+        List<(MonitorInfo Monitor, List<WindowRecord> Windows)> windowData,
+        Services.SettingsService? settingsService = null)
     {
         InitializeComponent();
 
         foreach (var (mon, windows) in windowData)
         {
             string primaryTag = mon.IsPrimary ? " (Primary)" : "";
+            string monName = settingsService?.ResolveMonitorName(mon.MonitorId, mon.FriendlyName)
+                             ?? mon.FriendlyName;
             var group = new MonitorWindowGroup
             {
-                MonitorHeader = $"Monitor {mon.Index + 1}: {mon.FriendlyName}{primaryTag}  \u2014  " +
+                MonitorHeader = $"Monitor {mon.Index + 1}: {monName}{primaryTag}  \u2014  " +
                                 $"{mon.WidthPixels}\u00d7{mon.HeightPixels}  ({windows.Count} window{(windows.Count == 1 ? "" : "s")})",
                 Windows = windows.Select(w => new WindowCheckItem
                 {

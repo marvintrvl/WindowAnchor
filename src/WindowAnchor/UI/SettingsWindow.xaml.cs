@@ -18,6 +18,7 @@ public partial class SettingsWindow : FluentWindow
     private readonly StorageService    _storageService;
     private readonly LayoutCoordinator _coordinator;
     private readonly SettingsService   _settingsService;
+    private readonly MonitorService    _monitorService;
     private bool _suppressToggle;
 
     // ── View-model rows ──────────────────────────────────────────────────────
@@ -117,18 +118,71 @@ public partial class SettingsWindow : FluentWindow
     private readonly List<HotkeyRow> _hotkeyRows = new();
     private HotkeyRow? _recordingRow;
 
+    // ── Monitor row view-model ───────────────────────────────────────────────
+
+    internal sealed class MonitorRow : INotifyPropertyChanged
+    {
+        public string MonitorId       { get; init; } = "";
+        public string HardwareName    { get; init; } = "";
+        public string IndexLabel      { get; init; } = "";
+        public string ResolutionLabel { get; init; } = "";
+
+        // ── Persisted alias (shown in view mode) ──────────────────────────
+        private string _alias = "";
+        public string Alias
+        {
+            get => _alias;
+            set { _alias = value; OnPropertyChanged(); OnPropertyChanged(nameof(AliasDisplay)); }
+        }
+
+        /// <summary>Displayed in view mode; falls back to an em-dash when no alias is set.</summary>
+        public string AliasDisplay => string.IsNullOrWhiteSpace(_alias) ? "\u2014" : _alias;
+
+        // ── Inline editing ────────────────────────────────────────────────
+        private string _editAlias = "";
+        public string EditAlias
+        {
+            get => _editAlias;
+            set { _editAlias = value; OnPropertyChanged(); }
+        }
+
+        private bool _isEditing;
+        public bool IsEditing
+        {
+            get => _isEditing;
+            set
+            {
+                _isEditing = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(ViewVisibility));
+                OnPropertyChanged(nameof(EditVisibility));
+            }
+        }
+
+        public Visibility ViewVisibility => _isEditing ? Visibility.Collapsed : Visibility.Visible;
+        public Visibility EditVisibility => _isEditing ? Visibility.Visible  : Visibility.Collapsed;
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+        private void OnPropertyChanged([CallerMemberName] string? n = null)
+            => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(n));
+    }
+
+    private readonly List<MonitorRow> _monitorRows = new();
+
     // ── Constructor ──────────────────────────────────────────────────────────
 
     public SettingsWindow(
         WorkspaceService workspaceService,
         StorageService   storageService,
         LayoutCoordinator coordinator,
-        SettingsService  settingsService)
+        SettingsService  settingsService,
+        MonitorService   monitorService)
     {
         _workspaceService = workspaceService;
         _storageService   = storageService;
         _coordinator      = coordinator;
         _settingsService  = settingsService;
+        _monitorService   = monitorService;
         InitializeComponent();
         PreviewKeyDown += OnHotkeyRecordKeyDown;
         Loaded += (_, _) =>
@@ -141,6 +195,7 @@ public partial class SettingsWindow : FluentWindow
             // Populate startup behavior controls
             InitialiseStartupBehaviorUI();
             InitialiseHotkeyUI();
+            InitialiseMonitorUI();
 
             Refresh();
         };
@@ -360,6 +415,98 @@ public partial class SettingsWindow : FluentWindow
             app.ApplyHotkeySettings();
     }
 
+    // ── Monitor renaming UI ──────────────────────────────────────────────────
+
+    private void InitialiseMonitorUI()
+    {
+        _monitorRows.Clear();
+        var monitors = _monitorService.GetCurrentMonitors();
+        foreach (var m in monitors)
+        {
+            string primary = m.IsPrimary ? " (Primary)" : "";
+            _monitorRows.Add(new MonitorRow
+            {
+                MonitorId       = m.MonitorId,
+                HardwareName    = m.FriendlyName,
+                IndexLabel      = $"#{m.Index + 1}",
+                ResolutionLabel = $"{m.WidthPixels}\u00d7{m.HeightPixels}{primary}",
+                Alias           = _settingsService.ResolveMonitorName(m.MonitorId, "") == m.FriendlyName
+                    ? ""
+                    : _settingsService.ResolveMonitorName(m.MonitorId, ""),
+            });
+        }
+        MonitorList.ItemsSource = _monitorRows;
+    }
+
+    private void OnMonitorEditClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button btn) return;
+        if (btn.Tag is not MonitorRow row) return;
+
+        // Cancel any other row currently being edited
+        foreach (var r in _monitorRows)
+            if (r != row) r.IsEditing = false;
+
+        row.EditAlias   = row.Alias;   // seed the edit box with the current value
+        row.IsEditing   = true;
+
+        // Focus the TextBox on the next layout pass
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, () =>
+        {
+            if (MonitorList.ItemContainerGenerator.ContainerFromItem(row) is
+                System.Windows.Controls.ContentPresenter cp)
+            {
+                var tb = FindChild<System.Windows.Controls.TextBox>(cp);
+                tb?.Focus();
+                tb?.SelectAll();
+            }
+        });
+    }
+
+    private void OnMonitorAliasSaveClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button btn) return;
+        if (btn.Tag is not MonitorRow row) return;
+        CommitMonitorAlias(row);
+    }
+
+    private void OnMonitorAliasCancelClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button btn) return;
+        if (btn.Tag is not MonitorRow row) return;
+        row.IsEditing = false;
+    }
+
+    private void OnMonitorAliasEditKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.TextBox tb) return;
+        if (tb.Tag is not MonitorRow row) return;
+
+        if (e.Key == Key.Enter)  { CommitMonitorAlias(row); e.Handled = true; }
+        if (e.Key == Key.Escape) { row.IsEditing = false;   e.Handled = true; }
+    }
+
+    private void CommitMonitorAlias(MonitorRow row)
+    {
+        string? alias = string.IsNullOrWhiteSpace(row.EditAlias) ? null : row.EditAlias.Trim();
+        row.Alias     = alias ?? "";
+        row.IsEditing = false;
+        _settingsService.SetMonitorAlias(row.MonitorId, alias);
+    }
+
+    /// <summary>Walks the visual tree to find a child of type <typeparamref name="T"/>.</summary>
+    private static T? FindChild<T>(System.Windows.DependencyObject parent) where T : System.Windows.DependencyObject
+    {
+        for (int i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(parent, i);
+            if (child is T match) return match;
+            var result = FindChild<T>(child);
+            if (result != null) return result;
+        }
+        return null;
+    }
+
     // ── Refresh ──────────────────────────────────────────────────────────────
 
     private void Refresh()
@@ -436,7 +583,7 @@ public partial class SettingsWindow : FluentWindow
     private async void OnSaveNewWorkspace(object sender, RoutedEventArgs e)
     {
         var windowPreview = await Task.Run(() => _workspaceService.GetWindowPreviewForDialog());
-        var dialog = new SaveWorkspaceDialog(windowPreview) { Owner = this };
+        var dialog = new SaveWorkspaceDialog(windowPreview, _settingsService) { Owner = this };
         if (dialog.ShowDialog() != true) return;
 
         // Read all dialog properties on the UI thread before entering Task.Run.
@@ -492,6 +639,11 @@ public partial class SettingsWindow : FluentWindow
         restore.Icon = new Wpf.Ui.Controls.SymbolIcon { Symbol = Wpf.Ui.Controls.SymbolRegular.ArrowCounterclockwise24 };
         restore.Click += (_, _) => _ = _coordinator.RestoreWorkspaceAsync(row.Source);
         menu.Items.Add(restore);
+
+        var switchWs = new System.Windows.Controls.MenuItem { Header = "Switch to Workspace" };
+        switchWs.Icon = new Wpf.Ui.Controls.SymbolIcon { Symbol = Wpf.Ui.Controls.SymbolRegular.ArrowSwap24 };
+        switchWs.Click += (_, _) => DoSwitchWorkspace(row);
+        menu.Items.Add(switchWs);
 
         // Only offer Selective Restore when the workspace has more than one monitor
         if (row.Source.Monitors.Count > 1)
@@ -597,14 +749,29 @@ public partial class SettingsWindow : FluentWindow
         string currentFp = _workspaceService.GetCurrentMonitorFingerprint();
         bool mismatch = currentFp != row.Source.MonitorFingerprint;
 
-        var dlg = new SelectiveRestoreDialog(row.Source, mismatch) { Owner = this };
+        var dlg = new SelectiveRestoreDialog(row.Source, mismatch, _settingsService) { Owner = this };
         if (dlg.ShowDialog() == true && dlg.SelectedMonitorIds is { Count: > 0 } ids)
             _ = _coordinator.RestoreWorkspaceSelectiveAsync(row.Source, ids);
     }
 
+    private void DoSwitchWorkspace(WorkspaceRow row)
+    {
+        var result = System.Windows.MessageBox.Show(
+            $"Switch to \u201c{row.Name}\u201d?\n\n" +
+            "All open windows will be asked to close. Apps with unsaved work will " +
+            "prompt you to save before closing.\n\n" +
+            "The workspace will be restored once every window has closed.",
+            "Switch Workspace",
+            System.Windows.MessageBoxButton.OKCancel,
+            System.Windows.MessageBoxImage.Question);
+        if (result != System.Windows.MessageBoxResult.OK) return;
+
+        _ = _coordinator.SwitchWorkspaceAsync(row.Source);
+    }
+
     private void DoViewWindows(WorkspaceRow row)
     {
-        var dlg = new WorkspaceWindowsDialog(row.Source, _storageService) { Owner = this };
+        var dlg = new WorkspaceWindowsDialog(row.Source, _storageService, _settingsService) { Owner = this };
         dlg.ShowDialog();
         Refresh();
     }
@@ -662,12 +829,14 @@ internal sealed class WorkspaceWindowsDialog : FluentWindow
 {
     private readonly WorkspaceSnapshot _snapshot;
     private readonly StorageService    _storageService;
+    private readonly SettingsService?  _settingsService;
     private readonly StackPanel        _listPanel;
 
-    public WorkspaceWindowsDialog(WorkspaceSnapshot snapshot, StorageService storageService)
+    public WorkspaceWindowsDialog(WorkspaceSnapshot snapshot, StorageService storageService, SettingsService? settingsService = null)
     {
-        _snapshot      = snapshot;
-        _storageService = storageService;
+        _snapshot        = snapshot;
+        _storageService  = storageService;
+        _settingsService = settingsService;
 
         Title  = $"{snapshot.Name} — Saved Windows";
         Width  = 560; Height = 520;
@@ -759,7 +928,7 @@ internal sealed class WorkspaceWindowsDialog : FluentWindow
 
                 var header = new System.Windows.Controls.TextBlock
                 {
-                    Text       = $"{monitor.FriendlyName}  ({entriesList.Count} window{(entriesList.Count == 1 ? "" : "s")})",
+                    Text       = $"{(_settingsService?.ResolveMonitorName(monitor.MonitorId, monitor.FriendlyName) ?? monitor.FriendlyName)}  ({entriesList.Count} window{(entriesList.Count == 1 ? "" : "s")})",
                     FontSize   = 11,
                     FontWeight = FontWeights.SemiBold,
                     Foreground = (System.Windows.Media.Brush)System.Windows.Application.Current.Resources["SystemAccentColorPrimaryBrush"],
