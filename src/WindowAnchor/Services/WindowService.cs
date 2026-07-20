@@ -212,6 +212,15 @@ public class WindowService
         // lookups to run on windows where Tier 1 would have succeeded.
         string snippet = fullTitle.Length > 200 ? fullTitle.Substring(0, 200) : fullTitle;
 
+        // Read the window's explicit AppUserModelID. Two things depend on it:
+        //   • Chromium browsers: installed web apps (PWAs) get their own AUMID while sharing
+        //     chrome.exe/brave.exe and the window class — the only way to tell them apart.
+        //   • Store/MSIX apps (TradingView, Notepad, …): the AUMID is the only way to relaunch
+        //     them *with package identity*. Starting their exe under C:\Program Files\WindowsApps
+        //     directly gives the app no package container, so it loses its settings.
+        // Classic desktop apps usually have no explicit AUMID — the empty string is expected.
+        string appUserModelId = WebAppService.GetWindowAppUserModelId(hWnd);
+
         // For File Explorer windows, resolve the open folder via the pre-built COM map
         string folderPath = "";
         if (explorerFolderMap != null &&
@@ -234,6 +243,7 @@ public class WindowService
             NormalBottom = placement.RcNormalPosition.Bottom,
             SavedDpi = NativeMethodsWindow.GetDpiForWindow(hWnd),
             FolderPath = folderPath,
+            AppUserModelId = appUserModelId,
         };
     }
 

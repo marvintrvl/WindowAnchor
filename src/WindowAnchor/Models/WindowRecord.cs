@@ -16,6 +16,17 @@ public class WindowRecord
     /// <summary>First 120 characters of the window title, used for matching and display.</summary>
     public string TitleSnippet   { get; set; } = "";
 
+    /// <summary>
+    /// Explicit <c>AppUserModelID</c> of this window, read via <c>SHGetPropertyStoreForWindow</c>.
+    /// <para>
+    /// Needed in two places: it is the only way to tell an installed web-app window (PWA such as
+    /// Insilico Terminal) apart from a normal browser window, and the only way to relaunch a
+    /// Store/MSIX app with its package identity intact. Classic desktop apps usually have no
+    /// explicit AUMID, so an empty string is the normal case there.
+    /// </para>
+    /// </summary>
+    public string AppUserModelId { get; set; } = "";
+
     // ── Window state ──────────────────────────────────────────────────────────────
     /// <summary>
     /// <c>WINDOWPLACEMENT.showCmd</c> value (e.g. <c>SW_NORMAL = 1</c>, <c>SW_MAXIMIZE = 3</c>,

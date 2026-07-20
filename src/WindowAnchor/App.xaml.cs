@@ -48,7 +48,8 @@ public partial class App : System.Windows.Application
         _monitorService       = new MonitorService();
         var windowService     = new WindowService();
         var jumpListService   = new JumpListService();
-        var workspaceService  = new WorkspaceService(storageService, windowService, _monitorService, jumpListService);
+        var webAppService     = new WebAppService();
+        var workspaceService  = new WorkspaceService(storageService, windowService, _monitorService, jumpListService, webAppService);
 
         _workspaceService = workspaceService;
         _coordinator      = new LayoutCoordinator(_monitorService, windowService, workspaceService);

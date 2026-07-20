@@ -31,17 +31,20 @@ public class WorkspaceService
     private readonly WindowService    _windowService;
     private readonly MonitorService   _monitorService;
     private readonly JumpListService  _jumpListService;
+    private readonly WebAppService    _webAppService;
 
     public WorkspaceService(
         StorageService  storageService,
         WindowService   windowService,
         MonitorService  monitorService,
-        JumpListService jumpListService)
+        JumpListService jumpListService,
+        WebAppService?  webAppService = null)
     {
         _storageService  = storageService;
         _windowService   = windowService;
         _monitorService  = monitorService;
         _jumpListService = jumpListService;
+        _webAppService   = webAppService ?? new WebAppService();
     }
 
     // ── Storage proxies ────────────────────────────────────────────
@@ -210,6 +213,16 @@ public class WorkspaceService
                 continue;
             }
 
+            // ── Browser web app (PWA) special case ─────────────────────────
+            // Installed web apps (Insilico Terminal, aggr.trade, …) run inside chrome.exe /
+            // brave.exe. Record how to relaunch the app itself instead of the browser.
+            var webAppEntry = TryBuildWebAppEntry(w);
+            if (webAppEntry != null)
+            {
+                entries.Add(webAppEntry);
+                continue;
+            }
+
             // ── Explorer special case ──────────────────────────────────────
             if (w.ProcessName.Equals("explorer", StringComparison.OrdinalIgnoreCase) &&
                 !string.IsNullOrEmpty(w.FolderPath))
@@ -219,6 +232,7 @@ public class WorkspaceService
                     ExecutablePath  = w.ExecutablePath,
                     ProcessName     = w.ProcessName,
                     WindowClassName = w.ClassName,
+                    AppUserModelId  = w.AppUserModelId,
                     FilePath        = saveFiles ? w.FolderPath : null,
                     FileConfidence  = saveFiles ? 95 : 0,
                     FileSource      = saveFiles ? "EXPLORER_FOLDER" : "NONE",
@@ -380,6 +394,7 @@ public class WorkspaceService
                 ExecutablePath  = w.ExecutablePath,
                 ProcessName     = w.ProcessName,
                 WindowClassName = w.ClassName,
+                AppUserModelId  = w.AppUserModelId,
                 FilePath        = filePath,
                 FileConfidence  = confidence,
                 FileSource      = source,
@@ -414,6 +429,82 @@ public class WorkspaceService
         return snapshot;
     }
 
+    // ── Browser web apps (PWAs) ───────────────────────────────────────────
+
+    /// <summary>
+    /// Builds a <see cref="WorkspaceEntry"/> for an installed browser web app (PWA), or returns
+    /// <c>null</c> when <paramref name="w"/> is not a web-app window.
+    /// <para>
+    /// A window qualifies when it belongs to a Chromium-based browser <em>and</em> carries an
+    /// explicit <c>AppUserModelID</c> that either matches a Start-Menu shortcut created by the
+    /// browser (<c>--app-id=…</c>) or has the shape of a Chromium web-app AUMID. Ordinary browser
+    /// windows share the browser's own AUMID and are left to the normal code path.
+    /// </para>
+    /// </summary>
+    private WorkspaceEntry? TryBuildWebAppEntry(WindowRecord w)
+    {
+        if (!WebAppService.IsChromiumBrowser(w.ProcessName)) return null;
+        if (string.IsNullOrEmpty(w.AppUserModelId))          return null;
+
+        var info = _webAppService.FindByAumid(w.AppUserModelId);
+
+        if (info == null && !WebAppService.LooksLikeWebAppAumid(w.AppUserModelId))
+            return null;   // plain browser window
+
+        string? shortcutPath;
+        string? target;
+        string? args;
+        string  name;
+        string  source;
+
+        if (info != null)
+        {
+            shortcutPath = info.ShortcutPath;
+            target       = info.TargetPath;
+            args         = info.Arguments;
+            name         = info.DisplayName;
+            source       = "WEB_APP_SHORTCUT";
+        }
+        else
+        {
+            // No shortcut on disk (app installed without one, or shortcut deleted).
+            // Rebuild a command line from the AUMID: chrome.exe --app-id=<32-char id>.
+            string? appId = WebAppService.ExtractAppIdFromAumid(w.AppUserModelId);
+            if (appId == null) return null;
+
+            shortcutPath = null;
+            target       = w.ExecutablePath;
+            args         = $"--app-id={appId}";
+            name         = w.TitleSnippet;
+            source       = "WEB_APP_AUMID";
+            AppLogger.Warn($"[WebApp] no shortcut found for AUMID '{w.AppUserModelId}' — " +
+                           $"falling back to \"{target}\" {args}");
+        }
+
+        AppLogger.Info($"[WebApp] '{name}' detected (AUMID={w.AppUserModelId}, source={source})");
+
+        return new WorkspaceEntry
+        {
+            ExecutablePath        = w.ExecutablePath,
+            ProcessName           = w.ProcessName,
+            WindowClassName       = w.ClassName,
+            FilePath              = null,
+            FileConfidence        = 0,
+            FileSource            = source,
+            LaunchArg             = null,          // must stay null: not a document entry
+            AppUserModelId        = w.AppUserModelId,
+            IsWebApp              = true,
+            WebAppName            = name,
+            WebAppShortcutPath    = shortcutPath,
+            WebAppLaunchTarget    = target,
+            WebAppLaunchArguments = args,
+            Position              = w,
+            MonitorId             = w.MonitorId,
+            MonitorIndex          = w.MonitorIndex,
+            MonitorName           = w.MonitorName,
+        };
+    }
+
     // ── Per-window entry builder (shared by both snapshot paths) ──────────
 
     /// <summary>
@@ -423,6 +514,11 @@ public class WorkspaceService
     /// </summary>
     private WorkspaceEntry BuildEntryForWindow(WindowRecord w, bool saveFiles)
     {
+        // Browser web app (PWA) special case — must run before file detection, otherwise a
+        // web-app window is treated as a generic browser window.
+        var webAppEntry = TryBuildWebAppEntry(w);
+        if (webAppEntry != null) return webAppEntry;
+
         // Explorer special case
         if (w.ProcessName.Equals("explorer", StringComparison.OrdinalIgnoreCase) &&
             !string.IsNullOrEmpty(w.FolderPath))
@@ -432,6 +528,7 @@ public class WorkspaceService
                 ExecutablePath  = w.ExecutablePath,
                 ProcessName     = w.ProcessName,
                 WindowClassName = w.ClassName,
+                AppUserModelId  = w.AppUserModelId,
                 FilePath        = saveFiles ? w.FolderPath : null,
                 FileConfidence  = saveFiles ? 95 : 0,
                 FileSource      = saveFiles ? "EXPLORER_FOLDER" : "NONE",
@@ -546,6 +643,7 @@ public class WorkspaceService
             ExecutablePath  = w.ExecutablePath,
             ProcessName     = w.ProcessName,
             WindowClassName = w.ClassName,
+            AppUserModelId  = w.AppUserModelId,
             FilePath        = filePath,
             FileConfidence  = confidence,
             FileSource      = source,
@@ -624,7 +722,10 @@ public class WorkspaceService
         // the bare instance's slot while leaving zero windows for Praktikumsbericht/etc.
         // Skipping the bare launch lets the document entry start the exe properly.
         bool anyLaunched = false;
+        // Web-app windows must not count as "the browser is already running": a Chrome window
+        // that is really the Insilico Terminal PWA should not suppress launching Chrome itself.
         var runningExes = liveWindows.Values
+            .Where(v => !IsWebAppWindow(v.Record))
             .Select(v => v.Record.ExecutablePath.ToLowerInvariant())
             .ToHashSet();
 
@@ -641,6 +742,28 @@ public class WorkspaceService
             if (ct.IsCancellationRequested) return;
 
             var entry = snapshot.Entries[i];
+
+            // ── Installed browser web app (PWA) ───────────────────────────
+            // Always relaunch via its own shortcut / --app-id command line unless Phase 1
+            // already matched a live window with the same AppUserModelID. Never fall through
+            // to the generic browser launch, which would just open a normal browser window.
+            if (entry.IsWebApp)
+            {
+                if (restoredEntries.Contains(i)) continue;
+
+                try
+                {
+                    Process.Start(BuildProcessStartInfo(entry));
+                    anyLaunched = true;
+                    AppLogger.Info($"Launched web app: {entry.WebAppName} ({entry.AppUserModelId})");
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn($"Failed to launch web app '{entry.WebAppName}': {ex.Message}");
+                }
+                continue;
+            }
+
             if (string.IsNullOrEmpty(entry.ExecutablePath)) continue;
 
             if (!string.IsNullOrEmpty(entry.LaunchArg))
@@ -742,6 +865,20 @@ public class WorkspaceService
         // Build a consumed-hwnd set so each window only gets one entry applied.
         var consumedHwnds = new HashSet<IntPtr>();
 
+        // Guard against cross-matching browser windows.
+        // A PWA window (Insilico Terminal, aggr.trade, …) and a plain Chrome/Brave window share
+        // the same executable and window class, so every matching tier below would happily pair
+        // them up. Whenever either side is a web app, the AppUserModelIDs must be identical.
+        // Entries from older snapshots carry no AUMID and simply never claim a web-app window.
+        static bool IdentityCompatible(WorkspaceEntry e, WindowRecord rec)
+        {
+            string liveAumid = rec.AppUserModelId ?? "";
+            if (!e.IsWebApp && !WebAppService.LooksLikeWebAppAumid(liveAumid))
+                return true;   // both sides are ordinary windows — old behaviour
+
+            return string.Equals(e.AppUserModelId ?? "", liveAumid, StringComparison.OrdinalIgnoreCase);
+        }
+
         for (int i = 0; i < entries.Count; i++)
         {
             if (restoredEntries.Contains(i)) continue;
@@ -751,6 +888,24 @@ public class WorkspaceService
 
             IntPtr bestHwnd = IntPtr.Zero;
             bool titleMatched = false;
+
+            // ── Tier -1: web app match by AppUserModelID ──────────────────────────
+            // A PWA's title changes with the page it shows, so the AUMID is the only stable
+            // identifier. It is also unique per installed app, making this an exact match.
+            if (entry.IsWebApp && !string.IsNullOrEmpty(entry.AppUserModelId))
+            {
+                foreach (var (hwnd, (_, rec)) in liveWindows)
+                {
+                    if (consumedHwnds.Contains(hwnd)) continue;
+                    if (string.Equals(rec.AppUserModelId, entry.AppUserModelId,
+                                      StringComparison.OrdinalIgnoreCase))
+                    {
+                        bestHwnd = hwnd;
+                        titleMatched = true;   // right app is on screen — no relaunch needed
+                        break;
+                    }
+                }
+            }
 
             // ── Tier 0: document-aware match (exe + title contains document name) ──
             // This is the highest-priority match for document entries: we want
@@ -763,6 +918,7 @@ public class WorkspaceService
                 foreach (var (hwnd, (_, rec)) in liveWindows)
                 {
                     if (consumedHwnds.Contains(hwnd)) continue;
+                    if (!IdentityCompatible(entry, rec)) continue;
                     if (rec.ExecutablePath.Equals(entry.ExecutablePath, StringComparison.OrdinalIgnoreCase) &&
                         rec.TitleSnippet.ToLowerInvariant().Contains(expectedName))
                     {
@@ -779,6 +935,7 @@ public class WorkspaceService
                 foreach (var (hwnd, (_, rec)) in liveWindows)
                 {
                     if (consumedHwnds.Contains(hwnd)) continue;
+                    if (!IdentityCompatible(entry, rec)) continue;
                     if (rec.ExecutablePath.Equals(entry.ExecutablePath, StringComparison.OrdinalIgnoreCase) &&
                         rec.ClassName == entry.WindowClassName)
                     {
@@ -798,6 +955,7 @@ public class WorkspaceService
                 foreach (var (hwnd, (_, rec)) in liveWindows)
                 {
                     if (consumedHwnds.Contains(hwnd)) continue;
+                    if (!IdentityCompatible(entry, rec)) continue;
                     if (rec.ExecutablePath.Equals(entry.ExecutablePath, StringComparison.OrdinalIgnoreCase) &&
                         rec.TitleSnippet.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                     {
@@ -901,6 +1059,61 @@ public class WorkspaceService
     /// </summary>
     public ProcessStartInfo BuildProcessStartInfo(WorkspaceEntry entry)
     {
+        // ── Installed browser web app (PWA) ───────────────────────────────
+        // Launching the shortcut reproduces exactly what happens when the user starts the app
+        // from the Start Menu, including profile directory and app id.
+        if (entry.IsWebApp)
+        {
+            string? shortcut = entry.WebAppShortcutPath;
+
+            // Shortcut may have been moved or the app reinstalled — re-resolve by AUMID.
+            if ((string.IsNullOrEmpty(shortcut) || !File.Exists(shortcut)) &&
+                !string.IsNullOrEmpty(entry.AppUserModelId))
+            {
+                shortcut = _webAppService.FindByAumid(entry.AppUserModelId)?.ShortcutPath;
+            }
+
+            if (!string.IsNullOrEmpty(shortcut) && File.Exists(shortcut))
+            {
+                return new ProcessStartInfo
+                {
+                    FileName        = shortcut,
+                    UseShellExecute = true,
+                };
+            }
+
+            string target = entry.WebAppLaunchTarget ?? entry.ExecutablePath;
+            if (!string.IsNullOrEmpty(target))
+            {
+                AppLogger.Info($"[WebApp] launching '{entry.WebAppName}' via command line: " +
+                               $"{target} {entry.WebAppLaunchArguments}");
+                return new ProcessStartInfo
+                {
+                    FileName        = target,
+                    Arguments       = entry.WebAppLaunchArguments ?? "",
+                    UseShellExecute = false,
+                };
+            }
+        }
+
+        // ── Store / MSIX app (TradingView, Notepad, Store-installed apps) ─
+        // Their executables live under C:\Program Files\WindowsApps and must NOT be started
+        // by path: the process then runs without package identity, so the app cannot reach its
+        // packaged AppData container and comes back with default settings (e.g. light theme
+        // instead of dark). Launching through shell:AppsFolder\<AUMID> activates the package
+        // properly, exactly like clicking the Start-Menu tile.
+        // Entries that open a document keep the file association path below.
+        if (string.IsNullOrEmpty(entry.LaunchArg) && IsStoreApp(entry))
+        {
+            AppLogger.Info($"[StoreApp] launching {entry.ProcessName} via shell:AppsFolder\\{entry.AppUserModelId}");
+            return new ProcessStartInfo
+            {
+                FileName        = "explorer.exe",
+                Arguments       = $"shell:AppsFolder\\{entry.AppUserModelId}",
+                UseShellExecute = true,
+            };
+        }
+
         // VS Code special case: open as folder via CLI
         if (entry.ProcessName.Equals("Code", StringComparison.OrdinalIgnoreCase) &&
             !string.IsNullOrEmpty(entry.LaunchArg))
@@ -947,6 +1160,26 @@ public class WorkspaceService
     }
 
     // ── Browser detection helpers ─────────────────────────────────────────
+
+    /// <summary>
+    /// True when the entry belongs to a packaged (MSIX/Store) app that must be started through
+    /// its AppUserModelID rather than by executable path. Requires both a packaged install
+    /// location and an explicit AUMID (packaged AUMIDs have the form
+    /// <c>PackageFamilyName!AppId</c>).
+    /// </summary>
+    private static bool IsStoreApp(WorkspaceEntry entry) =>
+        !string.IsNullOrEmpty(entry.AppUserModelId) &&
+        entry.AppUserModelId.Contains('!') &&
+        entry.ExecutablePath.Contains(@"\WindowsApps\", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True when a live window is an installed browser web app rather than a normal
+    /// browser window, judged by the shape of its <c>AppUserModelID</c>.
+    /// </summary>
+    private static bool IsWebAppWindow(WindowRecord rec) =>
+        WebAppService.IsChromiumBrowser(rec.ProcessName) &&
+        WebAppService.LooksLikeWebAppAumid(rec.AppUserModelId);
+
 
     private static readonly HashSet<string> BrowserProcessNames = new(StringComparer.OrdinalIgnoreCase)
     {

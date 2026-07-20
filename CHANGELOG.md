@@ -4,6 +4,11 @@ All notable changes to WindowAnchor will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Fixed
+- **Installed web apps (PWAs) are no longer treated as plain browser windows** — Web apps installed from Chrome, Brave, Edge or another Chromium browser (e.g. Insilico Terminal, aggr.trade) run inside `chrome.exe`/`brave.exe` and use the same window class as a normal browser window. WindowAnchor identified them only by executable + class name, so restoring a layout opened a fresh browser window instead of the app. Every window's `AppUserModelID` is now captured; web-app windows are matched against the Start-Menu shortcut the browser created on install and relaunched through it. Window matching requires an exact `AppUserModelID` match, so a web-app entry can no longer claim a plain browser window (or vice versa).
+
 ## [1.3.0] - 2026-03-01
 
 ### Added
