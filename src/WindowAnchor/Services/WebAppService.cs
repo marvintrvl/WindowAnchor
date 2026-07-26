@@ -61,6 +61,25 @@ public class WebAppService
     public static bool IsChromiumBrowser(string processName) =>
         ChromiumProcessNames.Contains(processName.Replace(".exe", "", StringComparison.OrdinalIgnoreCase));
 
+    // ── Friendly display name ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns a human-friendly name for a window when it is an installed browser web app
+    /// (e.g. "Insilico Terminal" instead of "brave"), or <c>null</c> for anything else.
+    /// Purely cosmetic — used by the Save Workspace dialog.
+    /// </summary>
+    public string? ResolveWebAppName(string processName, string appUserModelId)
+    {
+        if (!IsChromiumBrowser(processName))     return null;
+        if (string.IsNullOrEmpty(appUserModelId)) return null;
+
+        var info = FindByAumid(appUserModelId);
+        if (info != null) return info.DisplayName;
+
+        // Shortcut missing but the AUMID still looks like a web app — fall back to the app id.
+        return LooksLikeWebAppAumid(appUserModelId) ? "Web App" : null;
+    }
+
     // ── Per-window AUMID ──────────────────────────────────────────────────────
 
     /// <summary>
@@ -91,6 +110,45 @@ public class WebAppService
         finally
         {
             if (store != null) Marshal.ReleaseComObject(store);
+        }
+    }
+
+    /// <summary>
+    /// Returns the <c>AppUserModelID</c> of a running process from its package identity, or an
+    /// empty string when the process is not a packaged (Store/MSIX) app or cannot be queried.
+    /// <para>
+    /// This is the reliable AUMID source for Store apps, whose windows typically carry no
+    /// explicit AUMID property. The result (<c>PackageFamilyName!AppId</c>) is what
+    /// <c>shell:AppsFolder</c> needs to relaunch the app with full package identity.
+    /// </para>
+    /// </summary>
+    public static string GetProcessAppUserModelId(uint processId)
+    {
+        IntPtr hProcess = NativeMethodsShell.OpenProcess(
+            NativeMethodsShell.PROCESS_QUERY_LIMITED_INFORMATION, false, processId);
+        if (hProcess == IntPtr.Zero) return "";
+
+        try
+        {
+            uint length = 0;
+            // First call: probe the required buffer length (expected ERROR_INSUFFICIENT_BUFFER).
+            NativeMethodsShell.GetApplicationUserModelId(hProcess, ref length, null);
+            if (length == 0) return "";
+
+            var buffer = new char[length];
+            int rc = NativeMethodsShell.GetApplicationUserModelId(hProcess, ref length, buffer);
+            if (rc != 0) return "";   // non-zero incl. APPMODEL_ERROR_NO_APPLICATION → not packaged
+
+            return new string(buffer, 0, (int)length).TrimEnd('\0');
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Debug($"[WebApp] GetProcessAppUserModelId({processId}) failed: {ex.Message}");
+            return "";
+        }
+        finally
+        {
+            NativeMethodsShell.CloseHandle(hProcess);
         }
     }
 

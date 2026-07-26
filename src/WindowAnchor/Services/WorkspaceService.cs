@@ -92,6 +92,12 @@ public class WorkspaceService
             .Where(w => !w.ProcessName.Equals("WindowAnchor", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
+        // Resolve a friendly display name so the dialog shows "Insilico Terminal" rather than
+        // "brave" for installed web apps. Everything else keeps its process name.
+        foreach (var w in windows)
+            w.DisplayName = _webAppService.ResolveWebAppName(w.ProcessName, w.AppUserModelId)
+                            ?? w.ProcessName;
+
         return monitors
             .Select(m => (m, windows.Where(w => w.MonitorId == m.MonitorId).ToList()))
             .ToList();

@@ -99,7 +99,7 @@ public partial class SaveWorkspaceDialog : FluentWindow
                 Windows = windows.Select(w => new WindowCheckItem
                 {
                     Record       = w,
-                    DisplayName  = w.ProcessName,
+                    DisplayName  = string.IsNullOrEmpty(w.DisplayName) ? w.ProcessName : w.DisplayName,
                     TitleSnippet = w.TitleSnippet,
                     IsSelected   = !ShouldAutoExclude(w),
                 }).ToList(),

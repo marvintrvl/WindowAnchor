@@ -153,4 +153,29 @@ public static class NativeMethodsShell
 
     /// <summary>STGM_READ — open the .lnk read-only.</summary>
     public const uint STGM_READ = 0x0;
+
+    // ── Packaged-process AppUserModelID ────────────────────────────────────────
+    // Store/MSIX apps (TradingView, Notepad, …) usually do NOT set an explicit AUMID on their
+    // window, so SHGetPropertyStoreForWindow returns nothing. The reliable source is the
+    // *process*: GetApplicationUserModelId returns "PackageFamilyName!AppId" for any packaged
+    // process. That AUMID is what shell:AppsFolder needs to relaunch the app with full package
+    // identity (and therefore its saved settings, e.g. dark theme).
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr OpenProcess(uint dwDesiredAccess,
+        [MarshalAs(UnmanagedType.Bool)] bool bInheritHandle, uint dwProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool CloseHandle(IntPtr hObject);
+
+    /// <summary>Minimal access right needed to query a process's package identity.</summary>
+    public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
+    /// <summary>Returned by GetApplicationUserModelId when the process is not packaged.</summary>
+    public const int APPMODEL_ERROR_NO_APPLICATION = 15703;
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetApplicationUserModelId(
+        IntPtr hProcess, ref uint applicationUserModelIdLength, [Out] char[]? applicationUserModelId);
 }

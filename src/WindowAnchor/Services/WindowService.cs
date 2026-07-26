@@ -221,6 +221,15 @@ public class WindowService
         // Classic desktop apps usually have no explicit AUMID — the empty string is expected.
         string appUserModelId = WebAppService.GetWindowAppUserModelId(hWnd);
 
+        // Fallback for packaged (Store/MSIX) apps: their windows usually carry no explicit AUMID,
+        // so read it from the process's package identity instead. This is what lets us relaunch
+        // TradingView, Notepad, … via shell:AppsFolder with their settings intact.
+        if (string.IsNullOrEmpty(appUserModelId) &&
+            exePath.Contains(@"\WindowsApps\", StringComparison.OrdinalIgnoreCase))
+        {
+            appUserModelId = WebAppService.GetProcessAppUserModelId(processId);
+        }
+
         // For File Explorer windows, resolve the open folder via the pre-built COM map
         string folderPath = "";
         if (explorerFolderMap != null &&

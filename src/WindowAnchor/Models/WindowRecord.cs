@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 namespace WindowAnchor.Models;
 
 /// <summary>
@@ -26,6 +27,13 @@ public class WindowRecord
     /// </para>
     /// </summary>
     public string AppUserModelId { get; set; } = "";
+
+    /// <summary>
+    /// Friendly name for UI display (e.g. "Insilico Terminal" instead of "brave"). Runtime-only,
+    /// filled in for the Save Workspace dialog; never persisted. Falls back to the process name.
+    /// </summary>
+    [JsonIgnore]
+    public string DisplayName { get; set; } = "";
 
     // ── Window state ──────────────────────────────────────────────────────────────
     /// <summary>
