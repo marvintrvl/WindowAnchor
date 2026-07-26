@@ -812,7 +812,11 @@ public class WorkspaceService
                     var psi = BuildProcessStartInfo(entry);
                     Process.Start(psi);
                     anyLaunched = true;
-                    AppLogger.Info($"Launched: {entry.ExecutablePath}");
+                    // Log what actually launched: shell:AppsFolder for Store apps prints the
+                    // FileName+Arguments, everything else the executable path.
+                    string how = IsStoreApp(entry) ? $"{psi.FileName} {psi.Arguments}".Trim()
+                                                   : entry.ExecutablePath;
+                    AppLogger.Info($"Launched: {how}");
                 }
                 catch (Exception ex)
                 {
@@ -935,6 +939,47 @@ public class WorkspaceService
                 }
             }
 
+            // ── Tier 0.5: disambiguate multiple identical windows by title similarity ──
+            // Two windows of the same app (e.g. two TradingView charts, two Explorer windows)
+            // share the same exe, window class and — for packaged apps — the same AUMID, so the
+            // tiers below cannot tell them apart and may swap their positions. When more than one
+            // live window matches this entry's exe, pick the one whose current title is most
+            // similar to the saved title. TradingView puts the layout name at the end of the
+            // title ("… / 🦁LTF Luis" vs "… / 👀Outlook"), which is exactly what disambiguates
+            // them even though the price prefix keeps changing.
+            if (bestHwnd == IntPtr.Zero)
+            {
+                var sameExe = liveWindows
+                    .Where(kv => !consumedHwnds.Contains(kv.Key))
+                    .Where(kv => IdentityCompatible(entry, kv.Value.Record))
+                    .Where(kv => kv.Value.Record.ExecutablePath.Equals(
+                        entry.ExecutablePath, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (sameExe.Count > 1)
+                {
+                    IntPtr bestByTitle = IntPtr.Zero;
+                    double bestScore   = -1;
+                    foreach (var kv in sameExe)
+                    {
+                        double score = TitleSimilarity(entry.Position.TitleSnippet,
+                                                       kv.Value.Record.TitleSnippet);
+                        if (score > bestScore)
+                        {
+                            bestScore   = score;
+                            bestByTitle = kv.Key;
+                        }
+                    }
+
+                    if (bestByTitle != IntPtr.Zero)
+                    {
+                        bestHwnd = bestByTitle;
+                        AppLogger.Info($"Disambiguated {entry.ProcessName} by title similarity " +
+                                       $"(score={bestScore:F2}) → hwnd {bestByTitle}");
+                    }
+                }
+            }
+
             // ── Tier 1: exe + class ───────────────────────────────────────────────
             if (bestHwnd == IntPtr.Zero)
             {
@@ -981,6 +1026,41 @@ public class WorkspaceService
             _windowService.RestoreSingleWindow(bestHwnd, entry.Position);
             AppLogger.Info($"Restored entry[{i}] {entry.ProcessName} → hwnd {bestHwnd} (titleMatched={titleMatched})");
         }
+    }
+
+    /// <summary>
+    /// Sørensen–Dice similarity (0..1) between two window titles, computed over character
+    /// bigrams. Used to tell apart two windows of the same application whose only distinguishing
+    /// feature is part of the title (e.g. a TradingView layout name). Volatile shared content
+    /// such as a live price contributes equally to every candidate, so the distinctive part of
+    /// the title dominates the ranking.
+    /// </summary>
+    private static double TitleSimilarity(string a, string b)
+    {
+        a = (a ?? "").ToLowerInvariant();
+        b = (b ?? "").ToLowerInvariant();
+        if (a.Length < 2 || b.Length < 2)
+            return string.Equals(a, b, StringComparison.Ordinal) ? 1.0 : 0.0;
+
+        var bigrams = new Dictionary<string, int>();
+        for (int i = 0; i < a.Length - 1; i++)
+        {
+            string g = a.Substring(i, 2);
+            bigrams[g] = bigrams.TryGetValue(g, out int c) ? c + 1 : 1;
+        }
+
+        int overlap = 0;
+        for (int i = 0; i < b.Length - 1; i++)
+        {
+            string g = b.Substring(i, 2);
+            if (bigrams.TryGetValue(g, out int c) && c > 0)
+            {
+                bigrams[g] = c - 1;
+                overlap++;
+            }
+        }
+
+        return 2.0 * overlap / ((a.Length - 1) + (b.Length - 1));
     }
 
     /// <summary>
