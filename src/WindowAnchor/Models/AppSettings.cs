@@ -66,4 +66,23 @@ public class AppSettings
     /// User-defined friendly names for monitors, keyed by stable EDID-based MonitorId.
     /// When set, the alias replaces the hardware FriendlyName throughout the UI.
     /// </summary>
-    public Dictionary<string, string>? MonitorAliases { get; set; }}
+    public Dictionary<string, string>? MonitorAliases { get; set; }
+
+    // ── Dedicated browser windows ─────────────────────────────────────────
+    /// <summary>
+    /// URL fragments identifying browser windows that should be restored as their own window
+    /// rather than through the browser's session restore.
+    /// <para>
+    /// Some sites cannot be installed as a web app (no PWA manifest) but are still kept in a
+    /// dedicated window next to a normal multi-tab window. Such a window is indistinguishable
+    /// from any other browser window, so <c>--restore-last-session</c> cannot bring it back
+    /// reliably. When a window's address bar matches one of these fragments, WindowAnchor stores
+    /// the URL and reopens the window with <c>--new-window &lt;url&gt;</c>.
+    /// </para>
+    /// <para>
+    /// A bare domain such as <c>vari.love</c> matches every page on that site. When the list is
+    /// empty no URLs are read at all, so snapshots are unaffected for users not using this.
+    /// </para>
+    /// </summary>
+    public List<string>? DedicatedBrowserUrlPatterns { get; set; }
+}

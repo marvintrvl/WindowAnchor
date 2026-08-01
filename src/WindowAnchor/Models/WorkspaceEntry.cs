@@ -37,6 +37,16 @@ public class WorkspaceEntry
     /// <summary>Command line for <see cref="WebAppLaunchTarget"/>, e.g. <c>--profile-directory=Default --app-id=…</c>.</summary>
     public string? WebAppLaunchArguments { get; set; }
 
+    // ── Dedicated browser window (site kept in its own window) ───────────────
+    /// <summary>
+    /// True when this entry is a browser window that must be reopened as its own window at a
+    /// specific URL, instead of relying on the browser's session restore.
+    /// </summary>
+    public bool    IsDedicatedBrowserWindow { get; set; }
+
+    /// <summary>URL to reopen for a dedicated browser window, e.g. <c>https://vari.love/</c>.</summary>
+    public string  BrowserUrl               { get; set; } = "";
+
     // ── File tracking (null when SavedWithFiles = false) ─────────────────────
     public string? FilePath       { get; set; }
     public int     FileConfidence { get; set; }

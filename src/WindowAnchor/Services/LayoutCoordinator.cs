@@ -84,6 +84,23 @@ public class LayoutCoordinator
     }
 
     /// <summary>
+    /// Restores a workspace and then minimizes every window that is not part of it (nothing is
+    /// closed). This brings the workspace's own windows to their saved positions and clears away
+    /// unrelated windows — a non-destructive middle ground between Restore (leaves other windows
+    /// untouched) and Switch (closes everything else first).
+    /// </summary>
+    public async Task AlignAndMinimizeOthersAsync(WorkspaceSnapshot snapshot, CancellationToken token = default)
+    {
+        AppLogger.Info($"AlignAndMinimizeOthersAsync: \u2018{snapshot.Name}\u2019");
+        NotifyBalloon("Aligning\u2026",
+            $"\u201c{snapshot.Name}\u201d \u2014 positioning its windows and minimizing everything else.");
+        await _workspaceService.RestoreWorkspaceAlignAndMinimizeAsync(snapshot, token);
+        if (!token.IsCancellationRequested)
+            NotifyBalloon("Workspace Aligned",
+                $"\u201c{snapshot.Name}\u201d \u2014 other windows were minimized, not closed.");
+    }
+
+    /// <summary>
     /// Restores only entries on the specified monitors and shows a completion balloon.
     /// When <paramref name="monitorIds"/> is <c>null</c> all monitors are restored.
     /// </summary>

@@ -46,7 +46,10 @@ public partial class App : System.Windows.Application
         var storageService    = new StorageService();
         _storageService       = storageService;
         _monitorService       = new MonitorService();
-        var windowService     = new WindowService();
+        // Settings must exist before WindowService: it reads the dedicated-browser URL patterns
+        // to decide whether address bars are queried during a snapshot.
+        _settingsService      = new SettingsService();
+        var windowService     = new WindowService(_settingsService);
         var jumpListService   = new JumpListService();
         var webAppService     = new WebAppService();
         var workspaceService  = new WorkspaceService(storageService, windowService, _monitorService, jumpListService, webAppService);
@@ -54,8 +57,7 @@ public partial class App : System.Windows.Application
         _workspaceService = workspaceService;
         _coordinator      = new LayoutCoordinator(_monitorService, windowService, workspaceService);
 
-        // Settings + hotkeys
-        _settingsService = new SettingsService();
+        // Hotkeys (settings were created above, before WindowService)
         _hotkeyService   = new HotkeyService();
         _hotkeyService.Initialise();
         ApplyHotkeySettings();
@@ -247,6 +249,19 @@ public partial class App : System.Windows.Application
                 switchItem.Click += (_, _) => OnSwitchWorkspaceClick(captured);
                 workspacesItem.Items.Add(switchItem);
             }
+
+            workspacesItem.Items.Add(new System.Windows.Controls.Separator());
+
+            foreach (var ws in workspaces)
+            {
+                var alignItem = new System.Windows.Controls.MenuItem
+                {
+                    Header = $"Align + minimize others: {ws.Name}"
+                };
+                var captured = ws;
+                alignItem.Click += (_, _) => OnAlignWorkspaceClick(captured);
+                workspacesItem.Items.Add(alignItem);
+            }
         }
 
         // Always append Save + Manage at the bottom
@@ -268,6 +283,11 @@ public partial class App : System.Windows.Application
     private void OnSwitchWorkspaceClick(WindowAnchor.Models.WorkspaceSnapshot snapshot)
     {
         _coordinator?.SwitchWorkspaceAsync(snapshot);
+    }
+
+    private void OnAlignWorkspaceClick(WindowAnchor.Models.WorkspaceSnapshot snapshot)
+    {
+        _coordinator?.AlignAndMinimizeOthersAsync(snapshot);
     }
 
     private void OnExitClick(object sender, RoutedEventArgs e)

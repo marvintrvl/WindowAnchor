@@ -35,6 +35,12 @@ public class WindowRecord
     [JsonIgnore]
     public string DisplayName { get; set; } = "";
 
+    /// <summary>
+    /// Address-bar URL of a browser window, captured only when it matches a configured
+    /// <see cref="AppSettings.DedicatedBrowserUrlPatterns"/> entry. Empty for every other window.
+    /// </summary>
+    public string BrowserUrl { get; set; } = "";
+
     // ── Window state ──────────────────────────────────────────────────────────────
     /// <summary>
     /// <c>WINDOWPLACEMENT.showCmd</c> value (e.g. <c>SW_NORMAL = 1</c>, <c>SW_MAXIMIZE = 3</c>,
