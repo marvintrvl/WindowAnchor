@@ -35,6 +35,10 @@ public partial class SettingsWindow : FluentWindow
         public string MonitorCountLabel    => Source.Monitors.Count > 0 ? $"{Source.Monitors.Count}" : "—";
         public string SavedWithFilesLabel  => Source.SavedWithFiles ? "Yes" : "—";
 
+        /// <summary>Checkbox state for bulk actions (delete several workspaces at once).</summary>
+        private bool _isSelected;
+        public bool IsSelected { get => _isSelected; set { _isSelected = value; OnPropertyChanged(); } }
+
         private bool   _isEditing;
         private string _editName = "";
         public bool   IsEditing { get => _isEditing; set { _isEditing = value; OnPropertyChanged(); } }
@@ -531,6 +535,90 @@ public partial class SettingsWindow : FluentWindow
         WorkspacesList.ItemsSource = wsRows;
         WorkspaceCountText.Text    = $"{wsRows.Count} workspace{(wsRows.Count == 1 ? "" : "s")} saved";
         WorkspacesEmpty.Visibility = wsRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        // Rows are rebuilt from scratch, so any previous selection no longer refers to them.
+        SelectAllWorkspaces.IsChecked = false;
+        UpdateBulkActionBar();
+    }
+
+    // ── Bulk selection ───────────────────────────────────────────────────────
+
+    /// <summary>Rows currently ticked for a bulk action.</summary>
+    private List<WorkspaceRow> SelectedWorkspaceRows =>
+        (WorkspacesList.ItemsSource as IEnumerable<WorkspaceRow>)?
+            .Where(r => r.IsSelected).ToList() ?? new List<WorkspaceRow>();
+
+    /// <summary>
+    /// Shows or hides the bulk action bar and updates its counter. Called whenever a row
+    /// checkbox changes and after the list is rebuilt.
+    /// </summary>
+    private void UpdateBulkActionBar()
+    {
+        int count = SelectedWorkspaceRows.Count;
+        BulkActionBar.Visibility = count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        BulkSelectionText.Text   = $"{count} workspace{(count == 1 ? "" : "s")} selected";
+    }
+
+    private void OnWorkspaceSelectionChanged(object sender, RoutedEventArgs e) => UpdateBulkActionBar();
+
+    /// <summary>Header checkbox: ticks or unticks every row at once.</summary>
+    private void OnSelectAllWorkspacesChanged(object sender, RoutedEventArgs e)
+    {
+        if (WorkspacesList.ItemsSource is not IEnumerable<WorkspaceRow> rows) return;
+
+        bool select = SelectAllWorkspaces.IsChecked == true;
+        foreach (var row in rows) row.IsSelected = select;
+
+        UpdateBulkActionBar();
+    }
+
+    private void OnClearWorkspaceSelection(object sender, RoutedEventArgs e)
+    {
+        SelectAllWorkspaces.IsChecked = false;   // also clears every row via the handler above
+        if (WorkspacesList.ItemsSource is IEnumerable<WorkspaceRow> rows)
+            foreach (var row in rows) row.IsSelected = false;
+
+        UpdateBulkActionBar();
+    }
+
+    /// <summary>
+    /// Deletes every ticked workspace after a single confirmation listing the names.
+    /// </summary>
+    private void OnDeleteSelectedWorkspaces(object sender, RoutedEventArgs e)
+    {
+        var selected = SelectedWorkspaceRows;
+        if (selected.Count == 0) return;
+
+        // Show at most five names so the dialog stays readable with a large selection.
+        var shown = selected.Take(5).Select(r => $"\u2022 {r.Name}");
+        string list = string.Join(Environment.NewLine, shown);
+        if (selected.Count > 5)
+            list += $"{Environment.NewLine}\u2022 \u2026and {selected.Count - 5} more";
+
+        var confirm = System.Windows.MessageBox.Show(
+            $"Delete {selected.Count} workspace{(selected.Count == 1 ? "" : "s")}?" +
+            $"{Environment.NewLine}{Environment.NewLine}{list}" +
+            $"{Environment.NewLine}{Environment.NewLine}This cannot be undone.",
+            "Delete Workspaces",
+            System.Windows.MessageBoxButton.OKCancel,
+            System.Windows.MessageBoxImage.Warning);
+
+        if (confirm != System.Windows.MessageBoxResult.OK) return;
+
+        foreach (var row in selected)
+        {
+            try
+            {
+                _storageService.DeleteWorkspace(row.Source);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"Failed to delete workspace '{row.Name}': {ex.Message}");
+            }
+        }
+
+        AppLogger.Info($"Deleted {selected.Count} workspace(s) via bulk selection");
+        Refresh();
     }
 
     /// <summary>

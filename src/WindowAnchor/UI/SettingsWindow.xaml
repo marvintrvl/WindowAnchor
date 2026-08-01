@@ -427,6 +427,33 @@
                     </Grid>
                 </Border>
 
+                <!-- Bulk selection bar (visible only while rows are checked) -->
+                <Border x:Name="BulkActionBar"
+                        Visibility="Collapsed"
+                        Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="8"
+                        Padding="16,10" Margin="0,0,0,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="BulkSelectionText"
+                                   VerticalAlignment="Center"
+                                   FontSize="13" FontWeight="Medium"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                        <ui:Button Grid.Column="1" Content="Clear selection"
+                                   Appearance="Secondary" Margin="0,0,8,0"
+                                   Click="OnClearWorkspaceSelection"/>
+                        <ui:Button Grid.Column="2" Content="Delete selected"
+                                   Appearance="Danger"
+                                   Icon="{ui:SymbolIcon Delete24}"
+                                   Click="OnDeleteSelectedWorkspaces"/>
+                    </Grid>
+                </Border>
+
                 <!-- Workspace rows card -->
                 <Border x:Name="WorkspacesCard"
                         Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
@@ -437,6 +464,7 @@
                         <!-- Column headers -->
                         <Grid Margin="12,10,12,4">
                             <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="32"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="120"/>
                                 <ColumnDefinition Width="68"/>
@@ -444,19 +472,24 @@
                                 <ColumnDefinition Width="48"/>
                                 <ColumnDefinition Width="36"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="Name"
+                            <CheckBox x:Name="SelectAllWorkspaces" Grid.Column="0"
+                                      VerticalAlignment="Center" Margin="0,0,0,2"
+                                      ToolTip="Select all workspaces"
+                                      Checked="OnSelectAllWorkspacesChanged"
+                                      Unchecked="OnSelectAllWorkspacesChanged"/>
+                            <TextBlock Grid.Column="1" Text="Name"
                                        FontSize="11" FontWeight="SemiBold"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                            <TextBlock Grid.Column="1" Text="Saved"
+                            <TextBlock Grid.Column="2" Text="Saved"
                                        FontSize="11" FontWeight="SemiBold"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                            <TextBlock Grid.Column="2" Text="Monitors"
+                            <TextBlock Grid.Column="3" Text="Monitors"
                                        FontSize="11" FontWeight="SemiBold"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                            <TextBlock Grid.Column="3" Text="Windows"
+                            <TextBlock Grid.Column="4" Text="Windows"
                                        FontSize="11" FontWeight="SemiBold"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                            <TextBlock Grid.Column="4" Text="Files"
+                            <TextBlock Grid.Column="5" Text="Files"
                                        FontSize="11" FontWeight="SemiBold"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                         </Grid>
@@ -469,6 +502,7 @@
                                     <Border Style="{StaticResource RowCardStyle}" Margin="4,1">
                                         <Grid>
                                             <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="32"/>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="120"/>
                                                 <ColumnDefinition Width="68"/>
@@ -477,8 +511,15 @@
                                                 <ColumnDefinition Width="36"/>
                                             </Grid.ColumnDefinitions>
 
-                                            <!-- Col 0: view mode name + fingerprint subtitle -->
-                                            <StackPanel Grid.Column="0"
+                                            <!-- Col 0: bulk-selection checkbox -->
+                                            <CheckBox Grid.Column="0"
+                                                      VerticalAlignment="Center"
+                                                      IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                                      Checked="OnWorkspaceSelectionChanged"
+                                                      Unchecked="OnWorkspaceSelectionChanged"/>
+
+                                            <!-- Col 1: view mode name + fingerprint subtitle -->
+                                            <StackPanel Grid.Column="1"
                                                         Style="{StaticResource HideWhenEditing}"
                                                         VerticalAlignment="Center">
                                                 <StackPanel Orientation="Horizontal">
@@ -505,8 +546,8 @@
                                                            Margin="0,1,0,0"/>
                                             </StackPanel>
 
-                                            <!-- Col 0: edit mode — TextBox + check/X icons -->
-                                            <StackPanel Grid.Column="0"
+                                            <!-- Col 1: edit mode — TextBox + check/X icons -->
+                                            <StackPanel Grid.Column="1"
                                                         Style="{StaticResource ShowWhenEditing}"
                                                         Orientation="Horizontal"
                                                         VerticalAlignment="Center">
@@ -537,29 +578,29 @@
                                                 </Button>
                                             </StackPanel>
 
-                                            <!-- Cols 1-4: hidden in edit mode -->
-                                            <TextBlock Grid.Column="1"
+                                            <!-- Cols 2-5: hidden in edit mode -->
+                                            <TextBlock Grid.Column="2"
                                                        Style="{StaticResource HideWhenEditing}"
                                                        Text="{Binding SavedAtDisplay}"
                                                        FontSize="12"
                                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                                        VerticalAlignment="Center"/>
 
-                                            <TextBlock Grid.Column="2"
+                                            <TextBlock Grid.Column="3"
                                                        Style="{StaticResource HideWhenEditing}"
                                                        Text="{Binding MonitorCountLabel}"
                                                        FontSize="12"
                                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                                        VerticalAlignment="Center"/>
 
-                                            <TextBlock Grid.Column="3"
+                                            <TextBlock Grid.Column="4"
                                                        Style="{StaticResource HideWhenEditing}"
                                                        Text="{Binding EntryCount}"
                                                        FontSize="12"
                                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                                        VerticalAlignment="Center"/>
 
-                                            <TextBlock Grid.Column="4"
+                                            <TextBlock Grid.Column="5"
                                                        Style="{StaticResource HideWhenEditing}"
                                                        Text="{Binding SavedWithFilesLabel}"
                                                        FontSize="12"
@@ -567,7 +608,7 @@
                                                        VerticalAlignment="Center"/>
 
                                             <!-- More (⋯) button -->
-                                            <Button Grid.Column="5"
+                                            <Button Grid.Column="6"
                                                     Style="{StaticResource MoreBtnStyle}"
                                                     Tag="{Binding}"
                                                     Click="OnWorkspaceMoreClick">
