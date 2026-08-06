@@ -31,17 +31,20 @@ public class WorkspaceService
     private readonly WindowService    _windowService;
     private readonly MonitorService   _monitorService;
     private readonly JumpListService  _jumpListService;
+    private readonly WebAppService    _webAppService;
 
     public WorkspaceService(
         StorageService  storageService,
         WindowService   windowService,
         MonitorService  monitorService,
-        JumpListService jumpListService)
+        JumpListService jumpListService,
+        WebAppService?  webAppService = null)
     {
         _storageService  = storageService;
         _windowService   = windowService;
         _monitorService  = monitorService;
         _jumpListService = jumpListService;
+        _webAppService   = webAppService ?? new WebAppService();
     }
 
     // ── Storage proxies ────────────────────────────────────────────
@@ -88,6 +91,12 @@ public class WorkspaceService
         var windows  = _windowService.SnapshotAllWindows(monitors)
             .Where(w => !w.ProcessName.Equals("WindowAnchor", StringComparison.OrdinalIgnoreCase))
             .ToList();
+
+        // Resolve a friendly display name so the dialog shows "Insilico Terminal" rather than
+        // "brave" for installed web apps. Everything else keeps its process name.
+        foreach (var w in windows)
+            w.DisplayName = _webAppService.ResolveWebAppName(w.ProcessName, w.AppUserModelId)
+                            ?? w.ProcessName;
 
         return monitors
             .Select(m => (m, windows.Where(w => w.MonitorId == m.MonitorId).ToList()))
@@ -210,6 +219,24 @@ public class WorkspaceService
                 continue;
             }
 
+            // ── Browser web app (PWA) special case ─────────────────────────
+            // Installed web apps (Insilico Terminal, aggr.trade, …) run inside chrome.exe /
+            // brave.exe. Record how to relaunch the app itself instead of the browser.
+            var webAppEntry = TryBuildWebAppEntry(w);
+            if (webAppEntry != null)
+            {
+                entries.Add(webAppEntry);
+                continue;
+            }
+
+            // ── Dedicated browser window (site kept in its own window) ─────
+            var urlEntry = TryBuildDedicatedBrowserEntry(w);
+            if (urlEntry != null)
+            {
+                entries.Add(urlEntry);
+                continue;
+            }
+
             // ── Explorer special case ──────────────────────────────────────
             if (w.ProcessName.Equals("explorer", StringComparison.OrdinalIgnoreCase) &&
                 !string.IsNullOrEmpty(w.FolderPath))
@@ -219,6 +246,7 @@ public class WorkspaceService
                     ExecutablePath  = w.ExecutablePath,
                     ProcessName     = w.ProcessName,
                     WindowClassName = w.ClassName,
+                    AppUserModelId  = w.AppUserModelId,
                     FilePath        = saveFiles ? w.FolderPath : null,
                     FileConfidence  = saveFiles ? 95 : 0,
                     FileSource      = saveFiles ? "EXPLORER_FOLDER" : "NONE",
@@ -380,6 +408,7 @@ public class WorkspaceService
                 ExecutablePath  = w.ExecutablePath,
                 ProcessName     = w.ProcessName,
                 WindowClassName = w.ClassName,
+                AppUserModelId  = w.AppUserModelId,
                 FilePath        = filePath,
                 FileConfidence  = confidence,
                 FileSource      = source,
@@ -414,6 +443,116 @@ public class WorkspaceService
         return snapshot;
     }
 
+    // ── Browser web apps (PWAs) ───────────────────────────────────────────
+
+    /// <summary>
+    /// Builds a <see cref="WorkspaceEntry"/> for an installed browser web app (PWA), or returns
+    /// <c>null</c> when <paramref name="w"/> is not a web-app window.
+    /// <para>
+    /// A window qualifies when it belongs to a Chromium-based browser <em>and</em> carries an
+    /// explicit <c>AppUserModelID</c> that either matches a Start-Menu shortcut created by the
+    /// browser (<c>--app-id=…</c>) or has the shape of a Chromium web-app AUMID. Ordinary browser
+    /// windows share the browser's own AUMID and are left to the normal code path.
+    /// </para>
+    /// </summary>
+    private WorkspaceEntry? TryBuildWebAppEntry(WindowRecord w)
+    {
+        if (!WebAppService.IsChromiumBrowser(w.ProcessName)) return null;
+        if (string.IsNullOrEmpty(w.AppUserModelId))          return null;
+
+        var info = _webAppService.FindByAumid(w.AppUserModelId);
+
+        if (info == null && !WebAppService.LooksLikeWebAppAumid(w.AppUserModelId))
+            return null;   // plain browser window
+
+        string? shortcutPath;
+        string? target;
+        string? args;
+        string  name;
+        string  source;
+
+        if (info != null)
+        {
+            shortcutPath = info.ShortcutPath;
+            target       = info.TargetPath;
+            args         = info.Arguments;
+            name         = info.DisplayName;
+            source       = "WEB_APP_SHORTCUT";
+        }
+        else
+        {
+            // No shortcut on disk (app installed without one, or shortcut deleted).
+            // Rebuild a command line from the AUMID: chrome.exe --app-id=<32-char id>.
+            string? appId = WebAppService.ExtractAppIdFromAumid(w.AppUserModelId);
+            if (appId == null) return null;
+
+            shortcutPath = null;
+            target       = w.ExecutablePath;
+            args         = $"--app-id={appId}";
+            name         = w.TitleSnippet;
+            source       = "WEB_APP_AUMID";
+            AppLogger.Warn($"[WebApp] no shortcut found for AUMID '{w.AppUserModelId}' — " +
+                           $"falling back to \"{target}\" {args}");
+        }
+
+        AppLogger.Info($"[WebApp] '{name}' detected (AUMID={w.AppUserModelId}, source={source})");
+
+        return new WorkspaceEntry
+        {
+            ExecutablePath        = w.ExecutablePath,
+            ProcessName           = w.ProcessName,
+            WindowClassName       = w.ClassName,
+            FilePath              = null,
+            FileConfidence        = 0,
+            FileSource            = source,
+            LaunchArg             = null,          // must stay null: not a document entry
+            AppUserModelId        = w.AppUserModelId,
+            IsWebApp              = true,
+            WebAppName            = name,
+            WebAppShortcutPath    = shortcutPath,
+            WebAppLaunchTarget    = target,
+            WebAppLaunchArguments = args,
+            Position              = w,
+            MonitorId             = w.MonitorId,
+            MonitorIndex          = w.MonitorIndex,
+            MonitorName           = w.MonitorName,
+        };
+    }
+
+    /// <summary>
+    /// Builds a <see cref="WorkspaceEntry"/> for a browser window that the user keeps at a
+    /// specific site in its own window, or <c>null</c> when the window is not one of those.
+    /// <para>
+    /// A window qualifies when <see cref="WindowRecord.BrowserUrl"/> was populated during capture,
+    /// which only happens for a Chromium window whose address bar matched a configured
+    /// <see cref="Models.AppSettings.DedicatedBrowserUrlPatterns"/> entry.
+    /// </para>
+    /// </summary>
+    private WorkspaceEntry? TryBuildDedicatedBrowserEntry(WindowRecord w)
+    {
+        if (string.IsNullOrEmpty(w.BrowserUrl)) return null;
+
+        AppLogger.Info($"[BrowserUrl] '{w.BrowserUrl}' saved as a dedicated {w.ProcessName} window");
+
+        return new WorkspaceEntry
+        {
+            ExecutablePath           = w.ExecutablePath,
+            ProcessName              = w.ProcessName,
+            WindowClassName          = w.ClassName,
+            AppUserModelId           = w.AppUserModelId,
+            FilePath                 = null,
+            FileConfidence           = 0,
+            FileSource               = "BROWSER_URL",
+            LaunchArg                = null,   // must stay null: not a document entry
+            IsDedicatedBrowserWindow = true,
+            BrowserUrl               = w.BrowserUrl,
+            Position                 = w,
+            MonitorId                = w.MonitorId,
+            MonitorIndex             = w.MonitorIndex,
+            MonitorName              = w.MonitorName,
+        };
+    }
+
     // ── Per-window entry builder (shared by both snapshot paths) ──────────
 
     /// <summary>
@@ -423,6 +562,15 @@ public class WorkspaceService
     /// </summary>
     private WorkspaceEntry BuildEntryForWindow(WindowRecord w, bool saveFiles)
     {
+        // Browser web app (PWA) special case — must run before file detection, otherwise a
+        // web-app window is treated as a generic browser window.
+        var webAppEntry = TryBuildWebAppEntry(w);
+        if (webAppEntry != null) return webAppEntry;
+
+        // Dedicated browser window (site kept in its own window)
+        var urlEntry = TryBuildDedicatedBrowserEntry(w);
+        if (urlEntry != null) return urlEntry;
+
         // Explorer special case
         if (w.ProcessName.Equals("explorer", StringComparison.OrdinalIgnoreCase) &&
             !string.IsNullOrEmpty(w.FolderPath))
@@ -432,6 +580,7 @@ public class WorkspaceService
                 ExecutablePath  = w.ExecutablePath,
                 ProcessName     = w.ProcessName,
                 WindowClassName = w.ClassName,
+                AppUserModelId  = w.AppUserModelId,
                 FilePath        = saveFiles ? w.FolderPath : null,
                 FileConfidence  = saveFiles ? 95 : 0,
                 FileSource      = saveFiles ? "EXPLORER_FOLDER" : "NONE",
@@ -546,6 +695,7 @@ public class WorkspaceService
             ExecutablePath  = w.ExecutablePath,
             ProcessName     = w.ProcessName,
             WindowClassName = w.ClassName,
+            AppUserModelId  = w.AppUserModelId,
             FilePath        = filePath,
             FileConfidence  = confidence,
             FileSource      = source,
@@ -596,18 +746,33 @@ public class WorkspaceService
     ///   <item>2-second wait + second pass for slow launchers (Office, IDEs).</item>
     /// </list>
     /// </summary>
-    public async Task RestoreWorkspaceAsync(WorkspaceSnapshot snapshot, CancellationToken ct = default)
+    public Task RestoreWorkspaceAsync(WorkspaceSnapshot snapshot, CancellationToken ct = default)
+        => RestoreCoreAsync(snapshot, minimizeOthers: false, ct);
+
+    /// <summary>
+    /// Same as <see cref="RestoreWorkspaceAsync"/>, but after repositioning the workspace's own
+    /// windows it minimizes every other open window (nothing is closed). Use this to bring a
+    /// workspace to the foreground and clear away unrelated windows without the destructive
+    /// close-everything behaviour of <c>SwitchWorkspaceAsync</c>.
+    /// </summary>
+    public Task RestoreWorkspaceAlignAndMinimizeAsync(WorkspaceSnapshot snapshot, CancellationToken ct = default)
+        => RestoreCoreAsync(snapshot, minimizeOthers: true, ct);
+
+    private async Task RestoreCoreAsync(WorkspaceSnapshot snapshot, bool minimizeOthers, CancellationToken ct)
     {
-        AppLogger.Info($"RestoreWorkspaceAsync '{snapshot.Name}' — {snapshot.Entries.Count} entries");
+        AppLogger.Info($"RestoreCoreAsync '{snapshot.Name}' — {snapshot.Entries.Count} entries, minimizeOthers={minimizeOthers}");
 
         // ── Phase 1: reposition already-running windows ───────────────────
         // correctlyMatchedEntries tracks entries whose live window already had the right
         // document open (title matched). Only those entries are skipped in Phase 2.
+        // matchedHwnds accumulates every live window we repositioned, so "align & minimize
+        // others" knows which windows belong to the workspace and must be left visible.
         var liveWindows = _windowService.GetAllWindowsWithPids();
         var restoredEntries = new HashSet<int>();
         var correctlyMatchedEntries = new HashSet<int>();
+        var matchedHwnds = new HashSet<IntPtr>();
 
-        MatchAndRestore(snapshot.Entries, liveWindows, restoredEntries, correctlyMatchedEntries);
+        MatchAndRestore(snapshot.Entries, liveWindows, restoredEntries, correctlyMatchedEntries, matchedHwnds);
 
         if (ct.IsCancellationRequested) return;
 
@@ -624,7 +789,13 @@ public class WorkspaceService
         // the bare instance's slot while leaving zero windows for Praktikumsbericht/etc.
         // Skipping the bare launch lets the document entry start the exe properly.
         bool anyLaunched = false;
+        // Web-app windows must not count as "the browser is already running": a Chrome window
+        // that is really the Insilico Terminal PWA should not suppress launching Chrome itself.
+        // Dedicated single-site windows are excluded for the same reason: a Brave window that is
+        // really the trading site must not suppress launching the user's normal Brave window.
         var runningExes = liveWindows.Values
+            .Where(v => !IsWebAppWindow(v.Record))
+            .Where(v => string.IsNullOrEmpty(v.Record.BrowserUrl))
             .Select(v => v.Record.ExecutablePath.ToLowerInvariant())
             .ToHashSet();
 
@@ -641,6 +812,48 @@ public class WorkspaceService
             if (ct.IsCancellationRequested) return;
 
             var entry = snapshot.Entries[i];
+
+            // ── Installed browser web app (PWA) ───────────────────────────
+            // Always relaunch via its own shortcut / --app-id command line unless Phase 1
+            // already matched a live window with the same AppUserModelID. Never fall through
+            // to the generic browser launch, which would just open a normal browser window.
+            if (entry.IsWebApp)
+            {
+                if (restoredEntries.Contains(i)) continue;
+
+                try
+                {
+                    Process.Start(BuildProcessStartInfo(entry));
+                    anyLaunched = true;
+                    AppLogger.Info($"Launched web app: {entry.WebAppName} ({entry.AppUserModelId})");
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn($"Failed to launch web app '{entry.WebAppName}': {ex.Message}");
+                }
+                continue;
+            }
+
+            // ── Dedicated browser window ──────────────────────────────────
+            // Open the site in its own window. Unlike --restore-last-session this targets one
+            // specific window, so it can coexist with the user's normal multi-tab window.
+            if (entry.IsDedicatedBrowserWindow)
+            {
+                if (restoredEntries.Contains(i)) continue;
+
+                try
+                {
+                    Process.Start(BuildProcessStartInfo(entry));
+                    anyLaunched = true;
+                    AppLogger.Info($"Opened dedicated browser window: {entry.BrowserUrl}");
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn($"Failed to open '{entry.BrowserUrl}': {ex.Message}");
+                }
+                continue;
+            }
+
             if (string.IsNullOrEmpty(entry.ExecutablePath)) continue;
 
             if (!string.IsNullOrEmpty(entry.LaunchArg))
@@ -683,7 +896,11 @@ public class WorkspaceService
                     var psi = BuildProcessStartInfo(entry);
                     Process.Start(psi);
                     anyLaunched = true;
-                    AppLogger.Info($"Launched: {entry.ExecutablePath}");
+                    // Log what actually launched: shell:AppsFolder for Store apps prints the
+                    // FileName+Arguments, everything else the executable path.
+                    string how = IsStoreApp(entry) ? $"{psi.FileName} {psi.Arguments}".Trim()
+                                                   : entry.ExecutablePath;
+                    AppLogger.Info($"Launched: {how}");
                 }
                 catch (Exception ex)
                 {
@@ -692,7 +909,15 @@ public class WorkspaceService
             }
         }
 
-        if (!anyLaunched) return;
+        if (!anyLaunched)
+        {
+            // Nothing new to launch — every workspace window was already open and repositioned in
+            // Phase 1. Still honour the minimize request before returning, otherwise "align &
+            // minimize others" would do nothing when the workspace is already fully open.
+            if (minimizeOthers && !ct.IsCancellationRequested)
+                _windowService.MinimizeUserWindowsExcept(matchedHwnds);
+            return;
+        }
 
         // ── Phase 3: wait for app initialisation ─────────────────────────
         await Task.Delay(3000, ct).ConfigureAwait(false);
@@ -700,7 +925,7 @@ public class WorkspaceService
 
         // ── Phase 4: reposition newly appeared windows ────────────────────
         liveWindows = _windowService.GetAllWindowsWithPids();
-        MatchAndRestore(snapshot.Entries, liveWindows, restoredEntries, correctlyMatchedEntries);
+        MatchAndRestore(snapshot.Entries, liveWindows, restoredEntries, correctlyMatchedEntries, matchedHwnds);
 
         if (ct.IsCancellationRequested) return;
 
@@ -709,9 +934,13 @@ public class WorkspaceService
         if (ct.IsCancellationRequested) return;
 
         liveWindows = _windowService.GetAllWindowsWithPids();
-        MatchAndRestore(snapshot.Entries, liveWindows, restoredEntries, correctlyMatchedEntries);
+        MatchAndRestore(snapshot.Entries, liveWindows, restoredEntries, correctlyMatchedEntries, matchedHwnds);
 
-        AppLogger.Info($"RestoreWorkspaceAsync complete");
+        // ── Optional: minimize everything that is not part of the workspace ──
+        if (minimizeOthers && !ct.IsCancellationRequested)
+            _windowService.MinimizeUserWindowsExcept(matchedHwnds);
+
+        AppLogger.Info($"RestoreCoreAsync complete");
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -737,10 +966,34 @@ public class WorkspaceService
         List<WorkspaceEntry> entries,
         Dictionary<IntPtr, (uint Pid, WindowRecord Record)> liveWindows,
         HashSet<int> restoredEntries,
-        HashSet<int>? correctlyMatchedEntries = null)
+        HashSet<int>? correctlyMatchedEntries = null,
+        HashSet<IntPtr>? matchedHwnds = null)
     {
         // Build a consumed-hwnd set so each window only gets one entry applied.
         var consumedHwnds = new HashSet<IntPtr>();
+
+        // Guard against cross-matching browser windows.
+        // A PWA window (Insilico Terminal, aggr.trade, …) and a plain Chrome/Brave window share
+        // the same executable and window class, so every matching tier below would happily pair
+        // them up. Whenever either side is a web app, the AppUserModelIDs must be identical.
+        // Entries from older snapshots carry no AUMID and simply never claim a web-app window.
+        static bool IdentityCompatible(WorkspaceEntry e, WindowRecord rec)
+        {
+            // A dedicated browser window and a normal browser window are the same executable and
+            // class, so without this guard either could claim the other's window.
+            bool liveIsDedicated = !string.IsNullOrEmpty(rec.BrowserUrl);
+            if (e.IsDedicatedBrowserWindow || liveIsDedicated)
+            {
+                if (e.IsDedicatedBrowserWindow != liveIsDedicated) return false;
+                if (liveIsDedicated && !SameSite(rec.BrowserUrl, e.BrowserUrl)) return false;
+            }
+
+            string liveAumid = rec.AppUserModelId ?? "";
+            if (!e.IsWebApp && !WebAppService.LooksLikeWebAppAumid(liveAumid))
+                return true;   // both sides are ordinary windows — old behaviour
+
+            return string.Equals(e.AppUserModelId ?? "", liveAumid, StringComparison.OrdinalIgnoreCase);
+        }
 
         for (int i = 0; i < entries.Count; i++)
         {
@@ -751,6 +1004,46 @@ public class WorkspaceService
 
             IntPtr bestHwnd = IntPtr.Zero;
             bool titleMatched = false;
+
+            // ── Tier -1: web app match by AppUserModelID ──────────────────────────
+            // A PWA's title changes with the page it shows, so the AUMID is the only stable
+            // identifier. It is also unique per installed app, making this an exact match.
+            if (entry.IsWebApp && !string.IsNullOrEmpty(entry.AppUserModelId))
+            {
+                foreach (var (hwnd, (_, rec)) in liveWindows)
+                {
+                    if (consumedHwnds.Contains(hwnd)) continue;
+                    if (string.Equals(rec.AppUserModelId, entry.AppUserModelId,
+                                      StringComparison.OrdinalIgnoreCase))
+                    {
+                        bestHwnd = hwnd;
+                        titleMatched = true;   // right app is on screen — no relaunch needed
+                        break;
+                    }
+                }
+            }
+
+            // ── Tier -0.5: dedicated browser window match by URL ──────────────────
+            // The saved URL is the only stable identifier here: the title of such a window is
+            // just the page title and changes as the user navigates within the site.
+            if (entry.IsDedicatedBrowserWindow && !string.IsNullOrEmpty(entry.BrowserUrl))
+            {
+                foreach (var (hwnd, (_, rec)) in liveWindows)
+                {
+                    if (consumedHwnds.Contains(hwnd)) continue;
+                    if (string.IsNullOrEmpty(rec.BrowserUrl)) continue;
+                    if (!rec.ExecutablePath.Equals(entry.ExecutablePath, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    // Same site is enough — the user may have navigated to another page on it.
+                    if (SameSite(rec.BrowserUrl, entry.BrowserUrl))
+                    {
+                        bestHwnd = hwnd;
+                        titleMatched = true;   // correct window already open — no relaunch needed
+                        break;
+                    }
+                }
+            }
 
             // ── Tier 0: document-aware match (exe + title contains document name) ──
             // This is the highest-priority match for document entries: we want
@@ -763,6 +1056,7 @@ public class WorkspaceService
                 foreach (var (hwnd, (_, rec)) in liveWindows)
                 {
                     if (consumedHwnds.Contains(hwnd)) continue;
+                    if (!IdentityCompatible(entry, rec)) continue;
                     if (rec.ExecutablePath.Equals(entry.ExecutablePath, StringComparison.OrdinalIgnoreCase) &&
                         rec.TitleSnippet.ToLowerInvariant().Contains(expectedName))
                     {
@@ -773,12 +1067,54 @@ public class WorkspaceService
                 }
             }
 
+            // ── Tier 0.5: disambiguate multiple identical windows by title similarity ──
+            // Two windows of the same app (e.g. two TradingView charts, two Explorer windows)
+            // share the same exe, window class and — for packaged apps — the same AUMID, so the
+            // tiers below cannot tell them apart and may swap their positions. When more than one
+            // live window matches this entry's exe, pick the one whose current title is most
+            // similar to the saved title. TradingView puts the layout name at the end of the
+            // title ("… / 🦁LTF Luis" vs "… / 👀Outlook"), which is exactly what disambiguates
+            // them even though the price prefix keeps changing.
+            if (bestHwnd == IntPtr.Zero)
+            {
+                var sameExe = liveWindows
+                    .Where(kv => !consumedHwnds.Contains(kv.Key))
+                    .Where(kv => IdentityCompatible(entry, kv.Value.Record))
+                    .Where(kv => kv.Value.Record.ExecutablePath.Equals(
+                        entry.ExecutablePath, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (sameExe.Count > 1)
+                {
+                    IntPtr bestByTitle = IntPtr.Zero;
+                    double bestScore   = -1;
+                    foreach (var kv in sameExe)
+                    {
+                        double score = TitleSimilarity(entry.Position.TitleSnippet,
+                                                       kv.Value.Record.TitleSnippet);
+                        if (score > bestScore)
+                        {
+                            bestScore   = score;
+                            bestByTitle = kv.Key;
+                        }
+                    }
+
+                    if (bestByTitle != IntPtr.Zero)
+                    {
+                        bestHwnd = bestByTitle;
+                        AppLogger.Info($"Disambiguated {entry.ProcessName} by title similarity " +
+                                       $"(score={bestScore:F2}) → hwnd {bestByTitle}");
+                    }
+                }
+            }
+
             // ── Tier 1: exe + class ───────────────────────────────────────────────
             if (bestHwnd == IntPtr.Zero)
             {
                 foreach (var (hwnd, (_, rec)) in liveWindows)
                 {
                     if (consumedHwnds.Contains(hwnd)) continue;
+                    if (!IdentityCompatible(entry, rec)) continue;
                     if (rec.ExecutablePath.Equals(entry.ExecutablePath, StringComparison.OrdinalIgnoreCase) &&
                         rec.ClassName == entry.WindowClassName)
                     {
@@ -798,6 +1134,7 @@ public class WorkspaceService
                 foreach (var (hwnd, (_, rec)) in liveWindows)
                 {
                     if (consumedHwnds.Contains(hwnd)) continue;
+                    if (!IdentityCompatible(entry, rec)) continue;
                     if (rec.ExecutablePath.Equals(entry.ExecutablePath, StringComparison.OrdinalIgnoreCase) &&
                         rec.TitleSnippet.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                     {
@@ -811,12 +1148,64 @@ public class WorkspaceService
 
             consumedHwnds.Add(bestHwnd);
             restoredEntries.Add(i);
+            matchedHwnds?.Add(bestHwnd);
             if (titleMatched) correctlyMatchedEntries?.Add(i);
             entry.WasRestored = true;
 
             _windowService.RestoreSingleWindow(bestHwnd, entry.Position);
             AppLogger.Info($"Restored entry[{i}] {entry.ProcessName} → hwnd {bestHwnd} (titleMatched={titleMatched})");
         }
+    }
+
+    /// <summary>
+    /// Compares two URLs by host only, so a window still matches its entry after the user has
+    /// navigated to another page on the same site.
+    /// </summary>
+    private static bool SameSite(string a, string b)
+    {
+        if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b)) return false;
+        if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase)) return true;
+
+        if (Uri.TryCreate(a, UriKind.Absolute, out var ua) &&
+            Uri.TryCreate(b, UriKind.Absolute, out var ub))
+            return string.Equals(ua.Host, ub.Host, StringComparison.OrdinalIgnoreCase);
+
+        return false;
+    }
+
+    /// <summary>
+    /// Sørensen–Dice similarity (0..1) between two window titles, computed over character
+    /// bigrams. Used to tell apart two windows of the same application whose only distinguishing
+    /// feature is part of the title (e.g. a TradingView layout name). Volatile shared content
+    /// such as a live price contributes equally to every candidate, so the distinctive part of
+    /// the title dominates the ranking.
+    /// </summary>
+    private static double TitleSimilarity(string a, string b)
+    {
+        a = (a ?? "").ToLowerInvariant();
+        b = (b ?? "").ToLowerInvariant();
+        if (a.Length < 2 || b.Length < 2)
+            return string.Equals(a, b, StringComparison.Ordinal) ? 1.0 : 0.0;
+
+        var bigrams = new Dictionary<string, int>();
+        for (int i = 0; i < a.Length - 1; i++)
+        {
+            string g = a.Substring(i, 2);
+            bigrams[g] = bigrams.TryGetValue(g, out int c) ? c + 1 : 1;
+        }
+
+        int overlap = 0;
+        for (int i = 0; i < b.Length - 1; i++)
+        {
+            string g = b.Substring(i, 2);
+            if (bigrams.TryGetValue(g, out int c) && c > 0)
+            {
+                bigrams[g] = c - 1;
+                overlap++;
+            }
+        }
+
+        return 2.0 * overlap / ((a.Length - 1) + (b.Length - 1));
     }
 
     /// <summary>
@@ -901,6 +1290,75 @@ public class WorkspaceService
     /// </summary>
     public ProcessStartInfo BuildProcessStartInfo(WorkspaceEntry entry)
     {
+        // ── Installed browser web app (PWA) ───────────────────────────────
+        // Launching the shortcut reproduces exactly what happens when the user starts the app
+        // from the Start Menu, including profile directory and app id.
+        if (entry.IsWebApp)
+        {
+            string? shortcut = entry.WebAppShortcutPath;
+
+            // Shortcut may have been moved or the app reinstalled — re-resolve by AUMID.
+            if ((string.IsNullOrEmpty(shortcut) || !File.Exists(shortcut)) &&
+                !string.IsNullOrEmpty(entry.AppUserModelId))
+            {
+                shortcut = _webAppService.FindByAumid(entry.AppUserModelId)?.ShortcutPath;
+            }
+
+            if (!string.IsNullOrEmpty(shortcut) && File.Exists(shortcut))
+            {
+                return new ProcessStartInfo
+                {
+                    FileName        = shortcut,
+                    UseShellExecute = true,
+                };
+            }
+
+            string target = entry.WebAppLaunchTarget ?? entry.ExecutablePath;
+            if (!string.IsNullOrEmpty(target))
+            {
+                AppLogger.Info($"[WebApp] launching '{entry.WebAppName}' via command line: " +
+                               $"{target} {entry.WebAppLaunchArguments}");
+                return new ProcessStartInfo
+                {
+                    FileName        = target,
+                    Arguments       = entry.WebAppLaunchArguments ?? "",
+                    UseShellExecute = false,
+                };
+            }
+        }
+
+        // ── Dedicated browser window ──────────────────────────────────────
+        // --new-window forces a separate window instead of a tab in an existing one, which is
+        // what makes this coexist with the user's regular multi-tab browser window.
+        if (entry.IsDedicatedBrowserWindow && !string.IsNullOrEmpty(entry.BrowserUrl))
+        {
+            AppLogger.Info($"[BrowserUrl] launching {entry.ProcessName} --new-window {entry.BrowserUrl}");
+            return new ProcessStartInfo
+            {
+                FileName        = entry.ExecutablePath,
+                Arguments       = $"--new-window \"{entry.BrowserUrl}\"",
+                UseShellExecute = false,
+            };
+        }
+
+        // ── Store / MSIX app (TradingView, Notepad, Store-installed apps) ─
+        // Their executables live under C:\Program Files\WindowsApps and must NOT be started
+        // by path: the process then runs without package identity, so the app cannot reach its
+        // packaged AppData container and comes back with default settings (e.g. light theme
+        // instead of dark). Launching through shell:AppsFolder\<AUMID> activates the package
+        // properly, exactly like clicking the Start-Menu tile.
+        // Entries that open a document keep the file association path below.
+        if (string.IsNullOrEmpty(entry.LaunchArg) && IsStoreApp(entry))
+        {
+            AppLogger.Info($"[StoreApp] launching {entry.ProcessName} via shell:AppsFolder\\{entry.AppUserModelId}");
+            return new ProcessStartInfo
+            {
+                FileName        = "explorer.exe",
+                Arguments       = $"shell:AppsFolder\\{entry.AppUserModelId}",
+                UseShellExecute = true,
+            };
+        }
+
         // VS Code special case: open as folder via CLI
         if (entry.ProcessName.Equals("Code", StringComparison.OrdinalIgnoreCase) &&
             !string.IsNullOrEmpty(entry.LaunchArg))
@@ -947,6 +1405,26 @@ public class WorkspaceService
     }
 
     // ── Browser detection helpers ─────────────────────────────────────────
+
+    /// <summary>
+    /// True when the entry belongs to a packaged (MSIX/Store) app that must be started through
+    /// its AppUserModelID rather than by executable path. Requires both a packaged install
+    /// location and an explicit AUMID (packaged AUMIDs have the form
+    /// <c>PackageFamilyName!AppId</c>).
+    /// </summary>
+    private static bool IsStoreApp(WorkspaceEntry entry) =>
+        !string.IsNullOrEmpty(entry.AppUserModelId) &&
+        entry.AppUserModelId.Contains('!') &&
+        entry.ExecutablePath.Contains(@"\WindowsApps\", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True when a live window is an installed browser web app rather than a normal
+    /// browser window, judged by the shape of its <c>AppUserModelID</c>.
+    /// </summary>
+    private static bool IsWebAppWindow(WindowRecord rec) =>
+        WebAppService.IsChromiumBrowser(rec.ProcessName) &&
+        WebAppService.LooksLikeWebAppAumid(rec.AppUserModelId);
+
 
     private static readonly HashSet<string> BrowserProcessNames = new(StringComparer.OrdinalIgnoreCase)
     {

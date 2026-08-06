@@ -14,6 +14,39 @@ public class WorkspaceEntry
     public string ProcessName     { get; set; } = "";
     public string WindowClassName { get; set; } = "";
 
+    // ── Browser web app (PWA) identity ───────────────────────────────────────
+    /// <summary>
+    /// Per-window <c>AppUserModelID</c> captured at snapshot time. For Chromium browsers this
+    /// distinguishes an installed web app window from an ordinary browser window.
+    /// Empty for non-browser apps and for snapshots taken before web-app support was added.
+    /// </summary>
+    public string  AppUserModelId        { get; set; } = "";
+
+    /// <summary>True when this entry is an installed browser web app (PWA), not a plain browser window.</summary>
+    public bool    IsWebApp              { get; set; }
+
+    /// <summary>Display name of the web app, taken from its shortcut (e.g. "Insilico Terminal").</summary>
+    public string  WebAppName            { get; set; } = "";
+
+    /// <summary>Path of the <c>.lnk</c> that launches the web app. Preferred launch method on restore.</summary>
+    public string? WebAppShortcutPath    { get; set; }
+
+    /// <summary>Shortcut target used when the <c>.lnk</c> no longer exists (usually <c>chrome_proxy.exe</c>).</summary>
+    public string? WebAppLaunchTarget    { get; set; }
+
+    /// <summary>Command line for <see cref="WebAppLaunchTarget"/>, e.g. <c>--profile-directory=Default --app-id=…</c>.</summary>
+    public string? WebAppLaunchArguments { get; set; }
+
+    // ── Dedicated browser window (site kept in its own window) ───────────────
+    /// <summary>
+    /// True when this entry is a browser window that must be reopened as its own window at a
+    /// specific URL, instead of relying on the browser's session restore.
+    /// </summary>
+    public bool    IsDedicatedBrowserWindow { get; set; }
+
+    /// <summary>URL to reopen for a dedicated browser window, e.g. <c>https://vari.love/</c>.</summary>
+    public string  BrowserUrl               { get; set; } = "";
+
     // ── File tracking (null when SavedWithFiles = false) ─────────────────────
     public string? FilePath       { get; set; }
     public int     FileConfidence { get; set; }

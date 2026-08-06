@@ -18,6 +18,17 @@ namespace WindowAnchor.Services;
 /// </summary>
 public class WindowService
 {
+    private readonly SettingsService? _settingsService;
+
+    /// <param name="settingsService">
+    ///   Optional. Supplies <see cref="Models.AppSettings.DedicatedBrowserUrlPatterns"/>; when
+    ///   omitted no browser URLs are read during a snapshot.
+    /// </param>
+    public WindowService(SettingsService? settingsService = null)
+    {
+        _settingsService = settingsService;
+    }
+
     // Skip-list of well-known OS-chrome window classes that should never be saved.
     private static readonly string[] OsWindowClassSkipList = new[]
     {
@@ -212,6 +223,39 @@ public class WindowService
         // lookups to run on windows where Tier 1 would have succeeded.
         string snippet = fullTitle.Length > 200 ? fullTitle.Substring(0, 200) : fullTitle;
 
+        // Read the window's explicit AppUserModelID. Two things depend on it:
+        //   • Chromium browsers: installed web apps (PWAs) get their own AUMID while sharing
+        //     chrome.exe/brave.exe and the window class — the only way to tell them apart.
+        //   • Store/MSIX apps (TradingView, Notepad, …): the AUMID is the only way to relaunch
+        //     them *with package identity*. Starting their exe under C:\Program Files\WindowsApps
+        //     directly gives the app no package container, so it loses its settings.
+        // Classic desktop apps usually have no explicit AUMID — the empty string is expected.
+        string appUserModelId = WebAppService.GetWindowAppUserModelId(hWnd);
+
+        // Fallback for packaged (Store/MSIX) apps: their windows usually carry no explicit AUMID,
+        // so read it from the process's package identity instead. This is what lets us relaunch
+        // TradingView, Notepad, … via shell:AppsFolder with their settings intact.
+        if (string.IsNullOrEmpty(appUserModelId) &&
+            exePath.Contains(@"\WindowsApps\", StringComparison.OrdinalIgnoreCase))
+        {
+            appUserModelId = WebAppService.GetProcessAppUserModelId(processId);
+        }
+
+        // For browser windows, read the address bar only when the user configured URL patterns
+        // and the window's URL matches one. This keeps the (comparatively slow) UI Automation
+        // query off the snapshot path for everyone who does not use the feature.
+        string browserUrl = "";
+        var urlPatterns = _settingsService?.Settings.DedicatedBrowserUrlPatterns;
+        if (urlPatterns is { Count: > 0 } && WebAppService.IsChromiumBrowser(processName))
+        {
+            string url = BrowserUrlService.GetWindowUrl(hWnd);
+            if (BrowserUrlService.MatchesAnyPattern(url, urlPatterns))
+            {
+                browserUrl = url;
+                AppLogger.Info($"[BrowserUrl] dedicated window matched: {url}");
+            }
+        }
+
         // For File Explorer windows, resolve the open folder via the pre-built COM map
         string folderPath = "";
         if (explorerFolderMap != null &&
@@ -234,6 +278,8 @@ public class WindowService
             NormalBottom = placement.RcNormalPosition.Bottom,
             SavedDpi = NativeMethodsWindow.GetDpiForWindow(hWnd),
             FolderPath = folderPath,
+            AppUserModelId = appUserModelId,
+            BrowserUrl = browserUrl,
         };
     }
 
@@ -383,6 +429,35 @@ public class WindowService
 
         AppLogger.Info($"CloseAllUserWindows: sent WM_CLOSE to {closed} windows");
         return closed;
+    }
+
+    /// <summary>
+    /// Minimizes every visible top-level user window whose handle is <em>not</em> in
+    /// <paramref name="keep"/>. WindowAnchor's own windows are always left alone.
+    /// Used by the "align &amp; minimize others" restore mode to clear away windows that are not
+    /// part of the workspace without closing them. Returns the number of windows minimized.
+    /// </summary>
+    public int MinimizeUserWindowsExcept(HashSet<IntPtr> keep)
+    {
+        const int SW_MINIMIZE = 6;   // minimize without activating another window
+        int minimized = 0;
+        var ownPid = (uint)Process.GetCurrentProcess().Id;
+
+        NativeMethodsWindow.EnumWindows((hWnd, _) =>
+        {
+            if (!ShouldIncludeWindow(hWnd)) return true;
+            if (keep.Contains(hWnd)) return true;
+
+            NativeMethodsWindow.GetWindowThreadProcessId(hWnd, out uint pid);
+            if (pid == ownPid) return true;   // never touch our own windows
+
+            NativeMethodsWindow.ShowWindow(hWnd, SW_MINIMIZE);
+            minimized++;
+            return true;
+        }, IntPtr.Zero);
+
+        AppLogger.Info($"MinimizeUserWindowsExcept: minimized {minimized} window(s) not in the workspace");
+        return minimized;
     }
 
     /// <summary>
