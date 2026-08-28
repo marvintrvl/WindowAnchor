@@ -32,9 +32,33 @@
 
 WindowAnchor operates silently in your system tray, watching your display configuration. Using **Monitor Fingerprinting**, it identifies your current setup (e.g., "Home Office" vs. "Travel") and restores your preferred layout instantly.
 
-1. **Download**: Get the latest `WindowAnchor-v1.3.0.exe` from the [Releases](../../releases) page.
+1. **Download**: Get the latest Windows executable from the [Releases](../../releases) page.
 2. **Save**: Right-click the tray icon and select "Save Workspace...".
 3. **Restore**: Simply dock your laptop; WindowAnchor handles the rest.
+
+## Review Status & Manual Install
+
+The browser extension is currently under review for the Chrome Web Store. While review is in progress, the extension can still be used locally via manual installation.
+
+### Local desktop app install
+1. Download the latest `WindowAnchor.exe` from the GitHub release page.
+2. Run the executable once to confirm the app starts correctly.
+3. If Windows prompts for security permissions, allow the app to run.
+
+### Manual browser extension install
+1. Download the browser connector package from the GitHub release assets.
+2. Open `chrome://extensions` or `edge://extensions` and enable **Developer mode**.
+3. Click **Load unpacked** and select the extracted browser extension folder.
+4. Copy the generated extension ID shown on the extension card.
+5. Update the native host manifest and register the native messaging host for Chrome or Edge using the included PowerShell script.
+6. Reload the extension and verify that it can capture and restore tabs.
+
+For local testing, the included script is the recommended setup path:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\register-native-host.ps1 -ExtensionId <id> -WindowAnchorPath <path-to-exe>
+```
+
+This manual workflow is fully supported for local testing while the extension is being reviewed.
 
 ## 🛠 How It Works
 

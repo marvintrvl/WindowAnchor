@@ -6,10 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Browser extension review submission** — The WindowAnchor browser connector has been submitted for review and is being evaluated for Chrome Web Store distribution.
+- **Manual installation flow documented** — Local testing and manual install instructions are now included for the browser connector and the native host registration process.
+
 ### Fixed
+- **Browser setup is now user-controlled and quiet when incomplete** — Settings detects installed supported browsers and opens the selected browser's extension page for setup. The connector now handles a missing native host without repeated unchecked `Specified native messaging host not found` errors.
 - **Browser Extension MVP** — Added a Chromium Manifest V3 connector that captures and restores selected browser tabs, pinned state, tab groups, active tabs, and browser window bounds through the documented native-messaging protocol. Incognito tabs and unsupported/internal URLs are excluded.
 - **WindowAnchor notifications can be disabled** — Settings now includes a persisted toggle for the app's system-tray progress and completion messages. This does not change notifications for Windows or other applications.
 - **Installed web apps (PWAs) are no longer treated as plain browser windows** — Web apps installed from Chrome, Brave, Edge or another Chromium browser (e.g. Insilico Terminal, aggr.trade) run inside `chrome.exe`/`brave.exe` and use the same window class as a normal browser window. WindowAnchor identified them only by executable + class name, so restoring a layout opened a fresh browser window instead of the app. Every window's `AppUserModelID` is now captured; web-app windows are matched against the Start-Menu shortcut the browser created on install and relaunched through it. Window matching requires an exact `AppUserModelID` match, so a web-app entry can no longer claim a plain browser window (or vice versa).
+
+## [1.4.0] - 2026-08-28
+
+### Added
+- **WindowAnchor Browser Connector review submission** — The extension is now submitted for review and the project includes manual installation guidance for local use while the review is pending.
+- **Local/manual setup instructions** — Steps for loading the extension locally in Chrome/Edge Developer Mode, registering the native host, and using the desktop app for testing.
+
+### Changed
+- **Release messaging updated for review state** — The release notes now explicitly state that the extension is under review and that local/manual installation remains available for users who want to test it before store publication.
+
+### Fixed
+- **Manual installation path validated** — Unpacked browser extension setup and native host registration have been tested for a local workflow without requiring the Chrome Web Store.
 
 ## [1.3.0] - 2026-03-01
 
