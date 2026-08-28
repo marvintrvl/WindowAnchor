@@ -200,6 +200,8 @@ public partial class SettingsWindow : FluentWindow
             NotificationsToggle.IsChecked = _settingsService.Settings.NotificationsEnabled;
             _suppressToggle = false;
 
+            InitialiseBrowserIntegrationUI();
+
             // Populate startup behavior controls
             InitialiseStartupBehaviorUI();
             InitialiseHotkeyUI();
@@ -212,8 +214,41 @@ public partial class SettingsWindow : FluentWindow
     private void OnNotificationsToggleChanged(object sender, RoutedEventArgs e)
     {
         if (_suppressToggle) return;
-        _settingsService.Settings.NotificationsEnabled = NotificationsToggle.IsChecked is true;
+        _settingsService.Settings.NotificationsEnabled = NotificationsToggle.IsChecked.GetValueOrDefault();
         _settingsService.Save();
+    }
+
+    private void InitialiseBrowserIntegrationUI()
+    {
+        var installed = BrowserIntegrationService.GetInstalledBrowserNames();
+        ChromeExtensionButton.IsEnabled = installed.Contains("Google Chrome");
+        EdgeExtensionButton.IsEnabled = installed.Contains("Microsoft Edge");
+        BraveExtensionButton.IsEnabled = installed.Contains("Brave");
+        OperaExtensionButton.IsEnabled = installed.Contains("Opera");
+    }
+
+    private static void OpenBrowserExtensionSetup(string browserName)
+        => BrowserIntegrationService.OpenManagementPage(browserName);
+
+    private void OnChromeExtensionSetup(object sender, RoutedEventArgs e)
+        => OpenBrowserExtensionSetup("Google Chrome");
+
+    private void OnEdgeExtensionSetup(object sender, RoutedEventArgs e)
+        => OpenBrowserExtensionSetup("Microsoft Edge");
+
+    private void OnBraveExtensionSetup(object sender, RoutedEventArgs e)
+        => OpenBrowserExtensionSetup("Brave");
+
+    private void OnOperaExtensionSetup(object sender, RoutedEventArgs e)
+        => OpenBrowserExtensionSetup("Opera");
+
+    private void OnRemoveBrowserConnection(object sender, RoutedEventArgs e)
+    {
+        var result = System.Windows.MessageBox.Show(
+            "Remove WindowAnchor's native browser connection registrations? The browser extension itself will not be uninstalled.",
+            "Remove Browser Connection", System.Windows.MessageBoxButton.OKCancel, System.Windows.MessageBoxImage.Question);
+        if (result == System.Windows.MessageBoxResult.OK)
+            BrowserIntegrationService.RemoveNativeHostRegistrations();
     }
 
     // ── Startup-behavior UI ──────────────────────────────────────────────────

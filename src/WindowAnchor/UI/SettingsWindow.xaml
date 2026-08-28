@@ -155,6 +155,66 @@
                     </Grid>
                 </Border>
 
+                <!-- ══════════════════ BROWSER INTEGRATION ══════════════════ -->
+
+                <StackPanel Orientation="Horizontal" Margin="4,16,0,8">
+                    <ui:SymbolIcon Symbol="Globe24" FontSize="18"
+                                   Foreground="{DynamicResource SystemAccentColorPrimaryBrush}"
+                                   VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <TextBlock Text="Browser Integration"
+                               FontSize="15" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="8"
+                        Padding="16,14" Margin="0,0,0,8">
+                    <StackPanel>
+                        <TextBlock Text="Enable browser tab capture and restoration"
+                                   FontSize="13" FontWeight="Medium"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                        <TextBlock Text="Install the extension from the browser store. Developer Mode is only needed for local testing."
+                                   FontSize="12" TextWrapping="Wrap" Margin="0,3,0,12"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <ui:Button x:Name="ChromeExtensionButton" Grid.Row="0" Grid.Column="0"
+                                       Content="Set up Chrome" Icon="{ui:SymbolIcon Globe24}"
+                                       HorizontalAlignment="Stretch" Margin="0,0,6,6"
+                                       Click="OnChromeExtensionSetup"/>
+                            <ui:Button x:Name="EdgeExtensionButton" Grid.Row="0" Grid.Column="1"
+                                       Content="Set up Edge" Icon="{ui:SymbolIcon Globe24}"
+                                       HorizontalAlignment="Stretch" Margin="6,0,0,6"
+                                       Click="OnEdgeExtensionSetup"/>
+                            <ui:Button x:Name="BraveExtensionButton" Grid.Row="1" Grid.Column="0"
+                                       Content="Set up Brave" Icon="{ui:SymbolIcon Globe24}"
+                                       HorizontalAlignment="Stretch" Margin="0,0,6,0"
+                                       Click="OnBraveExtensionSetup"/>
+                            <ui:Button x:Name="OperaExtensionButton" Grid.Row="1" Grid.Column="1"
+                                       Content="Set up Opera" Icon="{ui:SymbolIcon Globe24}"
+                                       HorizontalAlignment="Stretch" Margin="6,0,0,0"
+                                       Click="OnOperaExtensionSetup"/>
+                        </Grid>
+                        <TextBlock Text="The extension must be installed by your browser. WindowAnchor can open the correct setup page and remove its native connection."
+                                   FontSize="11" TextWrapping="Wrap" Margin="0,12,0,8"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                        <ui:Button Content="Remove browser connection"
+                                   Appearance="Secondary"
+                                   Icon="{ui:SymbolIcon Delete24}"
+                                   HorizontalAlignment="Left"
+                                   Click="OnRemoveBrowserConnection"/>
+                    </StackPanel>
+                </Border>
+
                 <!-- ══════════════════ STARTUP BEHAVIOR ══════════════════ -->
 
                 <StackPanel Orientation="Horizontal" Margin="4,8,0,8">

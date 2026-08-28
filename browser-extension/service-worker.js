@@ -2,22 +2,27 @@ const HOST_NAME = "com.windowanchor.browser";
 const PROTOCOL_VERSION = 1;
 let nativePort = null;
 let reconnectTimer = null;
+let hostUnavailable = false;
 
 function connectHost() {
-  if (nativePort) return;
+  if (nativePort || hostUnavailable) return;
   try {
     nativePort = chrome.runtime.connectNative(HOST_NAME);
     nativePort.onMessage.addListener(handleMessage);
     nativePort.onDisconnect.addListener(() => {
+      // Reading lastError prevents Chrome from reporting an unchecked runtime error
+      // when the user has not installed or registered the native host yet.
+      const error = chrome.runtime.lastError;
       nativePort = null;
-      if (reconnectTimer === null) {
-        reconnectTimer = setTimeout(() => {
-          reconnectTimer = null;
-          connectHost();
-        }, 2000);
+      if (error) {
+        hostUnavailable = true;
+        console.info("WindowAnchor browser integration is not enabled: " + error.message);
+        return;
       }
+      hostUnavailable = false;
     });
   } catch (error) {
+    hostUnavailable = true;
     console.warn("WindowAnchor native host unavailable", error);
   }
 }
