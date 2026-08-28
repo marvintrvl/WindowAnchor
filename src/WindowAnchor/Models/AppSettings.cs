@@ -45,6 +45,10 @@ public class AppSettings
     public StartupBehavior StartupBehavior   { get; set; } = StartupBehavior.None;
     public string?         DefaultWorkspaceName { get; set; }
 
+    // ── Notifications ────────────────────────────────────────────────────
+    /// <summary>Whether WindowAnchor may show system-tray balloon notifications.</summary>
+    public bool NotificationsEnabled { get; set; } = true;
+
     // ── Keyboard shortcuts ────────────────────────────────────────────────
     public bool HotkeysEnabled { get; set; } = true;
 

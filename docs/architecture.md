@@ -81,6 +81,8 @@ Reacts to `WM_DISPLAYCHANGE` events forwarded from `App.xaml.cs`.
 - **`HandleDisplayChangeAsync()`** — debounces the event (1 s), computes the new fingerprint, looks up a matching workspace, and calls `WorkspaceService.RestoreWorkspaceAsync` if one is found.
 - Owns all notification balloon calls via the private `NotifyBalloon` helper, which marshals to the UI thread.
 
+WindowAnchor's tray notifications are controlled by `AppSettings.NotificationsEnabled`. The final `App.ShowBalloon` display method checks this setting, so notifications initiated by startup, save, restore, switch, and display-change flows all follow the same preference. The setting only suppresses WindowAnchor messages; it does not change Windows notification or Focus Assist state.
+
 ### `JumpListService`
 Reads the Windows Jump-List AutoDestList binary files from `%AppData%\Microsoft\Windows\Recent\AutomaticDestinations\` using the OpenMcdf library to extract recently-opened file paths per application.
 

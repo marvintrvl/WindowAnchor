@@ -404,6 +404,9 @@ public partial class App : System.Windows.Application
     public void ShowBalloon(string title, string message,
         H.NotifyIcon.Core.NotificationIcon icon = H.NotifyIcon.Core.NotificationIcon.Info)
     {
+        if (_settingsService?.Settings.NotificationsEnabled == false)
+            return;
+
         try
         {
             _trayIcon?.ShowNotification(title, message, icon);

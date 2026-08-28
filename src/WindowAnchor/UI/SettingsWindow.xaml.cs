@@ -196,6 +196,10 @@ public partial class SettingsWindow : FluentWindow
             AutostartToggle.IsChecked = AutostartService.IsEnabled();
             _suppressToggle = false;
 
+            _suppressToggle = true;
+            NotificationsToggle.IsChecked = _settingsService.Settings.NotificationsEnabled;
+            _suppressToggle = false;
+
             // Populate startup behavior controls
             InitialiseStartupBehaviorUI();
             InitialiseHotkeyUI();
@@ -203,6 +207,13 @@ public partial class SettingsWindow : FluentWindow
 
             Refresh();
         };
+    }
+
+    private void OnNotificationsToggleChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressToggle) return;
+        _settingsService.Settings.NotificationsEnabled = NotificationsToggle.IsChecked is true;
+        _settingsService.Save();
     }
 
     // ── Startup-behavior UI ──────────────────────────────────────────────────
