@@ -1,0 +1,9 @@
+{
+  "name": "com.windowanchor.browser",
+  "description": "WindowAnchor browser-session native messaging host",
+  "path": "C:\\Program Files\\WindowAnchor\\WindowAnchor.exe",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://REPLACE_WITH_PUBLISHED_EXTENSION_ID/"
+  ]
+}

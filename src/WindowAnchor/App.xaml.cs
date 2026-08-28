@@ -23,10 +23,20 @@ public partial class App : System.Windows.Application
     private StorageService?     _storageService;
     private SettingsService?    _settingsService;
     private HotkeyService?     _hotkeyService;
+    private BrowserSessionBridge? _browserSessionBridge;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        if (e.Args.Length > 0 &&
+            (e.Args[0].Equals("--native-messaging", StringComparison.OrdinalIgnoreCase) ||
+             e.Args[0].StartsWith("chrome-extension://", StringComparison.OrdinalIgnoreCase)))
+        {
+            NativeMessagingHost.Run();
+            Shutdown(0);
+            return;
+        }
 
         bool minimized = e.Args.Length > 0 &&
             e.Args[0].Equals("--minimized", StringComparison.OrdinalIgnoreCase);
@@ -52,7 +62,8 @@ public partial class App : System.Windows.Application
         var windowService     = new WindowService(_settingsService);
         var jumpListService   = new JumpListService();
         var webAppService     = new WebAppService();
-        var workspaceService  = new WorkspaceService(storageService, windowService, _monitorService, jumpListService, webAppService);
+        _browserSessionBridge = new BrowserSessionBridge();
+        var workspaceService  = new WorkspaceService(storageService, windowService, _monitorService, jumpListService, webAppService, _browserSessionBridge);
 
         _workspaceService = workspaceService;
         _coordinator      = new LayoutCoordinator(_monitorService, windowService, workspaceService);
@@ -173,9 +184,17 @@ public partial class App : System.Windows.Application
 
         try
         {
-            await Task.Run(
+            var snapshot = await Task.Run(
                 () => _workspaceService!.TakeSnapshot(name, saveFiles: saveFiles,
                     selectedWindows: selectedWindows, progress: progress));
+            var selectedBrowserTitles = selectedWindows
+                .Where(w => WorkspaceService.IsBrowserProcess(w.ProcessName))
+                .Select(w => w.TitleSnippet)
+                .Where(title => !string.IsNullOrWhiteSpace(title));
+            snapshot.BrowserSessions = _browserSessionBridge == null
+                ? new List<BrowserSession>()
+                : await _browserSessionBridge.CaptureAsync(name, selectedBrowserTitles);
+            _storageService!.SaveWorkspace(snapshot);
             AppLogger.Info($"Workspace '{name}' saved (files={saveFiles})");
             ShowBalloon("Workspace Saved",
                 $"\u201c{name}\u201d saved \u2014 {selectedWindows.Count} window(s)");

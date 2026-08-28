@@ -1,0 +1,42 @@
+# Browser Integration
+
+WindowAnchor's browser connector is a Manifest V3 extension in `browser-extension/`. The first supported browsers are Chrome, Edge, Brave, and Opera because they expose the Chromium Tabs, Windows, and tab-groups APIs.
+
+## Data captured
+
+The extension captures only normal browser windows and supported `http`, `https`, and `file` tabs selected by the WindowAnchor save dialog. It stores tab URL, title, order, active state, pinned state, browser-window bounds/state, and tab-group metadata. Incognito windows and tabs are excluded. Cookies, passwords, page contents, form data, and browsing history are never requested or transferred.
+
+## Communication design
+
+The extension service worker maintains a persistent `runtime.connectNative()` connection to `com.windowanchor.browser`. WindowAnchor uses the `WindowAnchor.BrowserBridge` named pipe to ask the host for a capture or restore operation. The host forwards the request over Chromium's native-messaging channel and returns the correlated JSON response.
+
+Chromium native messaging frames each UTF-8 JSON message with a 32-bit native-endian length prefix. The host limits messages to 1 MiB, writes protocol data only to stdout, and uses stderr/logging for diagnostics. Requests include `requestId` and `protocolVersion` so timeouts and incompatible messages are handled safely.
+
+## Installing the host for local testing
+
+1. Publish WindowAnchor and place the executable at the path used by `browser-extension/native-host-manifest.json`.
+2. Copy `native-host-manifest.template.json` to `native-host-manifest.json` and replace the extension ID placeholder. Published Chrome Web Store and Microsoft Edge Add-ons IDs may differ, so both IDs must be listed if both stores are used.
+3. Register the manifest's absolute path under the current-user native-host key. For local testing, `browser-extension/register-native-host.ps1` creates the manifest and these keys:
+   `powershell -ExecutionPolicy Bypass -File .\register-native-host.ps1 -ExtensionId <id> -WindowAnchorPath <path-to-exe>`
+   - Chrome: `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.windowanchor.browser`
+   - Edge: `HKCU\Software\Microsoft\Edge\NativeMessagingHosts\com.windowanchor.browser`
+   The registry default value is the absolute path to `native-host-manifest.json`.
+   For a production installer, perform the same per-user registration during install and replace the placeholder with the published extension ID.
+   Edge also documents Chromium and Chrome fallback locations.
+4. Load `browser-extension/` unpacked from `chrome://extensions` or `edge://extensions` with Developer mode enabled.
+5. Reload the extension after code changes. Use the browser extension error page and `%AppData%\WindowAnchor\app.log` for diagnostics.
+
+The native host manifest is intentionally a template until the extension is published, because the browser requires the exact extension origin in `allowed_origins`; wildcards are not valid for this allow-list.
+
+## Limitations
+
+Browser window IDs are session-scoped and are not persisted as identities. Restore recreates windows from saved metadata and reports per-window failures. Browser content that is not a supported URL scheme, incognito content, and browser-internal pages are skipped by design.
+
+## Official references
+
+- Chrome Tabs API: https://developer.chrome.com/docs/extensions/reference/api/tabs
+- Chrome Windows API: https://developer.chrome.com/docs/extensions/reference/api/windows
+- Chrome tab groups: https://developer.chrome.com/docs/extensions/reference/api/tabGroups
+- Chrome native messaging: https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging
+- Microsoft Edge native messaging: https://learn.microsoft.com/en-us/microsoft-edge/extensions-chromium/developer-guide/native-messaging
+- Microsoft Edge sideloading: https://learn.microsoft.com/en-us/microsoft-edge/extensions-chromium/getting-started/extension-sideloading

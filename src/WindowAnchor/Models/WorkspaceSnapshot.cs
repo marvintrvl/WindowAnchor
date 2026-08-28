@@ -32,6 +32,9 @@ public class WorkspaceSnapshot
 
     public List<WorkspaceEntry> Entries        { get; set; } = new();
 
+    /// <summary>Browser tab sessions captured by the optional WindowAnchor extension.</summary>
+    public List<BrowserSession> BrowserSessions { get; set; } = new();
+
     // ── Convenience helpers ──────────────────────────────────────────────────
 
     /// <summary>Returns entries belonging to a specific monitor.</summary>

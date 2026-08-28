@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "WindowAnchor Browser Connector",
+  "version": "0.1.0",
+  "description": "Captures and restores browser tabs for WindowAnchor workspaces.",
+  "permissions": ["tabs", "tabGroups", "nativeMessaging"],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "WindowAnchor Browser Connector"
+  }
+}

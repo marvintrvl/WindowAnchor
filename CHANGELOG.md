@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- **Browser Extension MVP** — Added a Chromium Manifest V3 connector that captures and restores selected browser tabs, pinned state, tab groups, active tabs, and browser window bounds through the documented native-messaging protocol. Incognito tabs and unsupported/internal URLs are excluded.
 - **WindowAnchor notifications can be disabled** — Settings now includes a persisted toggle for the app's system-tray progress and completion messages. This does not change notifications for Windows or other applications.
 - **Installed web apps (PWAs) are no longer treated as plain browser windows** — Web apps installed from Chrome, Brave, Edge or another Chromium browser (e.g. Insilico Terminal, aggr.trade) run inside `chrome.exe`/`brave.exe` and use the same window class as a normal browser window. WindowAnchor identified them only by executable + class name, so restoring a layout opened a fresh browser window instead of the app. Every window's `AppUserModelID` is now captured; web-app windows are matched against the Start-Menu shortcut the browser created on install and relaunched through it. Window matching requires an exact `AppUserModelID` match, so a web-app entry can no longer claim a plain browser window (or vice versa).
 

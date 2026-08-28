@@ -32,19 +32,22 @@ public class WorkspaceService
     private readonly MonitorService   _monitorService;
     private readonly JumpListService  _jumpListService;
     private readonly WebAppService    _webAppService;
+    private readonly BrowserSessionBridge? _browserSessionBridge;
 
     public WorkspaceService(
         StorageService  storageService,
         WindowService   windowService,
         MonitorService  monitorService,
         JumpListService jumpListService,
-        WebAppService?  webAppService = null)
+        WebAppService?   webAppService = null,
+        BrowserSessionBridge? browserSessionBridge = null)
     {
         _storageService  = storageService;
         _windowService   = windowService;
         _monitorService  = monitorService;
         _jumpListService = jumpListService;
         _webAppService   = webAppService ?? new WebAppService();
+        _browserSessionBridge = browserSessionBridge;
     }
 
     // ── Storage proxies ────────────────────────────────────────────
@@ -730,6 +733,7 @@ public class WorkspaceService
             SavedWithFiles     = snapshot.SavedWithFiles,
             Monitors           = snapshot.Monitors.Where(m => monitorIds.Contains(m.MonitorId)).ToList(),
             Entries            = snapshot.Entries.Where(e => monitorIds.Contains(e.MonitorId)).ToList(),
+            BrowserSessions    = snapshot.BrowserSessions,
         };
         return RestoreWorkspaceAsync(filtered, ct);
     }
@@ -761,6 +765,10 @@ public class WorkspaceService
     private async Task RestoreCoreAsync(WorkspaceSnapshot snapshot, bool minimizeOthers, CancellationToken ct)
     {
         AppLogger.Info($"RestoreCoreAsync '{snapshot.Name}' — {snapshot.Entries.Count} entries, minimizeOthers={minimizeOthers}");
+
+        bool browserSessionsRestored = false;
+        if (_browserSessionBridge != null && snapshot.BrowserSessions.Count > 0)
+            browserSessionsRestored = await _browserSessionBridge.RestoreAsync(snapshot.Name, snapshot.BrowserSessions, ct);
 
         // ── Phase 1: reposition already-running windows ───────────────────
         // correctlyMatchedEntries tracks entries whose live window already had the right
@@ -812,6 +820,9 @@ public class WorkspaceService
             if (ct.IsCancellationRequested) return;
 
             var entry = snapshot.Entries[i];
+
+            if (browserSessionsRestored && IsBrowserProcess(entry.ProcessName))
+                continue;
 
             // ── Installed browser web app (PWA) ───────────────────────────
             // Always relaunch via its own shortcut / --app-id command line unless Phase 1
