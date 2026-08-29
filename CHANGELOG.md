@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-08-29
+
+### Fixed
+- **Tray workspace submenu stays open while moving the pointer into it** — The tray-only template uses a stable, slightly overlapping popup together with a 250 ms close grace period. Entering either the header or submenu cancels the pending close, so the left-opening workspace commands remain accessible at normal pointer speeds.
+
 ## [1.4.1] - 2026-08-29
 
 ### Added

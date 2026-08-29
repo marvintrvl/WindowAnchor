@@ -1,38 +1,38 @@
-# WindowAnchor v1.4.1 — Browser Connector and Release Fixes
+# WindowAnchor v1.4.2 — Reliable Tray Workspace Submenu
 
 ## Summary
 
-This release provides an updated WindowAnchor desktop build together with the
-browser connector package. It also repairs the automated GitHub release process,
-updates the application's embedded version, and resolves known OpenMcdf security
-advisories.
+This patch release fixes the **Workspaces** submenu in the system tray. The
+left-opening submenu now remains available while the pointer moves from the main
+tray menu into the workspace commands at a normal speed.
 
-## What’s new
+## Fixed in v1.4.2
 
-- Desktop application and browser connector are supplied as separate release assets
-- Browser setup detects installed Chromium browsers and opens the appropriate extension page
-- Missing native-host setup is handled quietly instead of repeatedly reporting unchecked errors
-- Installed Chromium web apps are restored using their application identity instead of as plain browser windows
-- WindowAnchor tray notifications can be disabled in Settings
+- Added a short 250 ms grace period before an open workspace submenu may close.
+- Entering either the **Workspaces** header or its submenu cancels the pending close.
+- Kept the submenu popup stationary and slightly overlapping the parent menu so
+  there is no fragile dead zone at the screen edge.
+- Application, assembly, and file versions now consistently report `1.4.2`.
 
-## Fixed in v1.4.1
+## Release assets
 
-- Application, assembly, and file versions now consistently report `1.4.1`
-- OpenMcdf updated from `3.1.0` to `3.1.4`, resolving two moderate-severity infinite-loop denial-of-service advisories
-- GitHub Actions now has the required release permission and no longer uses the archived `actions/upload-release-asset@v1` action
-- The release workflow now creates and uploads both the Windows executable and browser connector ZIP
+- `WindowAnchor-v1.4.2.exe` — self-contained Windows x64 desktop application.
+- `WindowAnchor-Browser-Connector-v1.4.2.zip` — optional Chromium browser
+  connector and local native-host registration files. The connector itself is
+  unchanged from v1.4.1 and is included for complete installations.
+- `SHA256SUMS.txt` — SHA-256 checksums for both downloadable packages.
 
-## Manual installation / local setup
+## Updating the desktop app
 
-### Desktop app
+1. Exit any running WindowAnchor instance from its tray menu.
+2. Download `WindowAnchor-v1.4.2.exe`.
+3. Replace the previous executable or run the new file directly.
+4. Open the tray menu and confirm the **Workspaces** submenu remains open while
+   moving the pointer into it.
 
-1. Download `WindowAnchor-v1.4.1.exe` from this release.
-2. Run the app once to confirm it launches correctly.
-3. If Windows shows a security prompt, allow the app to run.
+## Optional browser connector setup
 
-### Browser extension (manual install)
-
-1. Download and extract `WindowAnchor-Browser-Connector-v1.4.1.zip`.
+1. Download and extract `WindowAnchor-Browser-Connector-v1.4.2.zip`.
 2. Open `chrome://extensions` or `edge://extensions`.
 3. Enable Developer mode.
 4. Click **Load unpacked** and select the extracted extension directory.
@@ -47,6 +47,7 @@ powershell -ExecutionPolicy Bypass -File .\register-native-host.ps1 -ExtensionId
 
 ## Notes
 
-The browser extension is currently under review, but the local/manual installation
-flow remains available for testing. The desktop EXE is self-contained for 64-bit
-Windows and does not require a separate .NET installation.
+The desktop EXE is self-contained for 64-bit Windows and does not require a
+separate .NET installation. It is not digitally signed, so Windows may show a
+security prompt. The browser connector remains under store review; manual local
+installation is still available.

@@ -93,7 +93,9 @@ dotnet publish src/WindowAnchor/WindowAnchor.csproj -c Release -r win-x64 --self
 
 ##  Roadmap
 
-### v1.4.1 (Current Release) — *Browser Integration & Reliability* ✅
+### v1.4.2 (Current Release) — *Reliable Tray Navigation* ✅
+- **Stable Workspace Submenu**: The tray's left-opening workspace submenu remains open while the pointer crosses into it at normal speed.
+- **Graceful Menu Tracking**: A short close delay is cancelled when the pointer reaches either menu surface, matching familiar Windows cascading-menu behaviour.
 - **Browser Connector**: Capture and restore supported Chromium tabs, pinned tabs, tab groups, and browser window bounds.
 - **Browser Setup**: Guided local Chrome/Edge setup with native-host registration for manual testing.
 - **Installed Web Apps**: Restore Chromium PWAs using their application identity instead of opening a plain browser window.

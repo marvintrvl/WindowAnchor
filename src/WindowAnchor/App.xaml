@@ -12,6 +12,99 @@
                 <ui:ControlsDictionary/>
             </ResourceDictionary.MergedDictionaries>
 
+            <!--
+                Tray-only submenu template.
+
+                Two things matter here:
+                1. Keep the popup stationary and use a zero horizontal offset.
+                   A negative offset moves in the wrong direction when WPF flips
+                   Placement="Right" to the left side at the screen edge.
+                2. Use DelayedSubmenuMenuItem so leaving the header does not close
+                   the submenu immediately. The 250 ms grace period is cancelled
+                   as soon as the pointer reaches the submenu surface.
+
+                Other application menus retain the normal WPF-UI template.
+            -->
+            <ControlTemplate x:Key="TraySubmenuHeaderTemplate"
+                             TargetType="{x:Type local:DelayedSubmenuMenuItem}">
+                <!--
+                    The transparent outer Grid makes the entire header rectangle
+                    participate in hit testing, including the margin around Border.
+                -->
+                <Grid Background="Transparent">
+                    <Border x:Name="Border"
+                            Margin="4,1"
+                            Background="Transparent"
+                            BorderThickness="1"
+                            CornerRadius="4">
+                        <Grid x:Name="MenuItemContent" Margin="8,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <ContentPresenter Grid.Column="0"
+                                              VerticalAlignment="Center"
+                                              ContentSource="Header"
+                                              RecognizesAccessKey="True"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"/>
+
+                            <TextBlock Grid.Column="1"
+                                       Margin="16,0,0,0"
+                                       VerticalAlignment="Center"
+                                       FontSize="16"
+                                       Foreground="{TemplateBinding Foreground}"
+                                       Text="›"/>
+                        </Grid>
+                    </Border>
+
+                    <Popup x:Name="PART_Popup"
+                           AllowsTransparency="True"
+                           Focusable="False"
+                           IsOpen="{TemplateBinding IsSubmenuOpen}"
+                           HorizontalOffset="0"
+                           Placement="Right"
+                           PlacementTarget="{Binding RelativeSource={RelativeSource TemplatedParent}}"
+                           PopupAnimation="None">
+                        <Border x:Name="SubmenuBorder"
+                                Padding="0,3"
+                                Background="{DynamicResource FlyoutBackground}"
+                                BorderBrush="{DynamicResource FlyoutBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                SnapsToDevicePixels="True">
+                            <ui:PassiveScrollViewer CanContentScroll="True"
+                                                      HorizontalScrollBarVisibility="Disabled"
+                                                      VerticalScrollBarVisibility="Auto">
+                                <ItemsPresenter x:Name="ItemsPresenter"
+                                                Grid.IsSharedSizeScope="True"
+                                                KeyboardNavigation.DirectionalNavigation="Cycle"
+                                                KeyboardNavigation.TabNavigation="Cycle"
+                                                SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
+                            </ui:PassiveScrollViewer>
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="20"
+                                                  Direction="270"
+                                                  Opacity="0.5"
+                                                  ShadowDepth="6"/>
+                            </Border.Effect>
+                        </Border>
+                    </Popup>
+                </Grid>
+
+                <ControlTemplate.Triggers>
+                    <Trigger Property="IsHighlighted" Value="True">
+                        <Setter TargetName="Border"
+                                Property="Background"
+                                Value="{DynamicResource MenuBarItemBackgroundSelected}"/>
+                    </Trigger>
+                    <Trigger Property="IsEnabled" Value="False">
+                        <Setter Property="Foreground"
+                                Value="{DynamicResource TextFillColorDisabledBrush}"/>
+                    </Trigger>
+                </ControlTemplate.Triggers>
+            </ControlTemplate>
+
             <tb:TaskbarIcon x:Key="TrayIcon"
                             IconSource="/Resources/windowanchor.ico"
                             ToolTipText="WindowAnchor — Active"
@@ -19,7 +112,10 @@
                             MenuActivation="RightClick">
                 <tb:TaskbarIcon.ContextMenu>
                     <ContextMenu Opened="OnTrayMenuOpened">
-                        <MenuItem Header="Workspaces" x:Name="WorkspacesMenu"/>
+                        <local:DelayedSubmenuMenuItem Header="Workspaces"
+                                                      x:Name="WorkspacesMenu"
+                                                      SubmenuCloseDelay="250"
+                                                      Template="{StaticResource TraySubmenuHeaderTemplate}"/>
                         <Separator/>
                         <MenuItem Header="Settings..." Click="OnOpenSettingsClick"/>
                         <Separator/>
