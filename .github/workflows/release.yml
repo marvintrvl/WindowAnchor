@@ -7,30 +7,53 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write
+
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x
 
-      - name: Build
+      - name: Build Windows executable
+        shell: pwsh
         run: |
           dotnet publish src/WindowAnchor/WindowAnchor.csproj `
-            -c Release `
-            -r win-x64 `
+            --configuration Release `
+            --runtime win-x64 `
             --self-contained true `
             -p:PublishSingleFile=true `
             -p:PublishReadyToRun=true `
-            -o ./publish
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=true `
+            -p:DebugType=None `
+            -p:DebugSymbols=false `
+            --output ./publish
 
-      - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
+      - name: Package release assets
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.release.tag_name }}"
+          Copy-Item `
+            ./publish/WindowAnchor.exe `
+            "./publish/WindowAnchor-$tag.exe"
+          Compress-Archive `
+            -Path ./browser-extension/* `
+            -DestinationPath "./publish/WindowAnchor-Browser-Connector-$tag.zip" `
+            -CompressionLevel Optimal
+
+      - name: Upload release assets
+        shell: pwsh
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./publish/WindowAnchor.exe
-          asset_name: WindowAnchor-${{ github.event.release.tag_name }}.exe
-          asset_content_type: application/octet-stream
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.event.release.tag_name }}"
+          gh release upload `
+            $tag `
+            "./publish/WindowAnchor-$tag.exe" `
+            "./publish/WindowAnchor-Browser-Connector-$tag.zip" `
+            --repo "${{ github.repository }}" `
+            --clobber

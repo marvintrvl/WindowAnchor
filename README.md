@@ -93,7 +93,13 @@ dotnet publish src/WindowAnchor/WindowAnchor.csproj -c Release -r win-x64 --self
 
 ##  Roadmap
 
-### v1.3 (Current Release) — *UX Improvements* ✅
+### v1.4.1 (Current Release) — *Browser Integration & Reliability* ✅
+- **Browser Connector**: Capture and restore supported Chromium tabs, pinned tabs, tab groups, and browser window bounds.
+- **Browser Setup**: Guided local Chrome/Edge setup with native-host registration for manual testing.
+- **Installed Web Apps**: Restore Chromium PWAs using their application identity instead of opening a plain browser window.
+- **Reliable Releases**: Versioned Windows EXE and browser connector ZIP are attached to each GitHub release.
+
+### v1.3 — *UX Improvements* ✅
 - **Monitor Renaming**: Personalise monitor names ("Generic PnP" → "Left Monitor") in Settings → Monitors.
 - **Switch Workspace**: Instant context switch — closes all windows and restores a different workspace.
 - **Switch Default hotkey**: Ctrl+Alt+Shift+W switches to the default workspace in one keystroke.
@@ -102,11 +108,11 @@ dotnet publish src/WindowAnchor/WindowAnchor.csproj -c Release -r win-x64 --self
 ### v1.2 — *Stability & Control* ✅
 - Selective Window Save, Default Workspace, Keyboard Shortcuts, Workspace Ordering, Browser Session Restore.
 
-### v1.4 (Next Release) — *Deeper Integration*
+### v1.5 (Next Release) — *Deeper Integration*
 - **Smart VS Code Tracking**: Deep detection of `.code-workspace` files for perfect dev-environment restoration.
 - **Firefox Session Restore**: CLI-based session restore for Firefox.
 
-### v1.4+ — *Power User Features*
+### v1.5+ — *Power User Features*
 - **Workspace Scheduler**: Automatically switch workspaces based on time of day or calendar events.
 - **Per-App Launch Rules**: Define global rules for apps (e.g., "Always launch Slack on Monitor 2").
 - **Workspace Templates**: Pre-made community-driven templates for developers, creators, and students.
