@@ -337,10 +337,13 @@ public class WorkspaceServiceTests
         await service.RestoreWorkspaceAsync(new WorkspaceSnapshot { Entries = [entry] }, cancellation.Token);
 
         // The current restore checks cancellation after phase-one matching and repositioning.
-        Assert.Equal(1, windows.LiveInventoryCalls);
-        Assert.Equal(
-            WindowCandidatePolicy.RestoreMatchCandidate,
-            Assert.Single(windows.LivePolicies));
+        // One read builds the plan, one validates that the preview is still current, and a final
+        // read immediately revalidates the approved HWND before mutation. Cancellation is still
+        // observed after this initial reconciliation phase.
+        Assert.Equal(3, windows.LiveInventoryCalls);
+        Assert.All(
+            windows.LivePolicies,
+            policy => Assert.Equal(WindowCandidatePolicy.RestoreMatchCandidate, policy));
         Assert.Equal(new IntPtr(71), Assert.Single(mutation.Restores).Hwnd);
         Assert.True(entry.WasRestored);
     }
@@ -448,6 +451,60 @@ public class WorkspaceServiceTests
             service.RestoreWorkspaceAsync(new WorkspaceSnapshot { Entries = [entry] }));
 
         Assert.Equal("Injected mutation failure", error.Message);
+    }
+
+    [Fact]
+    public async Task Approved_preview_is_executed_without_silently_replanning_changed_inventory()
+    {
+        using var directory = new TestDirectory();
+        const string exe = @"C:\Apps\editor.exe";
+        var savedPosition = Record(exe, "notes", "primary", 96);
+        savedPosition.ClassName = "EditorWindow";
+        var snapshot = new WorkspaceSnapshot
+        {
+            WorkspaceId = "approved-preview-workspace",
+            Entries =
+            [
+                new WorkspaceEntry
+                {
+                    ExecutablePath = exe,
+                    ProcessName = "editor",
+                    WindowClassName = "EditorWindow",
+                    Position = savedPosition
+                }
+            ]
+        };
+        var firstLive = Record(exe, "notes", "primary", 96);
+        firstLive.ClassName = "EditorWindow";
+        var replacementLive = Record(exe, "notes", "primary", 96);
+        replacementLive.ClassName = "EditorWindow";
+        var windows = new FakeWindowInventory
+        {
+            Live = new Dictionary<IntPtr, (uint Pid, WindowRecord Record)>
+            {
+                [new IntPtr(101)] = (10101, firstLive)
+            }
+        };
+        var mutation = new RecordingWindowMutation();
+        var service = CreateService(directory, windows, mutation, new FakeMonitorInventory());
+        RestorePlan preview = service.CreateRestorePlan(snapshot, RestoreMode.Standard);
+        windows.Live = new Dictionary<IntPtr, (uint Pid, WindowRecord Record)>
+        {
+            [new IntPtr(102)] = (10202, replacementLive)
+        };
+
+        RestoreExecutionResult result = await service.ExecuteApprovedRestorePlanAsync(
+            snapshot,
+            preview);
+
+        Assert.Equal(RestoreExecutionStatus.StalePlan, result.Status);
+        Assert.Contains(
+            result.Actions,
+            action => action.StaleReason is RestorePlanStaleReason.WindowClosed or
+                RestorePlanStaleReason.WindowInventoryChanged);
+        Assert.Empty(mutation.Restores);
+        Assert.Equal(2, windows.LiveInventoryCalls);
+        Assert.False(snapshot.Entries[0].WasRestored);
     }
 
     [Fact]

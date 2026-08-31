@@ -62,6 +62,8 @@ internal class FakeWindowInventory : IWindowInventory
     internal List<MonitorInfo>? SuppliedMonitors { get; private set; }
     internal List<WindowCandidatePolicy> SnapshotPolicies { get; } = new();
     internal List<WindowCandidatePolicy> LivePolicies { get; } = new();
+    internal Func<int, Dictionary<IntPtr, (uint Pid, WindowRecord Record)>>? LiveProvider { get; set; }
+    internal Func<IntPtr, bool>? IsAliveProvider { get; set; }
 
     public virtual List<WindowRecord> SnapshotWindows(
         WindowCandidatePolicy policy,
@@ -77,10 +79,11 @@ internal class FakeWindowInventory : IWindowInventory
     {
         LivePolicies.Add(policy);
         LiveInventoryCalls++;
-        return Live;
+        return LiveProvider?.Invoke(LiveInventoryCalls) ?? Live;
     }
 
-    public virtual bool IsWindowAlive(IntPtr hWnd) => Live.ContainsKey(hWnd);
+    public virtual bool IsWindowAlive(IntPtr hWnd) =>
+        IsAliveProvider?.Invoke(hWnd) ?? Live.ContainsKey(hWnd);
 }
 
 internal sealed class ThrowingWindowInventory : FakeWindowInventory
@@ -128,6 +131,10 @@ internal sealed class FakeBrowserSessionConnector : IBrowserSessionConnector
     internal Exception? CaptureException { get; set; }
     internal int CaptureCalls { get; private set; }
     internal List<string> SelectedTitles { get; private set; } = new();
+    internal bool RestoreResult { get; set; } = true;
+    internal Exception? RestoreException { get; set; }
+    internal int RestoreCalls { get; private set; }
+    internal List<BrowserSession> RestoredSessions { get; private set; } = new();
 
     public Task<BrowserCaptureResult> CaptureAsync(
         string workspaceName,
@@ -144,7 +151,81 @@ internal sealed class FakeBrowserSessionConnector : IBrowserSessionConnector
     public Task<bool> RestoreAsync(
         string workspaceName,
         List<BrowserSession> sessions,
-        CancellationToken cancellationToken = default) => Task.FromResult(true);
+        CancellationToken cancellationToken = default)
+    {
+        RestoreCalls++;
+        RestoredSessions = sessions;
+        if (RestoreException != null) throw RestoreException;
+        return Task.FromResult(RestoreResult);
+    }
+}
+
+internal sealed class RecordingRestoreProcessLauncher : IRestoreProcessLauncher
+{
+    internal List<RestoreAction> Launches { get; } = new();
+    internal Action<RestoreAction>? OnLaunch { get; set; }
+    internal Exception? Exception { get; set; }
+
+    public void Launch(RestoreAction action)
+    {
+        Launches.Add(action);
+        if (Exception != null) throw Exception;
+        OnLaunch?.Invoke(action);
+    }
+}
+
+internal sealed class FakeRestoreClock : IRestoreClock
+{
+    internal List<TimeSpan> Delays { get; } = new();
+    internal Action<int>? OnDelay { get; set; }
+
+    public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Delays.Add(delay);
+        OnDelay?.Invoke(Delays.Count);
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed class FakeRestoreResourceBoundary : IRestoreResourceBoundary
+{
+    internal RestoreResourceAvailability DefaultAvailability { get; set; } =
+        RestoreResourceAvailability.Available;
+    internal Dictionary<string, RestoreResourceAvailability> AvailabilityByTarget { get; } =
+        new(StringComparer.OrdinalIgnoreCase);
+    internal List<(int EntryIndex, RestoreResourceKind Kind, string Target)> Observations { get; } = new();
+    internal List<RestoreAction> Revalidations { get; } = new();
+
+    public RestoreResourceObservation Observe(
+        int entryIndex,
+        RestoreResourceKind kind,
+        string target)
+    {
+        Observations.Add((entryIndex, kind, target));
+        RestoreResourceAvailability availability = Availability(target);
+        return new RestoreResourceObservation(
+            entryIndex,
+            kind,
+            availability,
+            availability == RestoreResourceAvailability.Available ? target : "");
+    }
+
+    public RestoreResourceValidation Revalidate(RestoreAction action)
+    {
+        Revalidations.Add(action);
+        RestoreResourceAvailability availability = Availability(action.Target);
+        return new RestoreResourceValidation(
+            availability,
+            availability == RestoreResourceAvailability.Available
+                ? "Injected resource is available."
+                : "Injected resource is stale or missing.");
+    }
+
+    private RestoreResourceAvailability Availability(string target) =>
+        AvailabilityByTarget.TryGetValue(target, out RestoreResourceAvailability availability)
+            ? availability
+            : DefaultAvailability;
 }
 
 internal sealed class RecordingAtomicFileWriter : IAtomicFileWriter

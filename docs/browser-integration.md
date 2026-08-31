@@ -12,6 +12,17 @@ The extension service worker maintains a persistent `runtime.connectNative()` co
 
 Chromium native messaging frames each UTF-8 JSON message with a 32-bit native-endian length prefix. The host limits messages to 1 MiB, writes protocol data only to stdout, and uses stderr/logging for diagnostics. Requests include `requestId` and `protocolVersion` so timeouts and incompatible messages are handled safely.
 
+## Restore planning and fallback
+
+Browser restoration participates in the same immutable restore plan as desktop windows. Planning
+records connector availability and adds an explicit browser-session action; it does not contact the
+extension or create windows. A manual preview shows that action before approval.
+
+Immediately before execution, `RestoreExecutor` checks that the connector capability still matches
+the preview. If the saved session cannot be restored, only a fallback already described by the plan
+may launch an ordinary browser. Disabling the relevant browser entry removes the global session
+action and protects that entry from fallback launch, placement, and terminal minimize behavior.
+
 ## Installing the host for local testing
 
 1. Publish WindowAnchor and place the executable at the path used by `browser-extension/native-host-manifest.json`.
@@ -36,7 +47,7 @@ When the extension is loaded before the native host is registered, the service w
 
 ## Limitations
 
-Browser window IDs are session-scoped and are not persisted as identities. Restore recreates windows from saved metadata and reports per-window failures. Browser content that is not a supported URL scheme, incognito content, and browser-internal pages are skipped by design.
+Browser window IDs are session-scoped and are not persisted as identities. Restore recreates windows from saved metadata and reports per-window failures. Browser content that is not a supported URL scheme, incognito content, and browser-internal pages are skipped by design. A preview that becomes stale is rejected instead of silently targeting a different browser window.
 
 ## Official references
 

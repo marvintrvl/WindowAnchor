@@ -365,7 +365,11 @@ public partial class App : System.Windows.Application
 
     private void OnRestoreWorkspaceClick(WindowAnchor.Models.WorkspaceSnapshot snapshot)
     {
-        _coordinator?.RestoreWorkspaceAsync(snapshot);
+        if (_coordinator is not null)
+            _ = UI.RestorePlanPreviewWorkflow.RunAsync(
+                _coordinator,
+                snapshot,
+                RestoreMode.Standard);
     }
 
     private void OnSwitchWorkspaceClick(WindowAnchor.Models.WorkspaceSnapshot snapshot)
@@ -375,7 +379,11 @@ public partial class App : System.Windows.Application
 
     private void OnAlignWorkspaceClick(WindowAnchor.Models.WorkspaceSnapshot snapshot)
     {
-        _coordinator?.AlignAndMinimizeOthersAsync(snapshot);
+        if (_coordinator is not null)
+            _ = UI.RestorePlanPreviewWorkflow.RunAsync(
+                _coordinator,
+                snapshot,
+                RestoreMode.AlignAndMinimize);
     }
 
     private void OnExitClick(object sender, RoutedEventArgs e)

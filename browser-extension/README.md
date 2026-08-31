@@ -33,3 +33,8 @@ The persistent native port uses request/response messages with `protocolVersion:
 - `ping`: checks host connectivity.
 
 WindowAnchor sends app requests to the host through the `WindowAnchor.BrowserBridge` named pipe. The extension ID must be explicitly allow-listed in the native host manifest; wildcard origins are not valid for production.
+
+The desktop app represents browser restore as an explicit action in its immutable restore plan.
+Manual restores show the action before approval, recheck connector availability before mutation,
+and use an ordinary-browser fallback only when that fallback was included in the approved plan.
+Disabling the corresponding entry prevents both the session action and its fallback.

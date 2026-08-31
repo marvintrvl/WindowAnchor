@@ -34,6 +34,8 @@ public class WorkspaceService
     private readonly JumpListService   _jumpListService;
     private readonly WebAppService     _webAppService;
     private readonly IBrowserSessionConnector? _browserSessionConnector;
+    private readonly IRestoreResourceBoundary _restoreResources;
+    private readonly RestoreExecutor _restoreExecutor;
 
     /// <summary>Creates the production workspace service using the native window service.</summary>
     public WorkspaceService(
@@ -42,7 +44,10 @@ public class WorkspaceService
         MonitorService  monitorService,
         JumpListService jumpListService,
         WebAppService?   webAppService = null,
-        IBrowserSessionConnector? browserSessionConnector = null)
+        IBrowserSessionConnector? browserSessionConnector = null,
+        IRestoreProcessLauncher? restoreProcessLauncher = null,
+        IRestoreClock? restoreClock = null,
+        IRestoreResourceBoundary? restoreResources = null)
         : this(
             storageService,
             windowService,
@@ -50,7 +55,10 @@ public class WorkspaceService
             monitorService,
             jumpListService,
             webAppService,
-            browserSessionConnector)
+            browserSessionConnector,
+            restoreProcessLauncher,
+            restoreClock,
+            restoreResources)
     {
     }
 
@@ -65,7 +73,10 @@ public class WorkspaceService
         IMonitorInventory  monitorInventory,
         JumpListService    jumpListService,
         WebAppService?     webAppService = null,
-        IBrowserSessionConnector? browserSessionConnector = null)
+        IBrowserSessionConnector? browserSessionConnector = null,
+        IRestoreProcessLauncher? restoreProcessLauncher = null,
+        IRestoreClock? restoreClock = null,
+        IRestoreResourceBoundary? restoreResources = null)
     {
         _storageService   = storageService;
         _windowInventory  = windowInventory;
@@ -74,6 +85,14 @@ public class WorkspaceService
         _jumpListService  = jumpListService;
         _webAppService    = webAppService ?? new WebAppService();
         _browserSessionConnector = browserSessionConnector;
+        _restoreResources = restoreResources ?? new FileSystemRestoreResourceBoundary();
+        _restoreExecutor = new RestoreExecutor(
+            _windowInventory,
+            _windowMutation,
+            restoreProcessLauncher ?? new SystemRestoreProcessLauncher(),
+            restoreClock ?? new SystemRestoreClock(),
+            _restoreResources,
+            _browserSessionConnector);
     }
 
     // ── Storage proxies ────────────────────────────────────────────
@@ -1005,20 +1024,7 @@ public class WorkspaceService
     {
         if (monitorIds == null)
             return RestoreWorkspaceAsync(snapshot, ct);
-
-        var filtered = new WorkspaceSnapshot
-        {
-            SchemaVersion      = snapshot.SchemaVersion,
-            WorkspaceId       = snapshot.WorkspaceId,
-            Name               = snapshot.Name,
-            SavedAt            = snapshot.SavedAt,
-            MonitorFingerprint = snapshot.MonitorFingerprint,
-            SavedWithFiles     = snapshot.SavedWithFiles,
-            Monitors           = snapshot.Monitors.Where(m => monitorIds.Contains(m.MonitorId)).ToList(),
-            Entries            = snapshot.Entries.Where(e => monitorIds.Contains(e.MonitorId)).ToList(),
-            BrowserSessions    = snapshot.BrowserSessions,
-        };
-        return RestoreWorkspaceAsync(filtered, ct);
+        return RestoreWorkspaceUsingPlanAsync(snapshot, RestoreMode.Selective(monitorIds.ToArray()), ct);
     }
 
     // ── Restore ──────────────────────────────────────────────────────────────
@@ -1035,7 +1041,7 @@ public class WorkspaceService
     /// </summary>
     public async Task RestoreWorkspaceAsync(WorkspaceSnapshot snapshot, CancellationToken ct = default)
     {
-        _ = await RestoreCoreAsync(snapshot, minimizeOthers: false, ct);
+        _ = await RestoreWorkspaceWithExecutionResultAsync(snapshot, RestoreMode.Standard, ct);
     }
 
     /// <summary>
@@ -1046,7 +1052,10 @@ public class WorkspaceService
     /// </summary>
     public async Task RestoreWorkspaceAlignAndMinimizeAsync(WorkspaceSnapshot snapshot, CancellationToken ct = default)
     {
-        _ = await RestoreCoreAsync(snapshot, minimizeOthers: true, ct);
+        _ = await RestoreWorkspaceWithExecutionResultAsync(
+            snapshot,
+            RestoreMode.AlignAndMinimize,
+            ct);
     }
 
     /// <summary>
@@ -1056,389 +1065,336 @@ public class WorkspaceService
     internal Task<RestoreSessionResult> RestoreWorkspaceWithResultAsync(
         WorkspaceSnapshot snapshot,
         bool minimizeOthers = false,
-        CancellationToken ct = default) => RestoreCoreAsync(snapshot, minimizeOthers, ct);
+        CancellationToken ct = default) => RestoreWorkspaceWithLegacyResultAsync(
+            snapshot,
+            minimizeOthers ? RestoreMode.AlignAndMinimize : RestoreMode.Standard,
+            ct);
 
-    private async Task<RestoreSessionResult> RestoreCoreAsync(
-        WorkspaceSnapshot snapshot,
-        bool minimizeOthers,
-        CancellationToken ct)
+    /// <summary>
+    /// Observes the current environment and builds a reviewable plan. Discovery is read-only;
+    /// process, browser, persistence, and native window mutation APIs are not called.
+    /// </summary>
+    public RestorePlan CreateRestorePlan(WorkspaceSnapshot snapshot, RestoreMode mode)
     {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(mode);
+        Dictionary<IntPtr, (uint Pid, WindowRecord Record)> liveWindows =
+            _windowInventory.GetWindowsWithPids(WindowCandidatePolicy.RestoreMatchCandidate);
+        return CreateRestorePlan(snapshot, mode, liveWindows);
+    }
+
+    /// <summary>Executes exactly the actions in an already-approved plan.</summary>
+    public Task<RestoreExecutionResult> ExecuteRestorePlanAsync(
+        RestorePlan approvedPlan,
+        CancellationToken ct = default) => _restoreExecutor.ExecuteAsync(approvedPlan, ct);
+
+    /// <summary>Builds and executes a plan while returning structured stale-plan outcomes.</summary>
+    public async Task<RestoreExecutionResult> RestoreWorkspaceWithExecutionResultAsync(
+        WorkspaceSnapshot snapshot,
+        RestoreMode mode,
+        CancellationToken ct = default)
+    {
+        RestorePlan plan = CreateRestorePlan(snapshot, mode);
+        return await ExecuteApprovedRestorePlanAsync(snapshot, plan, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Executes an already-reviewed plan for its source snapshot without rebuilding or silently
+    /// replacing the approved matches and actions.
+    /// </summary>
+    public async Task<RestoreExecutionResult> ExecuteApprovedRestorePlanAsync(
+        WorkspaceSnapshot snapshot,
+        RestorePlan approvedPlan,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(approvedPlan);
+        if (!string.Equals(
+                snapshot.WorkspaceId,
+                approvedPlan.WorkspaceId,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                "The approved restore plan belongs to a different workspace snapshot.",
+                nameof(approvedPlan));
+        }
+
         AppLogger.Info(
             "restore.session_started",
-            "Started a workspace restore session",
+            "Started an approved workspace restore session",
             LogField.Identifier("workspaceId", snapshot.WorkspaceId),
             LogField.Workspace("workspaceName", snapshot.Name),
             LogField.Public("entryCount", snapshot.Entries.Count),
-            LogField.Public("minimizeOthers", minimizeOthers));
-        var session = new RestoreSessionContext(snapshot, ct);
+            LogField.Public("mode", approvedPlan.Mode),
+            LogField.Public("disabledEntryCount", approvedPlan.DisabledEntryIndexes.Count));
 
-        bool browserSessionsRestored = false;
-        if (_browserSessionConnector != null && snapshot.BrowserSessions.Count > 0)
-        {
-            browserSessionsRestored = await _browserSessionConnector.RestoreAsync(snapshot.Name, snapshot.BrowserSessions, ct);
-            session.RecordBrowserRestore(browserSessionsRestored);
-        }
-
-        // ── Phase 1: reposition already-running windows ───────────────────
-        // The session owns entry and HWND assignment across all phases. A match proposed in a
-        // later pass cannot claim a still-live HWND committed during an earlier pass.
-        var liveWindows = _windowInventory.GetWindowsWithPids(
-            WindowCandidatePolicy.RestoreMatchCandidate);
-        MatchAndRestore(session, liveWindows);
-
-        if (ct.IsCancellationRequested) return session.Complete();
-
-        // ── Phase 2: open documents and launch missing apps ───────────────
-        // Document entries (have a LaunchArg): open the file unless it was already matched
-        // with the correct title in Phase 1. Shell-executing the file works whether the
-        // app is already running (opens in the existing instance via DDE/COM) or not.
-        //
-        // Plain app entries (no LaunchArg): only launch when the exe is not already running
-        // AND when no document entry for the same exe is pending in this pass.
-        // If we launch the bare exe first (e.g. WINWORD.EXE with no file) and a document
-        // entry for the same exe follows, Windows DDE will route the document into the
-        // already-running bare instance instead of spawning a new window. That consumes
-        // the bare instance's slot while leaving zero windows for Praktikumsbericht/etc.
-        // Skipping the bare launch lets the document entry start the exe properly.
-        bool anyLaunched = false;
-        // Web-app windows must not count as "the browser is already running": a Chrome window
-        // that is really the Insilico Terminal PWA should not suppress launching Chrome itself.
-        // Dedicated single-site windows are excluded for the same reason: a Brave window that is
-        // really the trading site must not suppress launching the user's normal Brave window.
-        var runningExes = liveWindows.Values
-            .Where(v => !IsWebAppWindow(v.Record))
-            .Where(v => string.IsNullOrEmpty(v.Record.BrowserUrl))
-            .Select(v => v.Record.ExecutablePath.ToLowerInvariant())
-            .ToHashSet();
-
-        // Pre-scan: collect exe paths that will be started by a document entry this pass.
-        var exesWithPendingDocLaunch = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var e in session.Entries)
-        {
-            if (!string.IsNullOrEmpty(e.LaunchArg) && !string.IsNullOrEmpty(e.ExecutablePath))
-                exesWithPendingDocLaunch.Add(e.ExecutablePath.ToLowerInvariant());
-        }
-
-        for (int i = 0; i < session.Entries.Count; i++)
-        {
-            if (ct.IsCancellationRequested) return session.Complete();
-
-            var entry = session.Entries[i];
-
-            if (browserSessionsRestored && IsBrowserProcess(entry.ProcessName))
-                continue;
-
-            // ── Installed browser web app (PWA) ───────────────────────────
-            // Always relaunch via its own shortcut / --app-id command line unless Phase 1
-            // already matched a live window with the same AppUserModelID. Never fall through
-            // to the generic browser launch, which would just open a normal browser window.
-            if (entry.IsWebApp)
-            {
-                if (session.IsEntryAssigned(i)) continue;
-
-                try
-                {
-                    Process.Start(BuildProcessStartInfo(entry));
-                    anyLaunched = true;
-                    session.RecordLaunch(
-                        i,
-                        RestoreSessionActionKind.ProcessLaunch,
-                        succeeded: true,
-                        "Launched installed browser web app");
-                    AppLogger.Info(
-                        "restore.entry_launch_succeeded",
-                        "Launched an installed browser web app",
-                        LogField.Identifier("entryId", entry.EntryId),
-                        LogField.Title("webAppName", entry.WebAppName),
-                        LogField.Identifier("appUserModelId", entry.AppUserModelId),
-                        LogField.Public("launchKind", "web_app"));
-                }
-                catch (Exception ex)
-                {
-                    session.RecordLaunch(
-                        i,
-                        RestoreSessionActionKind.ProcessLaunch,
-                        succeeded: false,
-                        "Failed to launch installed browser web app");
-                    AppLogger.Warn(
-                        "restore.entry_launch_failed",
-                        "Failed to launch an installed browser web app",
-                        ex,
-                        LogField.Identifier("entryId", entry.EntryId),
-                        LogField.Title("webAppName", entry.WebAppName),
-                        LogField.Identifier("appUserModelId", entry.AppUserModelId),
-                        LogField.Public("errorCategory", "web_app_launch"));
-                }
-                continue;
-            }
-
-            // ── Dedicated browser window ──────────────────────────────────
-            // Open the site in its own window. Unlike --restore-last-session this targets one
-            // specific window, so it can coexist with the user's normal multi-tab window.
-            if (entry.IsDedicatedBrowserWindow)
-            {
-                if (session.IsEntryAssigned(i)) continue;
-
-                try
-                {
-                    Process.Start(BuildProcessStartInfo(entry));
-                    anyLaunched = true;
-                    session.RecordLaunch(
-                        i,
-                        RestoreSessionActionKind.ResourceOpen,
-                        succeeded: true,
-                        "Opened dedicated browser resource");
-                    AppLogger.Info(
-                        "restore.entry_launch_succeeded",
-                        "Opened a dedicated browser window",
-                        LogField.Identifier("entryId", entry.EntryId),
-                        LogField.Url("url", entry.BrowserUrl),
-                        LogField.Public("launchKind", "dedicated_browser"));
-                }
-                catch (Exception ex)
-                {
-                    session.RecordLaunch(
-                        i,
-                        RestoreSessionActionKind.ResourceOpen,
-                        succeeded: false,
-                        "Failed to open dedicated browser resource");
-                    AppLogger.Warn(
-                        "restore.entry_launch_failed",
-                        "Failed to open a dedicated browser window",
-                        ex,
-                        LogField.Identifier("entryId", entry.EntryId),
-                        LogField.Url("url", entry.BrowserUrl),
-                        LogField.Public("errorCategory", "dedicated_browser_launch"));
-                }
-                continue;
-            }
-
-            // A plain application already assigned by the identity engine is present even when
-            // an app update changed its executable path (packaged AUMID evidence survives that
-            // change). Document entries still continue so a wrong open document can be replaced.
-            if (session.IsEntryAssigned(i) && string.IsNullOrEmpty(entry.LaunchArg))
-                continue;
-
-            if (string.IsNullOrEmpty(entry.ExecutablePath)) continue;
-
-            if (!string.IsNullOrEmpty(entry.LaunchArg))
-            {
-                // Document entry: skip only when the right document is already open.
-                if (session.CorrectlyMatchedEntries.Contains(i)) continue;
-
-                try
-                {
-                    // Shell-executing the file opens it in the registered handler.
-                    // If the app is already running, it uses DDE/COM to open in the
-                    // existing instance instead of spawning a second process.
-                    var psi = BuildProcessStartInfo(entry);
-                    Process.Start(psi);
-                    anyLaunched = true;
-                    session.RecordLaunch(
-                        i,
-                        RestoreSessionActionKind.ResourceOpen,
-                        succeeded: true,
-                        "Opened saved resource");
-                    AppLogger.Info(
-                        "restore.entry_launch_succeeded",
-                        "Opened a saved resource",
-                        LogField.Identifier("entryId", entry.EntryId),
-                        LogField.Path("resourcePath", entry.LaunchArg),
-                        LogField.Public("launchKind", "resource"));
-                }
-                catch (Exception ex)
-                {
-                    session.RecordLaunch(
-                        i,
-                        RestoreSessionActionKind.ResourceOpen,
-                        succeeded: false,
-                        "Failed to open saved resource");
-                    AppLogger.Warn(
-                        "restore.entry_launch_failed",
-                        "Failed to open a saved resource",
-                        ex,
-                        LogField.Identifier("entryId", entry.EntryId),
-                        LogField.Path("resourcePath", entry.LaunchArg),
-                        LogField.Public("errorCategory", "resource_launch"));
-                }
-            }
-            else
-            {
-                // Plain app entry: only launch when not already running.
-                string exeLower = entry.ExecutablePath.ToLowerInvariant();
-                if (runningExes.Contains(exeLower)) continue;
-
-                // Skip if a document entry for the same exe is pending in this pass.
-                // Shell-executing that document will start the app; a bare launch here
-                // would open the start screen and steal the DDE slot.
-                if (exesWithPendingDocLaunch.Contains(exeLower))
-                {
-                    AppLogger.Debug(
-                        "restore.bare_launch_skipped",
-                        "Skipped a bare application launch because a resource entry is pending",
-                        LogField.Identifier("entryId", entry.EntryId),
-                        LogField.Path("executablePath", entry.ExecutablePath));
-                    continue;
-                }
-
-                try
-                {
-                    var psi = BuildProcessStartInfo(entry);
-                    Process.Start(psi);
-                    anyLaunched = true;
-                    session.RecordLaunch(
-                        i,
-                        RestoreSessionActionKind.ProcessLaunch,
-                        succeeded: true,
-                        "Launched saved application");
-                    // Log what actually launched: shell:AppsFolder for Store apps prints the
-                    // FileName+Arguments, everything else the executable path.
-                    string how = IsStoreApp(entry) ? $"{psi.FileName} {psi.Arguments}".Trim()
-                                                   : entry.ExecutablePath;
-                    AppLogger.Info(
-                        "restore.entry_launch_succeeded",
-                        "Launched a saved application",
-                        LogField.Identifier("entryId", entry.EntryId),
-                        LogField.CommandLine("launchCommand", how),
-                        LogField.Public("launchKind", "application"));
-                }
-                catch (Exception ex)
-                {
-                    session.RecordLaunch(
-                        i,
-                        RestoreSessionActionKind.ProcessLaunch,
-                        succeeded: false,
-                        "Failed to launch saved application");
-                    AppLogger.Warn(
-                        "restore.entry_launch_failed",
-                        "Failed to launch a saved application",
-                        ex,
-                        LogField.Identifier("entryId", entry.EntryId),
-                        LogField.Path("executablePath", entry.ExecutablePath),
-                        LogField.Public("errorCategory", "application_launch"));
-                }
-            }
-        }
-
-        if (!anyLaunched)
-        {
-            // Nothing new to launch — every workspace window was already open and repositioned in
-            // Phase 1. Still honour the minimize request before returning, otherwise "align &
-            // minimize others" would do nothing when the workspace is already fully open.
-            if (minimizeOthers && !ct.IsCancellationRequested)
-            {
-                _windowMutation.MinimizeUserWindowsExcept(
-                    WindowCandidatePolicy.MinimizeCandidate,
-                    new HashSet<IntPtr>(session.AssignedHwnds));
-                session.RecordMinimizeOthers(succeeded: true);
-            }
-            return session.Complete();
-        }
-
-        // ── Phase 3: wait for app initialisation ─────────────────────────
-        await Task.Delay(3000, ct).ConfigureAwait(false);
-        if (ct.IsCancellationRequested) return session.Complete();
-
-        // ── Phase 4: reposition newly appeared windows ────────────────────
-        liveWindows = _windowInventory.GetWindowsWithPids(
-            WindowCandidatePolicy.RestoreMatchCandidate);
-        MatchAndRestore(session, liveWindows);
-
-        if (ct.IsCancellationRequested) return session.Complete();
-
-        // ── Phase 5: second pass for slow launchers ────────────────────────
-        await Task.Delay(2000, ct).ConfigureAwait(false);
-        if (ct.IsCancellationRequested) return session.Complete();
-
-        liveWindows = _windowInventory.GetWindowsWithPids(
-            WindowCandidatePolicy.RestoreMatchCandidate);
-        MatchAndRestore(session, liveWindows);
-
-        // ── Optional: minimize everything that is not part of the workspace ──
-        if (minimizeOthers && !ct.IsCancellationRequested)
-        {
-            _windowMutation.MinimizeUserWindowsExcept(
-                WindowCandidatePolicy.MinimizeCandidate,
-                new HashSet<IntPtr>(session.AssignedHwnds));
-            session.RecordMinimizeOthers(succeeded: true);
-        }
+        RestoreExecutionResult result = await ExecuteRestorePlanAsync(approvedPlan, ct).ConfigureAwait(false);
+        ApplyExecutionState(snapshot, result);
 
         AppLogger.Info(
             "restore.session_completed",
-            "Completed a workspace restore session",
-            LogField.Identifier("workspaceId", snapshot.WorkspaceId));
-        return session.Complete();
+            "Completed an approved workspace restore session",
+            LogField.Identifier("workspaceId", snapshot.WorkspaceId),
+            LogField.Public("status", result.Status),
+            LogField.Public("stalePlan", result.HasStalePlan),
+            LogField.Public("assignedWindowCount", result.AssignedWindowHandles.Count));
+        return result;
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Matches live windows to snapshot entries and calls
-    /// <see cref="WindowService.RestoreSingleWindow"/> for each match.
-    /// <para>
-    /// Matching priority (highest → lowest):
-    /// <list type="number">
-    ///   <item>For document entries (have a <see cref="WorkspaceEntry.LaunchArg"/>):
-    ///     exe path + live title contains the saved document filename.
-    ///     A match here is recorded in the session so that Phase 2 knows the right document is
-    ///     already on screen.</item>
-    ///   <item>exe path + window class name.</item>
-    ///   <item>exe path + first 10 chars of saved title snippet.</item>
-    /// </list>
-    /// </para>
-    /// The planner only proposes matches. <see cref="RestoreSessionContext"/> centrally commits
-    /// each proposal and owns the one-to-one assignment across Phase 1 / 4 / 5 calls.
-    /// </summary>
-    private void MatchAndRestore(
-        RestoreSessionContext session,
-        Dictionary<IntPtr, (uint Pid, WindowRecord Record)> liveWindows)
+    private async Task RestoreWorkspaceUsingPlanAsync(
+        WorkspaceSnapshot snapshot,
+        RestoreMode mode,
+        CancellationToken ct)
     {
-        // An assignment is released only after this inventory proves its HWND disappeared.
-        // The affected entry then becomes eligible for an explicit rematch in the same pass.
-        session.ReconcileLiveWindows(liveWindows, _windowInventory.IsWindowAlive);
+        _ = await RestoreWorkspaceWithExecutionResultAsync(snapshot, mode, ct).ConfigureAwait(false);
+    }
 
-        foreach (var match in WindowRestorePlanner.PlanMatches(
-                     session.Entries,
-                     liveWindows,
-                     session.AssignedEntryIndices,
-                     session.AssignedHwnds))
+    private async Task<RestoreSessionResult> RestoreWorkspaceWithLegacyResultAsync(
+        WorkspaceSnapshot snapshot,
+        RestoreMode mode,
+        CancellationToken ct)
+    {
+        RestorePlan plan = CreateRestorePlan(snapshot, mode);
+        RestoreExecutionResult execution = await ExecuteApprovedRestorePlanAsync(
+            snapshot,
+            plan,
+            ct).ConfigureAwait(false);
+        return ToLegacyResult(plan, execution);
+    }
+
+    private RestorePlan CreateRestorePlan(
+        WorkspaceSnapshot snapshot,
+        RestoreMode mode,
+        IReadOnlyDictionary<IntPtr, (uint Pid, WindowRecord Record)> liveWindows)
+    {
+        LiveWindowIdentity[] identities = liveWindows
+            .Select(window => WindowIdentityExtractor.FromLive(
+                window.Key,
+                window.Value.Pid,
+                window.Value.Record))
+            .ToArray();
+        var inventory = new RestoreLiveInventory
         {
-            int i = match.EntryIndex;
-            var entry = session.Entries[i];
+            Windows = identities,
+            Resources = ObserveRestoreResources(snapshot),
+            BrowserSessionRestore = snapshot.BrowserSessions.Count == 0
+                ? BrowserSessionRestoreAvailability.NotAvailable
+                : _browserSessionConnector is null
+                    ? BrowserSessionRestoreAvailability.Unavailable
+                    : BrowserSessionRestoreAvailability.Available
+        };
+        RestoreMonitorTopology topology = BuildRestoreTopology(snapshot, liveWindows);
+        return RestorePlanner.Build(snapshot, inventory, topology, mode);
+    }
 
-            // The session is authoritative. A proposal that races with or duplicates an earlier
-            // assignment is rejected before any live window mutation occurs.
-            if (!session.TryCommitAssignment(match))
-                continue;
+    private IReadOnlyList<RestoreResourceObservation> ObserveRestoreResources(
+        WorkspaceSnapshot snapshot)
+    {
+        var observations = new List<RestoreResourceObservation>();
+        for (int entryIndex = 0; entryIndex < snapshot.Entries.Count; entryIndex++)
+        {
+            WorkspaceEntry entry = snapshot.Entries[entryIndex];
+            if (!string.IsNullOrWhiteSpace(entry.LaunchArg))
+            {
+                observations.Add(_restoreResources.Observe(
+                    entryIndex,
+                    RestoreResourceKind.LaunchTarget,
+                    entry.LaunchArg));
+            }
 
-            if (match.TitleSimilarityScore is double score)
-                AppLogger.Info(
-                    "restore.entry_disambiguated",
-                    "Disambiguated a restore entry by title similarity",
-                    LogField.Identifier("entryId", entry.EntryId),
-                    LogField.Public("processName", entry.ProcessName),
-                    LogField.Public("score", score),
-                    LogField.Public("hwnd", match.Hwnd));
+            string executableTarget = entry.IsWebApp
+                ? entry.WebAppLaunchTarget ?? entry.ExecutablePath
+                : entry.ExecutablePath;
+            if (!string.IsNullOrWhiteSpace(executableTarget))
+            {
+                observations.Add(_restoreResources.Observe(
+                    entryIndex,
+                    RestoreResourceKind.Executable,
+                    executableTarget));
+            }
 
-            _windowMutation.RestoreSingleWindow(match.Hwnd, entry.Position);
-            session.RecordWindowRestored(i, match.Hwnd);
-            AppLogger.Info(
-                "restore.entry_positioned",
-                "Restored a workspace entry to its saved position",
-                LogField.Identifier("entryId", entry.EntryId),
-                LogField.Public("entryIndex", i),
-                LogField.Public("processName", entry.ProcessName),
-                LogField.Public("hwnd", match.Hwnd),
-                LogField.Public("titleMatched", match.TitleMatched),
-                LogField.Public("matchScore", match.Candidate?.Score),
-                LogField.Public("matchConfidence", match.Candidate?.Confidence),
-                LogField.Public(
-                    "matchEvidence",
-                    string.Join(',', match.Candidate?.Evidence
-                        .Where(evidence => evidence.Matched)
-                        .Select(evidence => evidence.Kind) ?? [])));
+            if (!entry.IsWebApp) continue;
+            RestoreResourceObservation shortcut = _restoreResources.Observe(
+                entryIndex,
+                RestoreResourceKind.WebAppShortcut,
+                entry.WebAppShortcutPath ?? "");
+            if (shortcut.Availability != RestoreResourceAvailability.Available &&
+                !string.IsNullOrWhiteSpace(entry.AppUserModelId))
+            {
+                WebAppInfo? resolved = _webAppService.FindByAumid(entry.AppUserModelId);
+                if (resolved is not null)
+                {
+                    shortcut = _restoreResources.Observe(
+                        entryIndex,
+                        RestoreResourceKind.WebAppShortcut,
+                        resolved.ShortcutPath);
+                }
+            }
+            observations.Add(shortcut);
+        }
+        return observations;
+    }
+
+    private RestoreMonitorTopology BuildRestoreTopology(
+        WorkspaceSnapshot snapshot,
+        IReadOnlyDictionary<IntPtr, (uint Pid, WindowRecord Record)> liveWindows)
+    {
+        List<MonitorInfo> currentMonitors = _monitorInventory.GetCurrentMonitors();
+        var result = new List<RestoreMonitor>(currentMonitors.Count);
+        int nextLeft = 0;
+        foreach (MonitorInfo monitor in currentMonitors
+                     .OrderBy(item => item.Index)
+                     .ThenBy(item => item.MonitorId, StringComparer.OrdinalIgnoreCase))
+        {
+            uint dpi = liveWindows.Values
+                .Select(item => item.Record)
+                .Where(record => string.Equals(
+                    record.MonitorId,
+                    monitor.MonitorId,
+                    StringComparison.OrdinalIgnoreCase))
+                .Select(record => record.SavedDpi)
+                .FirstOrDefault(value => value > 0);
+            if (dpi == 0)
+            {
+                dpi = snapshot.Entries
+                    .Where(entry => string.Equals(
+                        entry.MonitorId,
+                        monitor.MonitorId,
+                        StringComparison.OrdinalIgnoreCase))
+                    .Select(entry => entry.Position?.SavedDpi ?? 0)
+                    .FirstOrDefault(value => value > 0);
+            }
+            if (dpi == 0) dpi = 96;
+
+            int width = monitor.WidthPixels > 0 ? monitor.WidthPixels : 1920;
+            int height = monitor.HeightPixels > 0 ? monitor.HeightPixels : 1080;
+            result.Add(new RestoreMonitor(
+                monitor.MonitorId,
+                monitor.Index,
+                nextLeft,
+                0,
+                nextLeft + width,
+                height,
+                dpi,
+                monitor.IsPrimary));
+            nextLeft += width;
+        }
+        return new RestoreMonitorTopology { Monitors = result };
+    }
+
+    private static void ApplyExecutionState(
+        WorkspaceSnapshot snapshot,
+        RestoreExecutionResult result)
+    {
+        foreach (WorkspaceEntry entry in snapshot.Entries)
+            entry.WasRestored = false;
+        foreach (RestoreExecutionEntryResult entry in result.Entries)
+        {
+            if (entry.EntryIndex >= 0 && entry.EntryIndex < snapshot.Entries.Count)
+                snapshot.Entries[entry.EntryIndex].WasRestored =
+                    entry.Status == RestoreExecutionEntryStatus.Restored;
         }
     }
+
+    private static RestoreSessionResult ToLegacyResult(
+        RestorePlan plan,
+        RestoreExecutionResult execution)
+    {
+        RestoreEntryResult[] entries = execution.Entries
+            .Select(entry =>
+            {
+                RestorePlanEntry planned = plan.Entries[entry.EntryIndex];
+                bool titleMatched = planned.SelectedMatch?.Evidence.Any(evidence =>
+                    evidence.Matched && evidence.Kind is
+                        WindowMatchEvidenceKind.PwaIdentityExact or
+                        WindowMatchEvidenceKind.DedicatedBrowserSiteExact or
+                        WindowMatchEvidenceKind.DocumentNameInTitle) == true;
+                RestoreEntryStatus status = entry.Status switch
+                {
+                    RestoreExecutionEntryStatus.Restored => RestoreEntryStatus.Assigned,
+                    RestoreExecutionEntryStatus.LaunchRequested or
+                        RestoreExecutionEntryStatus.AwaitingWindow => RestoreEntryStatus.LaunchRequested,
+                    RestoreExecutionEntryStatus.Failed => RestoreEntryStatus.LaunchFailed,
+                    _ => RestoreEntryStatus.Pending
+                };
+                return new RestoreEntryResult(
+                    entry.EntryIndex,
+                    entry.EntryId,
+                    status,
+                    entry.AssignedWindowHandle is long hwnd ? new IntPtr(hwnd) : null,
+                    titleMatched);
+            })
+            .ToArray();
+        var actions = new List<RestoreSessionAction>();
+        foreach (RestoreExecutionActionResult action in execution.Actions)
+        {
+            bool succeeded = action.Status == RestoreExecutionActionStatus.Succeeded;
+            IntPtr? hwnd = action.WindowHandle is long handle ? new IntPtr(handle) : null;
+            switch (action.Kind)
+            {
+                case RestoreActionKind.RestoreBrowserSession:
+                    actions.Add(new RestoreSessionAction(
+                        RestoreSessionActionKind.BrowserRestore,
+                        null,
+                        null,
+                        succeeded,
+                        action.Explanation));
+                    break;
+                case RestoreActionKind.LaunchApplication:
+                case RestoreActionKind.LaunchWebApp:
+                case RestoreActionKind.ActivatePackagedApplication:
+                    actions.Add(new RestoreSessionAction(
+                        RestoreSessionActionKind.ProcessLaunch,
+                        action.EntryIndex,
+                        null,
+                        succeeded,
+                        action.Explanation));
+                    break;
+                case RestoreActionKind.OpenResource:
+                case RestoreActionKind.LaunchDedicatedBrowser:
+                    actions.Add(new RestoreSessionAction(
+                        RestoreSessionActionKind.ResourceOpen,
+                        action.EntryIndex,
+                        null,
+                        succeeded,
+                        action.Explanation));
+                    break;
+                case RestoreActionKind.RestoreExistingWindow:
+                case RestoreActionKind.AwaitWindowAppearance when succeeded:
+                    actions.Add(new RestoreSessionAction(
+                        RestoreSessionActionKind.WindowAssigned,
+                        action.EntryIndex,
+                        hwnd,
+                        succeeded,
+                        action.Explanation));
+                    actions.Add(new RestoreSessionAction(
+                        RestoreSessionActionKind.WindowRestored,
+                        action.EntryIndex,
+                        hwnd,
+                        succeeded,
+                        action.Explanation));
+                    break;
+                case RestoreActionKind.MinimizeOtherWindows:
+                    actions.Add(new RestoreSessionAction(
+                        RestoreSessionActionKind.MinimizeOtherWindows,
+                        null,
+                        null,
+                        succeeded,
+                        action.Explanation));
+                    break;
+            }
+        }
+        return new RestoreSessionResult(
+            DateTimeOffset.UtcNow,
+            TimeSpan.Zero,
+            execution.WasCancelled,
+            entries,
+            actions,
+            execution.AssignedWindowHandles.Select(hwnd => new IntPtr(hwnd)).ToHashSet());
+    }
+
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
 
     /// <summary>
     /// Searches common user-accessible locations for a file with the given <paramref name="filename"/>.
@@ -1671,15 +1627,6 @@ public class WorkspaceService
         !string.IsNullOrEmpty(entry.AppUserModelId) &&
         entry.AppUserModelId.Contains('!') &&
         entry.ExecutablePath.Contains(@"\WindowsApps\", StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>
-    /// True when a live window is an installed browser web app rather than a normal
-    /// browser window, judged by the shape of its <c>AppUserModelID</c>.
-    /// </summary>
-    private static bool IsWebAppWindow(WindowRecord rec) =>
-        WebAppService.IsChromiumBrowser(rec.ProcessName) &&
-        WebAppService.LooksLikeWebAppAumid(rec.AppUserModelId);
-
 
     private static readonly HashSet<string> BrowserProcessNames = new(StringComparer.OrdinalIgnoreCase)
     {

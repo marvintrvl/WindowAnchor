@@ -1,6 +1,6 @@
 # WindowAnchor — Architecture
 
-This document describes the internal architecture of WindowAnchor v1.1.0 for contributors and maintainers.
+This document describes the internal architecture of WindowAnchor v1.5.0 for contributors and maintainers.
 
 ---
 
@@ -11,18 +11,17 @@ This document describes the internal architecture of WindowAnchor v1.1.0 for con
 │  UI Layer         App.xaml.cs · SettingsWindow · Dialogs        │
 │  (WPF, tray)      Owns no business logic. Calls Coordinator.    │
 ├─────────────────────────────────────────────────────────────────┤
-│  Coordinator      LayoutCoordinator                             │
-│                   Wires display-change events → WorkspaceService│
-│                   Owns notification balloons.                   │
+│  Coordinator      LayoutCoordinator · Preview Workflow          │
+│                   Selects manual/automatic restore entry points │
+│                   and owns user-facing restore notifications.   │
 ├─────────────────────────────────────────────────────────────────┤
-│  Services         WorkspaceService · MonitorService             │
-│                   WindowService · StorageService                │
-│                   JumpListService · TitleParser                 │
-│                   Pure logic, no UI dependencies.               │
+│  Services         WorkspaceService · RestorePlanner/Executor    │
+│                   WindowService · Monitor/Storage services      │
+│                   Pure decisions plus explicit I/O boundaries.  │
 ├─────────────────────────────────────────────────────────────────┤
 │  Models           WorkspaceSnapshot · WorkspaceEntry            │
-│                   MonitorInfo · WindowRecord                    │
-│                   Plain data, no logic, no dependencies.        │
+│                   RestorePlan · execution/preview results        │
+│                   Immutable intent and plain persisted data.     │
 ├─────────────────────────────────────────────────────────────────┤
 │  Native           NativeMethods.Window · NativeMethods.Display  │
 │                   All P/Invoke declarations. No logic.          │
@@ -88,6 +87,62 @@ restore session. It proposes the highest-ranked eligible candidate and carries i
 structured restore diagnostics; `RestoreSessionContext` remains the only owner allowed to commit
 an entry-to-HWND assignment.
 
+### Pure restore planning
+
+`RestorePlanner` builds an immutable `RestorePlan` from four explicit inputs: a saved
+`WorkspaceSnapshot`, a purpose-built `RestoreLiveInventory`, an already-observed
+`RestoreMonitorTopology`, and a `RestoreMode`. It performs no window, process, browser,
+file-system, or persistence operations.
+
+Every saved entry remains present as a `RestorePlanEntry`, including entries excluded by a
+selective restore or stopped by cancellation. Each entry records scored candidates and their
+identity evidence, the deterministic selected match, DPI-aware target placement, launch
+requirements, future `RestoreAction` descriptions, warnings, blocking errors, and one explained
+outcome. Candidate HWNDs are consumed across the whole build so two entries cannot claim the same
+live window.
+
+Missing and stale resources are supplied as observations and become blocked outcomes instead of
+exceptions. Browser-session unavailability becomes an explicit warning with ordinary launch
+fallbacks. `RestorePlan.Redact()` and `ToRedactedJson()` produce deep privacy-safe projections for
+diagnostics or preview.
+
+### Restore plan execution and staleness
+
+`RestoreExecutor` is the only boundary that turns an approved `RestorePlan` into process, browser,
+or window mutations. It executes only actions already present in that plan through injectable
+process-launch, browser-session, window-inventory/mutation, resource-validation, and clock
+boundaries. Browser restoration is itself an explicit plan action; its ordinary-browser fallback
+is also explicit and conditional on that action becoming unavailable.
+
+Immediately before each placement, the executor enumerates eligible windows again and verifies the
+approved HWND, PID, and saved identity. Immediately before each launch, it revalidates the approved
+file, folder, URL, executable, or packaged-app identity. Closed/reused HWNDs and changed resources
+produce structured `RestoreExecutionResult` stale-plan outcomes and receive no mutation. The
+executor retains the compatibility three-second and two-second launch waits; later readiness and
+verification tickets replace those waits without changing the plan contract.
+
+### Restore preview and approval
+
+`RestorePlanPreviewBuilder` projects the immutable plan into exact, adapted, ambiguous, missing,
+ready, skipped, and cancelled entry states plus move, launch, browser, wait, minimize, and no-change
+action labels. It never reads live state. `RestorePlanPreviewDialog` renders only this projection,
+uses keyboard-focusable entry checkboxes and automation labels, and distinguishes blocking errors
+from destructive minimize actions. Because close behavior is not part of the current restore plan,
+the preview explicitly states that no windows will be closed; safe-switch close analysis remains a
+separate future boundary.
+
+Unchecking an entry calls `RestorePlanner.DeriveApprovedPlan`. The derived plan retains the original
+candidate evidence and placement but removes that entry's actions and blocking errors without
+changing the preview object. Its selected HWND is protected from align/minimize. Disabling an
+ordinary-browser entry also removes the global browser-session action and makes enabled browser
+fallbacks explicit, preventing the connector from recreating a disabled entry.
+
+Manual tray and Settings restores pass the derived plan to `ExecuteApprovedRestorePlanAsync`.
+Before any mutation, the executor compares the current eligible candidate inventory with the
+preview and revalidates every referenced resource. Changed state returns `StalePlan`, displays a
+clear retry message, and is never silently replanned. Startup, display-change, and hotkey restores
+retain their existing one-click compatibility path.
+
 ### `WorkspaceService`
 The main capture/restore orchestration service. Called by `LayoutCoordinator` and directly by UI
 code. Snapshot construction and persistence are deliberately separate boundaries.
@@ -106,18 +161,20 @@ code. Snapshot construction and persistence are deliberately separate boundaries
   caller chooses the typed repository and explicitly allows a partial window-only save or requires
   complete browser capture. A capture is never persisted before browser capture finishes.
 - **`RestoreWorkspaceAsync(snapshot, token)`** — the restore pipeline:
-    1. Create a `RestoreSessionContext` that owns per-entry state, timing, cancellation,
-       browser/launch actions, structured results, and the entry ↔ HWND assignment maps.
-    2. Reposition already-running windows, then launch missing apps and resources.
-    3. Reconcile newly appeared windows after 3 seconds and slow launchers after another 2 seconds.
-    4. `WindowIdentityExtractor` centralizes saved/live evidence and `WindowMatcher` returns
-       deterministic scored candidates with reasons. `WindowRestorePlanner` proposes the highest
-       eligible candidate; only the session can commit a one-to-one assignment, and committed live
-       HWNDs stay unavailable in every later pass.
-    5. Release a stale assignment only when the current inventory omits it and `IsWindowAlive`
-       verifies destruction; the affected entry then explicitly becomes eligible for rematching.
-    6. Align/minimize preserves the final set of HWNDs still owned by the restore session.
-- **`RestoreWorkspaceSelectiveAsync(snapshot, monitorIds, token)`** — same as above but filters entries to the specified monitor IDs before restoring.
+    1. Observe live windows, monitor topology, resources, and browser-session capability without
+       mutation, then build an immutable `RestorePlan`.
+    2. Pass that plan to `RestoreExecutor`, which revalidates every external target immediately
+       before executing its approved action.
+    3. Reconcile windows that appear after launches using the compatibility three-second and
+       two-second waits, while preserving one-to-one HWND assignment across the execution.
+    4. Return structured per-action and per-entry outcomes; the legacy restore-session result remains
+       an adapter for existing callers during migration.
+- **`CreateRestorePlan(snapshot, mode)`** — performs the read-only observation and pure planning
+  phases for preview or explicit approval workflows.
+- **`ExecuteRestorePlanAsync(plan, token)`** — executes an already-approved plan and reports stale
+  preconditions without silently replanning.
+- **`RestoreWorkspaceSelectiveAsync(snapshot, monitorIds, token)`** — builds a selective plan that
+  retains excluded entries as explicit results, then executes only included-entry actions.
 
 ### `StorageService`
 Atomic, versioned JSON persistence and migration. `StorageService` remains the application-facing
@@ -181,19 +238,25 @@ User clicks "Save Workspace"
         → one atomic named-workspace commit
 ```
 
-## Data Flow: Restore (Auto)
+## Data Flow: Restore
 
 ```
-WM_DISPLAYCHANGE arrives at App.xaml.cs
-    → LayoutCoordinator.HandleDisplayChangeAsync()
-        → debounce 1 s
-        → MonitorService.GetCurrentMonitorFingerprint()
-        → WorkspaceService.FindWorkspaceByFingerprint(fingerprint)
-        → WorkspaceService.RestoreWorkspaceAsync(snapshot)
-            → launch missing apps
-            → poll for new windows (up to 8 s)
-            → WindowService.RestoreWindow() for each match
-        → NotifyBalloon("Workspace Restored", ...)
+Manual tray/Settings request
+    → WorkspaceService.CreateRestorePlan(snapshot, mode)
+        → observe inventory, resources, browser capability, and monitor topology
+        → RestorePlanner.Build(...) returns immutable intent
+    → RestorePlanPreviewDialog projects the plan and collects disabled entry IDs
+    → RestorePlanner.DeriveApprovedPlan(original, disabled IDs)
+    → WorkspaceService.ExecuteApprovedRestorePlanAsync(snapshot, approved plan)
+        → RestoreExecutor preflights every approved external reference
+        → execute only actions already described by the approved plan
+        → return structured action and entry results
+
+Startup, display-change, or configured hotkey request
+    → WorkspaceService.RestoreWorkspaceAsync(snapshot)
+        → build the same immutable plan
+        → execute it through the same preflight and mutation boundary
+        → retain one-click behavior without opening preview UI
 ```
 
 ---
@@ -206,6 +269,9 @@ WM_DISPLAYCHANGE arrives at App.xaml.cs
 | `WorkspaceEntry` | One saved window: app identity, optional file path, window position, and monitor assignment. |
 | `MonitorInfo` | Physical monitor metadata: stable ID, friendly name, geometry, index, primary flag. |
 | `WindowRecord` | Captured state of a live window: DPI-aware normalised rect, class name, title snippet, process name, executable path. |
+| `RestorePlan` | Immutable restore intent, including candidates, placements, actions, warnings, blockers, and global actions. |
+| `RestoreExecutionResult` | Structured stale-plan, per-action, and per-entry execution outcomes. |
+| `RestorePlanPreview` | UI-safe projection of a plan; it contains display state but performs no observation or mutation. |
 
 ---
 

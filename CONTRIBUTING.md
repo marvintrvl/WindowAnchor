@@ -35,7 +35,7 @@ src/WindowAnchor/
 └── Resources/                    ← Icons and static assets
 tests/WindowAnchor.Tests/
 ├── Fixtures/                     ← Legacy, current, corrupt, and future JSON samples
-└── *.cs                          ← Service-layer characterization tests and fakes
+└── *.cs                          ← Service-layer, planner, preview, and executor tests/fakes
 ```
 
 See [docs/architecture.md](docs/architecture.md) for a detailed walkthrough of each layer.
@@ -50,6 +50,9 @@ See [docs/architecture.md](docs/architecture.md) for a detailed walkthrough of e
 - **Logging:** Use the structured `AppLogger` overloads with a stable event ID, a non-sensitive message, and named `LogField` values. Tag paths, URLs, titles, workspace names, command lines, identifiers, and secrets with their matching sensitivity helper. Never log native-message payloads, browser page contents, OAuth tokens, cookies, or other credentials, and never use `Console.WriteLine` or `Debug.WriteLine`.
 - **Native calls:** All P/Invoke declarations go in `Native/NativeMethods.Window.cs` or `Native/NativeMethods.Display.cs`. Do not scatter `[DllImport]` through service code.
 - **UI thread:** `NotifyBalloon` and any direct WPF property writes must be dispatched via `Application.Current.Dispatcher`.
+- **Restore pipeline:** Keep observation, pure planning, user approval, stale-state preflight, and
+  mutation as separate boundaries. Preview code may project a `RestorePlan`, but must not enumerate
+  windows, launch processes, or silently rebuild a stale plan.
 - **No extra NuGet packages** without discussion — the dependency list is intentionally minimal.
 
 ---
@@ -58,8 +61,9 @@ See [docs/architecture.md](docs/architecture.md) for a detailed walkthrough of e
 
 1. **Fork** the repo and create a branch: `git checkout -b feat/my-feature`.
 2. **Write** your code following the guidelines above.
-3. **Run automated tests**: `dotnet test WindowAnchor.sln` must pass.
-4. **Test manually**: dock/undock a monitor, save a workspace with and without files, restore selectively.
+3. **Run automated tests**: `dotnet test WindowAnchor.sln --configuration Release` must pass.
+4. **Test manually**: dock/undock a monitor, save a workspace with and without files, preview a
+   manual restore, disable an entry, and verify selective and automatic restores.
 5. **Build clean**: `dotnet build` must produce 0 errors and 0 warnings before submitting.
 6. **Open a PR** with a short description of what changed and why.
 
@@ -81,7 +85,9 @@ High-value areas where contributions are especially welcome:
 
 | Area | Notes |
 |---|---|
-| **Tier 2 file detection** | Improving Jump-List parsing coverage for more apps |
-| **Per-app restore overrides** | Letting users pin specific windows to specific monitors |
-| **Autostart on lock/unlock** | Triggering restore when the Windows session unlocks |
-| **Unit tests** | Extend service-layer characterization coverage for new matching and migration behavior |
+| **Restore readiness** | Replace compatibility delays with observable app/window readiness |
+| **Ambiguity UX** | Let users resolve equally plausible window matches explicitly |
+| **Restore diagnostics** | Expand per-item reports and deterministic simulation fixtures |
+| **Portable layouts** | Semantic layouts, aliases, import/export, and device adaptation |
+
+See [build.md](build.md) for the canonical build, test, and release commands.

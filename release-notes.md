@@ -1,53 +1,64 @@
-# WindowAnchor v1.4.2 — Reliable Tray Workspace Submenu
+# WindowAnchor v1.5.0 — Restore Planning and Safety
 
 ## Summary
 
-This patch release fixes the **Workspaces** submenu in the system tray. The
-left-opening submenu now remains available while the pointer moves from the main
-tray menu into the workspace commands at a normal speed.
+WindowAnchor 1.5.0 introduces a reviewable restore pipeline. Manual restores now show an immutable
+plan before changing the desktop, allow individual entries to be disabled, and reject previews that
+became stale while they were open. This release also consolidates the versioned storage, stable-ID,
+matching, diagnostics, and testability foundations built since 1.4.2.
 
-## Fixed in v1.4.2
+## Highlights
 
-- Added a short 250 ms grace period before an open workspace submenu may close.
-- Entering either the **Workspaces** header or its submenu cancels the pending close.
-- Kept the submenu popup stationary and slightly overlapping the parent menu so
-  there is no fragile dead zone at the screen edge.
-- Application, assembly, and file versions now consistently report `1.4.2`.
+- Preview exact, adapted, ambiguous, missing, skipped, move, launch, browser, wait, and minimize
+  outcomes before a manual restore.
+- Disable individual entries without recomputing matches or changing the original preview.
+- Clearly distinguish blocking errors and destructive minimize actions. The preview explicitly
+  confirms when no windows will be closed.
+- Revalidate HWND/PID identity, the eligible candidate set, browser capability, and launch resources
+  before any approved mutation begins.
+- Return a clear stale-preview warning instead of silently targeting a replacement window or
+  launching a duplicate application.
+- Preserve one-click startup, display-change, and hotkey restores for existing automation flows.
+- Keep installed PWAs, dedicated browser sites, documents/projects, packaged apps, DPI adaptation,
+  selective restore, cancellation, and browser-session fallback behavior covered by deterministic
+  service tests.
+- Present clean Cancel and Restore selected labels while retaining Tab navigation, Enter approval,
+  Escape cancellation, and screen-reader automation names.
+
+## Data and reliability foundations
+
+- Workspace and settings documents use versioned schemas with stable workspace and entry IDs.
+- Named workspaces, checkpoints, and temporary captures use separate typed repositories and atomic
+  replacement.
+- Snapshot construction is independent from persistence and optional browser enrichment.
+- Privacy-safe structured logging redacts sensitive paths, URLs, titles, identifiers, workspace
+  names, and command-line values.
 
 ## Release assets
 
-- `WindowAnchor-v1.4.2.exe` — self-contained Windows x64 desktop application.
-- `WindowAnchor-Browser-Connector-v1.4.2.zip` — optional Chromium browser
-  connector and local native-host registration files. The connector itself is
-  unchanged from v1.4.1 and is included for complete installations.
-- `SHA256SUMS.txt` — SHA-256 checksums for both downloadable packages.
+- `WindowAnchor-v1.5.0.exe` — self-contained Windows x64 desktop application.
+- `WindowAnchor-Browser-Connector-v1.5.0.zip` — optional Chromium connector and native-host setup.
+- `SHA256SUMS.txt` — SHA-256 checksums for the executable and connector package.
 
-## Updating the desktop app
+The tagged release workflow rebuilds and tests the application, then generates the checksum file
+from the exact assets it uploads.
 
-1. Exit any running WindowAnchor instance from its tray menu.
-2. Download `WindowAnchor-v1.4.2.exe`.
-3. Replace the previous executable or run the new file directly.
-4. Open the tray menu and confirm the **Workspaces** submenu remains open while
-   moving the pointer into it.
+## Suggested manual verification
 
-## Optional browser connector setup
+1. Open a manual restore from the tray and verify the preview is keyboard navigable.
+2. Confirm exact/adapted outcomes, target monitors, and all action descriptions are visible.
+3. Disable one entry and verify it is neither moved nor minimized.
+4. Open or close a matching app while the preview is open, then approve it; confirm WindowAnchor
+   reports that the preview is stale and does not apply stale actions.
+5. Test standard, selective, align/minimize, browser-session fallback, and cancellation flows.
+6. Confirm startup/display-change/hotkey restoration still follows the configured one-click path.
 
-1. Download and extract `WindowAnchor-Browser-Connector-v1.4.2.zip`.
-2. Open `chrome://extensions` or `edge://extensions`.
-3. Enable Developer mode.
-4. Click **Load unpacked** and select the extracted extension directory.
-5. Copy the extension ID from the browser extension card.
-6. Update the native host manifest and register the native host using the included PowerShell script:
+## Updating
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\register-native-host.ps1 -ExtensionId <id> -WindowAnchorPath <path-to-exe>
-```
+1. Exit the running WindowAnchor instance from its tray menu.
+2. Download `WindowAnchor-v1.5.0.exe` and replace the previous executable, or run it directly.
+3. Existing workspace and settings files are migrated automatically and retained under
+   `%AppData%\WindowAnchor`.
 
-7. Reload the extension and verify the browser tabs and tab groups can be captured and restored.
-
-## Notes
-
-The desktop EXE is self-contained for 64-bit Windows and does not require a
-separate .NET installation. It is not digitally signed, so Windows may show a
-security prompt. The browser connector remains under store review; manual local
-installation is still available.
+The desktop executable is self-contained for 64-bit Windows and does not require a separate .NET
+installation. It is not digitally signed, so Windows may display a security prompt.

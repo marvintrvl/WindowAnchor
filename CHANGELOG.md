@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-09-01
+
+### Added
+- **Restore plan preview and per-entry controls** — Manual tray and Settings restores now show exact, adapted, ambiguous, skipped, and missing outcomes before changing the desktop. Individual entries can be disabled without mutating or recomputing the original plan.
+- **Stale-preview protection** — Approved HWNDs, candidate inventories, browser capability, executables, files, folders, and URLs are revalidated before execution. A changed preview is rejected with a structured explanation instead of silently replanning or applying stale actions.
+- **Pure restore planning and structured execution** — Restore intent is now an immutable, privacy-redactable plan consumed by an executor with per-entry and per-action results.
+- **Stable workspace and entry identities** — Versioned workspace/settings schemas migrate legacy data while preserving ID-based references.
+- **Privacy-safe diagnostics foundation** — Structured logging classifies and redacts sensitive paths, URLs, titles, identifiers, workspace names, and command lines.
+
+### Changed
+- **Safer persistence** — Named workspaces, checkpoints, and temporary captures use isolated typed repositories and atomic file replacement.
+- **Testable restore boundaries** — Window inventory, mutation, process launching, browser restoration, resources, and clocks are independently injectable.
+- **Manual versus automatic restore flow** — Manual restore commands use preview and approval; startup, display-change, and configured hotkey restores retain the existing one-click behavior.
+
+### Fixed
+- **Session-wide HWND ownership** prevents two saved entries from claiming the same live window across restore phases.
+- **Browser and web-app identity separation** prevents ordinary browser windows, dedicated-site windows, and installed PWAs from consuming one another's restore slots.
+- **Disabled align/minimize entries** remain untouched and protected from the terminal minimize action.
+- **Preview button labels** no longer show literal access-key underscore prefixes; Tab, Enter, Escape, and automation behavior remain intact.
+- **Verifiable release assets** now include a CI-generated `SHA256SUMS.txt` matching the uploaded executable and browser connector.
+
 ## [1.4.2] - 2026-08-29
 
 ### Fixed

@@ -1,8 +1,20 @@
-# WindowAnchor — Build Commands
+# WindowAnchor — Build, Test, and Release
+
+WindowAnchor targets .NET 8 and Windows x64. Run commands from the repository root.
+
+## Verify the service layer
+
+```powershell
+dotnet test WindowAnchor.sln --configuration Release
+```
+
+The suite covers persistence migrations and atomicity, window policies and identity matching,
+pure restore planning, approval projection, stale-plan detection, execution boundaries, and the
+manual preview model. These tests do not move or launch real desktop windows.
 
 ## Complete Fresh Build (Debug)
 
-Nukes `bin\` and `obj\` manually — more thorough than `dotnet clean`:
+Remove generated output and rebuild:
 
 ```powershell
 Remove-Item -Recurse -Force src\WindowAnchor\bin, src\WindowAnchor\obj -ErrorAction SilentlyContinue
@@ -24,8 +36,11 @@ Remove-Item -Recurse -Force src\WindowAnchor\bin, src\WindowAnchor\obj -ErrorAct
 dotnet restore src\WindowAnchor\WindowAnchor.csproj
 dotnet publish src\WindowAnchor\WindowAnchor.csproj -c Release -r win-x64 --self-contained true `
   -p:PublishSingleFile=true `
+  -p:PublishReadyToRun=true `
   -p:IncludeNativeLibrariesForSelfExtract=true `
-  -p:EnableCompressionInSingleFile=true
+  -p:EnableCompressionInSingleFile=true `
+  -p:DebugType=None `
+  -p:DebugSymbols=false
 ```
 
 Output exe:
@@ -44,11 +59,19 @@ Remove-Item -Recurse -Force src\WindowAnchor\bin, src\WindowAnchor\obj -ErrorAct
 ## One-liner (Release publish, copy & paste)
 
 ```powershell
-Remove-Item -Recurse -Force src\WindowAnchor\bin, src\WindowAnchor\obj -ErrorAction SilentlyContinue; dotnet publish src\WindowAnchor\WindowAnchor.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
+Remove-Item -Recurse -Force src\WindowAnchor\bin, src\WindowAnchor\obj -ErrorAction SilentlyContinue; dotnet publish src\WindowAnchor\WindowAnchor.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=None -p:DebugSymbols=false
 ```
 
-## Build standalone .exe
+## Release assets
 
 ```powershell
-dotnet publish src/WindowAnchor/WindowAnchor.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true
+$tag = "v1.5.0"
+Copy-Item src/WindowAnchor/bin/Release/net8.0-windows/win-x64/publish/WindowAnchor.exe "WindowAnchor-$tag.exe"
+Compress-Archive browser-extension/* "WindowAnchor-Browser-Connector-$tag.zip"
+Get-FileHash -Algorithm SHA256 "WindowAnchor-$tag.exe", "WindowAnchor-Browser-Connector-$tag.zip"
 ```
+
+The GitHub release workflow repeats the Release test and publish process from the tagged commit,
+packages the browser connector, and uploads both versioned assets plus `SHA256SUMS.txt`. Keep
+`Version`, `AssemblyVersion`, and `FileVersion` synchronized in
+`src/WindowAnchor/WindowAnchor.csproj` before tagging.

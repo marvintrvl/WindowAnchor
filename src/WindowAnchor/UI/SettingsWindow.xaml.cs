@@ -795,7 +795,11 @@ public partial class SettingsWindow : FluentWindow
 
         var restore = new System.Windows.Controls.MenuItem { Header = "Restore Workspace" };
         restore.Icon = new Wpf.Ui.Controls.SymbolIcon { Symbol = Wpf.Ui.Controls.SymbolRegular.ArrowCounterclockwise24 };
-        restore.Click += (_, _) => _ = _coordinator.RestoreWorkspaceAsync(row.Source);
+        restore.Click += (_, _) => _ = RestorePlanPreviewWorkflow.RunAsync(
+            _coordinator,
+            row.Source,
+            RestoreMode.Standard,
+            this);
         menu.Items.Add(restore);
 
         var switchWs = new System.Windows.Controls.MenuItem { Header = "Switch to Workspace" };
@@ -909,7 +913,11 @@ public partial class SettingsWindow : FluentWindow
 
         var dlg = new SelectiveRestoreDialog(row.Source, mismatch, _settingsService) { Owner = this };
         if (dlg.ShowDialog() == true && dlg.SelectedMonitorIds is { Count: > 0 } ids)
-            _ = _coordinator.RestoreWorkspaceSelectiveAsync(row.Source, ids);
+            _ = RestorePlanPreviewWorkflow.RunAsync(
+                _coordinator,
+                row.Source,
+                RestoreMode.Selective(ids.ToArray()),
+                this);
     }
 
     private void DoSwitchWorkspace(WorkspaceRow row)

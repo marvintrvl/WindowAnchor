@@ -40,13 +40,23 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.event.release.tag_name }}"
+          $executable = "./publish/WindowAnchor-$tag.exe"
+          $browserConnector = "./publish/WindowAnchor-Browser-Connector-$tag.zip"
           Copy-Item `
             ./publish/WindowAnchor.exe `
-            "./publish/WindowAnchor-$tag.exe"
+            $executable
           Compress-Archive `
             -Path ./browser-extension/* `
-            -DestinationPath "./publish/WindowAnchor-Browser-Connector-$tag.zip" `
+            -DestinationPath $browserConnector `
             -CompressionLevel Optimal
+          $checksums = @($executable, $browserConnector) | ForEach-Object {
+            $hash = (Get-FileHash -Algorithm SHA256 $_).Hash
+            "$hash  $(Split-Path -Leaf $_)"
+          }
+          Set-Content `
+            -Path ./publish/SHA256SUMS.txt `
+            -Value $checksums `
+            -Encoding ascii
 
       - name: Upload release assets
         shell: pwsh
@@ -58,5 +68,6 @@ jobs:
             $tag `
             "./publish/WindowAnchor-$tag.exe" `
             "./publish/WindowAnchor-Browser-Connector-$tag.zip" `
+            ./publish/SHA256SUMS.txt `
             --repo "${{ github.repository }}" `
             --clobber

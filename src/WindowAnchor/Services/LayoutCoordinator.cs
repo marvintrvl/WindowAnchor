@@ -144,6 +144,50 @@ public class LayoutCoordinator
                 $"\u201c{snapshot.Name}\u201d ({desc}) \u2014 restored successfully.");
     }
 
+    /// <summary>Builds the immutable plan shown by the manual restore preview.</summary>
+    public RestorePlan CreateRestorePlan(WorkspaceSnapshot snapshot, RestoreMode mode) =>
+        _workspaceService.CreateRestorePlan(snapshot, mode);
+
+    /// <summary>Executes the exact plan approved by the preview without rebuilding its matches.</summary>
+    public async Task<RestoreExecutionResult> RestoreApprovedPlanAsync(
+        WorkspaceSnapshot snapshot,
+        RestorePlan approvedPlan,
+        CancellationToken token = default)
+    {
+        NotifyBalloon(
+            "Restoring…",
+            $"“{snapshot.Name}” — executing the reviewed restore plan.");
+        RestoreExecutionResult result = await _workspaceService.ExecuteApprovedRestorePlanAsync(
+            snapshot,
+            approvedPlan,
+            token);
+        if (token.IsCancellationRequested || result.WasCancelled)
+            return result;
+
+        if (result.HasStalePlan)
+        {
+            NotifyBalloon(
+                "Restore Preview Is Stale",
+                "The desktop changed after preview. No stale action was applied; review a fresh plan.",
+                H.NotifyIcon.Core.NotificationIcon.Warning);
+        }
+        else if (result.Status is RestoreExecutionStatus.CompletedWithFailures or
+                 RestoreExecutionStatus.Rejected)
+        {
+            NotifyBalloon(
+                "Restore Needs Attention",
+                "The reviewed plan could not be completed. Open the preview for details.",
+                H.NotifyIcon.Core.NotificationIcon.Warning);
+        }
+        else
+        {
+            NotifyBalloon(
+                "Workspace Restored",
+                $"“{snapshot.Name}” restored from the reviewed plan.");
+        }
+        return result;
+    }
+
     /// <summary>
     /// Instant context switch: gracefully closes all current user windows, waits
     /// for them to finish (giving users time to respond to save-confirmation

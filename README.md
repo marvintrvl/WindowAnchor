@@ -2,7 +2,7 @@
 
 **WindowAnchor** is a modern, Fluent-designed window management utility for Windows 11. It allows you to capture your entire workspace — including window positions, sizes, and even open files — and restore them with a single click or automatically when your monitor configuration changes.
 
-[![VirusTotal](https://img.shields.io/badge/VirusTotal-0%2F70%20clean-success)](https://www.virustotal.com/gui/file/b758f3e749e9884e6be18d0d62f4ac0bd6061f56560c3816be0f950abe6cd9ba/detection)
+[![GitHub release](https://img.shields.io/github/v/release/marvintrvl/WindowAnchor)](../../releases/latest)
 
 <!-- [IMAGE: Main Settings Window showcasing modern Fluent UI] -->
 ![Settings Overview](docs/screenshots/settings_overview.png)
@@ -15,12 +15,15 @@
     - **Tier 1**: Recovers open files via window title parsing.
     - **Tier 2**: Uses Windows Jump-List integration to accurately identify and relaunch specific documents in supported apps (Office, VS Code, etc.).
 - **Selective Restore**: Choose exactly which monitors to restore via a picker dialog.
+- **Restore Plan Preview**: Review exact, adapted, ambiguous, missing, launch, move, skip, and minimize outcomes before a manual restore; disable individual entries before approval.
 - **Default Workspace & Startup Restore**: Set a default workspace to auto-restore on launch, restore the last-used one, or choose from a picker dialog.
 - **Global Keyboard Shortcuts**: Customisable hotkeys for quick save, restore, workspace switching (Ctrl+Alt+1/2/3), switch workspace (Ctrl+Alt+Shift+1/2/3) and settings.
 - **Workspace Ordering**: Reorder workspaces with Move Up/Down — the first three map to the hotkey slots.
 - **Monitor Renaming**: Assign custom names to monitors (e.g. “Left”, “Ultrawide”) — aliases replace hardware names throughout all dialogs.
 - **Switch Workspace**: Instantly switch contexts by closing all open windows and restoring a different workspace — via context menu, tray, or hotkey.
-- **Browser Session Restore**: Chromium browsers (Chrome, Edge, Opera, Brave) reopen with previous tabs via `--restore-last-session`.
+- **Browser Session Restore**: The optional Chromium connector captures and restores supported tabs,
+  groups, pinned/active state, and browser-window geometry; ordinary browser launch remains the
+  graceful fallback when the connector is unavailable.
 - **Save Progress Transparency**: A dedicated progress window tracks the discovery of file paths and jump-lists during the save process.
 - **Zero Dependencies**: Available as a high-performance, single-file standalone executable.
 - **Fluent UI**: Fully integrated with the Windows 11 design language and system tray.
@@ -34,14 +37,16 @@ WindowAnchor operates silently in your system tray, watching your display config
 
 1. **Download**: Get the latest Windows executable from the [Releases](../../releases) page.
 2. **Save**: Right-click the tray icon and select "Save Workspace...".
-3. **Restore**: Simply dock your laptop; WindowAnchor handles the rest.
+3. **Restore**: Choose a workspace to review and approve its plan, or simply dock your laptop for
+   the configured automatic one-click restore.
 
 ## Review Status & Manual Install
 
 The browser extension is currently under review for the Chrome Web Store. While review is in progress, the extension can still be used locally via manual installation.
 
 ### Local desktop app install
-1. Download the latest `WindowAnchor.exe` from the GitHub release page.
+1. Download the latest versioned `WindowAnchor-v*.exe` from the GitHub release page and verify it
+   against `SHA256SUMS.txt`.
 2. Run the executable once to confirm the app starts correctly.
 3. If Windows prompts for security permissions, allow the app to run.
 
@@ -66,7 +71,12 @@ This manual workflow is fully supported for local testing while the extension is
 
 2. **Window snapshot** — Enumerates visible windows, recording position, DPI, and process info. File detection parses window titles and queries Windows jump-lists to relaunch files.
 
-3. **Restore phases** — Closed apps are re-launched with saved file arguments, then the coordinator waits for windows to spawn before applying final positions and states.
+3. **Plan and approve** — Manual tray and Settings restores show an immutable preview. You can
+   disable entries, use Tab to navigate, Enter to approve, and Escape to cancel. The approved plan
+   is checked for stale windows, browser capability, and launch resources before any action starts.
+
+4. **Execute and report** — The executor launches only approved targets, reconciles appearing
+   windows, applies final DPI-aware positions/states, and returns structured per-item outcomes.
 
 ## Docs & Architecture
 
@@ -87,19 +97,21 @@ Please check the [**Contributing Guidelines**](CONTRIBUTING.md) before submittin
 dotnet publish src/WindowAnchor/WindowAnchor.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true
 ```
 
+See [build.md](build.md) for clean builds, Release tests, packaging, and checksum generation. Each
+published release includes `SHA256SUMS.txt` for its executable and browser connector.
+
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=marvintrvl/WindowAnchor&type=Date)](https://star-history.com/#marvintrvl/WindowAnchor&Date)
 
 ##  Roadmap
 
-### v1.4.2 (Current Release) — *Reliable Tray Navigation* ✅
-- **Stable Workspace Submenu**: The tray's left-opening workspace submenu remains open while the pointer crosses into it at normal speed.
-- **Graceful Menu Tracking**: A short close delay is cancelled when the pointer reaches either menu surface, matching familiar Windows cascading-menu behaviour.
-- **Browser Connector**: Capture and restore supported Chromium tabs, pinned tabs, tab groups, and browser window bounds.
-- **Browser Setup**: Guided local Chrome/Edge setup with native-host registration for manual testing.
-- **Installed Web Apps**: Restore Chromium PWAs using their application identity instead of opening a plain browser window.
-- **Reliable Releases**: Versioned Windows EXE and browser connector ZIP are attached to each GitHub release.
+### v1.5.0 (Current Release) — *Restore Planning and Safety* ✅
+- **Plan Before Restore**: Manual tray and Settings restores show every planned entry outcome and action before execution.
+- **Per-Entry Approval**: Disable entries without recomputing or mutating the original preview.
+- **Stale-Plan Protection**: Changed HWNDs, candidate inventories, browser capability, and launch resources stop execution with a clear warning.
+- **Stable Data Foundation**: Versioned schemas, stable IDs, atomic typed stores, and privacy-safe structured diagnostics.
+- **Deterministic Matching**: Shared identity evidence protects PWA, dedicated-browser, document, packaged-app, and duplicate-window behavior.
 
 ### v1.3 — *UX Improvements* ✅
 - **Monitor Renaming**: Personalise monitor names ("Generic PnP" → "Left Monitor") in Settings → Monitors.
@@ -110,18 +122,20 @@ dotnet publish src/WindowAnchor/WindowAnchor.csproj -c Release -r win-x64 --self
 ### v1.2 — *Stability & Control* ✅
 - Selective Window Save, Default Workspace, Keyboard Shortcuts, Workspace Ordering, Browser Session Restore.
 
-### v1.5 (Next Release) — *Deeper Integration*
-- **Smart VS Code Tracking**: Deep detection of `.code-workspace` files for perfect dev-environment restoration.
-- **Firefox Session Restore**: CLI-based session restore for Firefox.
+### v1.6 (Next Release) — *Restore Intelligence*
+- **Confidence and Ambiguity Resolution**: Explain close matches and let users choose without destructive guessing.
+- **Application Readiness**: Replace compatibility delays with cancellable per-entry readiness signals.
+- **Restore Reports**: Present structured action and entry outcomes after execution.
+- **Topology Stabilization**: Avoid restoring against transient monitor states while docking.
 
-### v1.5+ — *Power User Features*
-- **Workspace Scheduler**: Automatically switch workspaces based on time of day or calendar events.
-- **Per-App Launch Rules**: Define global rules for apps (e.g., "Always launch Slack on Monitor 2").
-- **Workspace Templates**: Pre-made community-driven templates for developers, creators, and students.
+### v1.6+ — *Recovery and Adaptation*
+- **Semantic Layouts**: Adapt saved intent across monitor sizes, orientations, and DPI.
+- **Workspace Health and Diff**: Inspect missing resources and current-vs-saved differences without mutation.
+- **Checkpoints and Quick Captures**: Add recovery retention and temporary workspace saves on top of the isolated stores.
 
 ### v2.0 & Beyond
-- **Browser Extension**: Deep tab-level restoration via dedicated Chrome/Edge/Firefox extensions.
-- **Cloud Sync**: Sync your workspace configurations across multiple devices.
+- **Portability**: Logical path aliases, workspace import/export, and cross-device monitor identity.
+- **Sync and Ecosystem**: Provider-neutral folder sync, catalog metadata, desk profiles, and templates.
 
 ##  License
 This project is licensed under the MIT License.
