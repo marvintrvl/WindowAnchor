@@ -4,8 +4,7 @@
 
 [![GitHub release](https://img.shields.io/github/v/release/marvintrvl/WindowAnchor)](../../releases/latest)
 
-<!-- [IMAGE: Main Settings Window showcasing modern Fluent UI] -->
-![Settings Overview](docs/screenshots/settings_overview.png)
+![Saved workspace management](docs/screenshots/settings_saved_workspaces.png)
 
 ##  Key Features
 
@@ -28,8 +27,7 @@
 - **Zero Dependencies**: Available as a high-performance, single-file standalone executable.
 - **Fluent UI**: Fully integrated with the Windows 11 design language and system tray.
 
-<!-- [GIF: Tray menu interaction - Saving a new Workspace] -->
-![Tray Interaction](docs/screenshots/tray_menu.png)
+![Workspace actions in the system tray](docs/screenshots/tray_workspace_actions.png)
 
 ##  The Core Workflow
 
@@ -39,6 +37,17 @@ WindowAnchor operates silently in your system tray, watching your display config
 2. **Save**: Right-click the tray icon and select "Save Workspace...".
 3. **Restore**: Choose a workspace to review and approve its plan, or simply dock your laptop for
    the configured automatic one-click restore.
+
+## Settings at a Glance
+
+Configure Windows startup behavior, notifications, browser integration, and automatic workspace
+restore from one place.
+
+![System, browser integration, and startup settings](docs/screenshots/settings_system_browser_startup.png)
+
+Customize global keyboard shortcuts and assign recognizable names to connected monitors.
+
+![Keyboard shortcuts and monitor aliases](docs/screenshots/settings_hotkeys_monitors.png)
 
 ## Review Status & Manual Install
 
