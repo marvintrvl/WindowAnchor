@@ -8,117 +8,144 @@ using WindowAnchor.Models;
 namespace WindowAnchor.Services;
 
 /// <summary>
-/// Persists and loads workspace data to and from the user's application-data directory.
-/// All files live under <c>%AppData%\WindowAnchor\</c>. This service contains no
-/// business logic — it only handles JSON serialisation and file I/O.
+/// Compatibility façade for machine-local persistence. Permanent workspaces, recovery
+/// checkpoints, and temporary captures are exposed as separate typed repositories.
 /// </summary>
-/// <remarks>
-/// On first construction <see cref="MigrateToV2"/> runs a one-time conversion of
-/// legacy Monitor Profile files (<c>profiles/*.profile.json</c>) into the current
-/// <see cref="WorkspaceSnapshot"/> format.
-/// </remarks>
 public class StorageService
 {
     private readonly string _baseDir;
-    private readonly string _workspacesDir;
-    private readonly string _legacyProfilesDir;   // kept solely for v2 migration
+    private readonly string _legacyProfilesDir;
     private readonly string _lastFingerprintFile;
-    // Human-readable JSON: indented output with camelCase property names.
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private readonly List<StorageLoadIssue> _lastLoadIssues = new();
+    private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
 
     public StorageService()
+        : this(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "WindowAnchor"))
     {
-        _baseDir             = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WindowAnchor");
-        _workspacesDir       = Path.Combine(_baseDir, "workspaces");
-        _legacyProfilesDir   = Path.Combine(_baseDir, "profiles");
+    }
+
+    internal StorageService(string baseDirectory, IAtomicFileWriter? atomicWriter = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(baseDirectory);
+
+        _baseDir = baseDirectory;
+        _legacyProfilesDir = Path.Combine(_baseDir, "profiles");
         _lastFingerprintFile = Path.Combine(_baseDir, "last_fingerprint.txt");
+        AtomicWriter = atomicWriter ?? new AtomicFileWriter();
 
-        EnsureDirectories();
-        MigrateToV2();
-    }
-
-    /// <summary>Creates the base and workspaces directories if they do not already exist.</summary>
-    private void EnsureDirectories()
-    {
         Directory.CreateDirectory(_baseDir);
-        Directory.CreateDirectory(_workspacesDir);
+        NamedWorkspaces = new NamedWorkspaceRepository(
+            Path.Combine(_baseDir, "workspaces"),
+            AtomicWriter);
+        Checkpoints = new CheckpointRepository(
+            Path.Combine(_baseDir, "checkpoints"),
+            AtomicWriter);
+        TemporaryCaptures = new TemporaryCaptureRepository(
+            Path.Combine(_baseDir, "temporary-captures"),
+            AtomicWriter);
+
+        ImportLegacyProfiles();
     }
 
-    // ── v2 Migration ─────────────────────────────────────────────────────────
+    /// <summary>Permanent named workspace storage.</summary>
+    public NamedWorkspaceRepository NamedWorkspaces { get; }
+
+    /// <summary>Recovery checkpoint storage, isolated from named workspaces.</summary>
+    public CheckpointRepository Checkpoints { get; }
+
+    /// <summary>Short-lived capture storage, isolated from named workspaces and checkpoints.</summary>
+    public TemporaryCaptureRepository TemporaryCaptures { get; }
+
+    /// <summary>Issues reported by the most recent named-workspace load.</summary>
+    public IReadOnlyList<StorageLoadIssue> LastLoadIssues => _lastLoadIssues;
+
+    internal IAtomicFileWriter AtomicWriter { get; }
+
+    // ── Legacy profile import ─────────────────────────────────────────────
 
     /// <summary>
-    /// One-time migration: converts legacy "Monitor Profile" JSON files (*.profile.json)
-    /// into Workspace snapshots and writes a sentinel file so this only runs once.
+    /// One-time import of legacy Monitor Profile documents. The completion marker is committed
+    /// only after every source has produced a durable named-workspace document.
     /// </summary>
-    private void MigrateToV2()
+    private void ImportLegacyProfiles()
     {
         string sentinel = Path.Combine(_baseDir, ".migrated_v2");
-        if (File.Exists(sentinel)) return;
+        if (File.Exists(sentinel))
+            return;
 
-        AppLogger.Info("StorageService: running v2 migration");
+        AppLogger.Info(
+            "storage.legacy_import_started",
+            "Importing legacy monitor profiles");
+        bool allSucceeded = true;
 
         if (Directory.Exists(_legacyProfilesDir))
         {
-            foreach (var file in Directory.GetFiles(_legacyProfilesDir, "*.profile.json"))
+            foreach (string file in Directory.GetFiles(_legacyProfilesDir, "*.profile.json")
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
             {
                 try
                 {
                     string json = File.ReadAllText(file);
-                    var profile = JsonSerializer.Deserialize<LegacyMonitorProfile>(json, JsonOpts);
-                    if (profile == null) continue;
+                    var profile = JsonSerializer.Deserialize<LegacyMonitorProfile>(json, JsonOptions);
+                    if (profile == null)
+                        throw new InvalidDataException("Legacy profile deserialized to null.");
 
                     string name = string.IsNullOrWhiteSpace(profile.DisplayName)
                         ? $"Monitor Config {profile.Fingerprint[..Math.Min(6, profile.Fingerprint.Length)]}"
                         : profile.DisplayName;
 
-                    var entries = (profile.Windows ?? new List<WindowRecord>())
-                        .Select(w => new WorkspaceEntry
-                        {
-                            ExecutablePath  = w.ExecutablePath,
-                            ProcessName     = w.ProcessName,
-                            WindowClassName = w.ClassName,
-                            FilePath        = null,
-                            FileConfidence  = 0,
-                            FileSource      = "NONE",
-                            LaunchArg       = null,
-                            Position        = w,
-                            MonitorId       = "",
-                            MonitorIndex    = 0,
-                            MonitorName     = "",
-                        })
-                        .ToList();
+                    var snapshot = WorkspaceSchemaMigrator.CreateFromLegacyProfile(
+                        file,
+                        name,
+                        profile.Fingerprint,
+                        profile.LastSaved,
+                        profile.Windows ?? new List<WindowRecord>());
 
-                    var snapshot = new WorkspaceSnapshot
-                    {
-                        Name               = name,
-                        MonitorFingerprint = profile.Fingerprint,
-                        SavedAt            = profile.LastSaved,
-                        SavedWithFiles     = false,
-                        Monitors           = new List<MonitorInfo>(),
-                        Entries            = entries,
-                    };
-
-                    SaveWorkspace(snapshot);
-                    AppLogger.Info($"Migrated profile \u2018{profile.DisplayName}\u2019 \u2192 workspace \u2018{name}\u2019 ({entries.Count} windows)");
+                    NamedWorkspaces.Save(snapshot);
+                    AppLogger.Info(
+                        "storage.legacy_profile_imported",
+                        "Migrated a legacy monitor profile",
+                        LogField.Workspace("legacyProfileName", profile.DisplayName),
+                        LogField.Workspace("workspaceName", name),
+                        LogField.Public("windowCount", snapshot.Entries.Count));
                 }
                 catch (Exception ex)
                 {
-                    AppLogger.Warn($"Migration: skipping \u2018{file}\u2019: {ex.Message}");
+                    allSucceeded = false;
+                    AppLogger.Warn(
+                        "storage.legacy_profile_import_failed",
+                        "Skipped a legacy monitor profile during import",
+                        ex,
+                        LogField.Path("profilePath", file),
+                        LogField.Public("errorCategory", "legacy_profile_import"));
                 }
             }
         }
 
-        File.WriteAllText(sentinel, "");
-        AppLogger.Info("StorageService: v2 migration complete");
+        if (allSucceeded)
+        {
+            AtomicWriter.WriteAllText(sentinel, "");
+            AppLogger.Info(
+                "storage.legacy_import_completed",
+                "Legacy monitor profile import completed");
+        }
+        else
+        {
+            AppLogger.Warn(
+                "storage.legacy_import_incomplete",
+                "Legacy monitor profile import is incomplete; failed profiles will be retried",
+                LogField.Public("errorCategory", "legacy_profile_import"));
+        }
     }
 
-    // ── Last-Known Fingerprint ────────────────────────────────────────────────
+    // ── Last-known monitor fingerprint ───────────────────────────────────
 
-    /// <summary>Returns the fingerprint from the last successful save/restore, or "".</summary>
     public string GetLastKnownFingerprint()
     {
         try
@@ -127,91 +154,74 @@ public class StorageService
                 ? File.ReadAllText(_lastFingerprintFile).Trim()
                 : "";
         }
-        catch { return ""; }
+        catch
+        {
+            return "";
+        }
     }
 
-    /// <summary>Persists the current fingerprint so it survives app restarts.</summary>
     public void SetLastKnownFingerprint(string fingerprint)
     {
-        try { File.WriteAllText(_lastFingerprintFile, fingerprint); }
-        catch { }
-    }
-
-    // ── Workspace Snapshots ───────────────────────────────────────────────────
-
-    /// <summary>
-    /// Serialises <paramref name="snapshot"/> to <c>workspaces/{name}.workspace.json</c>.
-    /// If a file with the same sanitised name already exists it is overwritten.
-    /// </summary>
-    public void SaveWorkspace(WorkspaceSnapshot snapshot)
-    {
-        string sanitized = string.Concat(snapshot.Name.Split(Path.GetInvalidFileNameChars()));
-        string path = Path.Combine(_workspacesDir, $"{sanitized}.workspace.json");
-        string json = JsonSerializer.Serialize(snapshot, JsonOpts);
-        File.WriteAllText(path, json);
-    }
-
-    /// <summary>
-    /// Deserialises and returns all <c>*.workspace.json</c> files from the workspaces directory.
-    /// Files that cannot be parsed are silently skipped.
-    /// </summary>
-    public List<WorkspaceSnapshot> LoadAllWorkspaces()
-    {
-        var list = new List<WorkspaceSnapshot>();
-        if (!Directory.Exists(_workspacesDir)) return list;
-
-        foreach (var file in Directory.GetFiles(_workspacesDir, "*.workspace.json"))
+        try
         {
-            try
-            {
-                string json = File.ReadAllText(file);
-                var snapshot = JsonSerializer.Deserialize<WorkspaceSnapshot>(json, JsonOpts);
-                if (snapshot != null) list.Add(snapshot);
-            }
-            catch { }
+            AtomicWriter.WriteAllText(_lastFingerprintFile, fingerprint);
         }
-        return list;
+        catch
+        {
+        }
+    }
+
+    // ── Named-workspace compatibility API ────────────────────────────────
+
+    public void SaveWorkspace(WorkspaceSnapshot snapshot) => NamedWorkspaces.Save(snapshot);
+
+    /// <summary>Returns healthy named workspaces together with structured load failures.</summary>
+    public WorkspaceLoadResult LoadNamedWorkspaces()
+    {
+        WorkspaceLoadResult result = NamedWorkspaces.Load();
+        _lastLoadIssues.Clear();
+        _lastLoadIssues.AddRange(result.Issues);
+
+        foreach (StorageLoadIssue issue in result.Issues)
+        {
+            AppLogger.Warn(
+                "storage.document_load_failed",
+                "Skipped an unreadable storage document",
+                LogField.Public("artifactKind", issue.ArtifactKind),
+                LogField.Path("documentPath", issue.FilePath),
+                LogField.Public("errorCategory", issue.FailureKind),
+                LogField.Exception("detail", issue.Message));
+        }
+
+        return result;
     }
 
     /// <summary>
-    /// Renames a saved workspace: deletes the old file and writes a new one under
-    /// <paramref name="newName"/>, updating <see cref="WorkspaceSnapshot.Name"/> in place.
+    /// Compatibility helper returning only healthy permanent workspaces. Call
+    /// <see cref="LoadNamedWorkspaces"/> when structured failures are required.
     /// </summary>
-    public void RenameWorkspace(WorkspaceSnapshot snapshot, string newName)
-    {
-        // Delete old file
-        string oldSanitized = string.Concat(snapshot.Name.Split(Path.GetInvalidFileNameChars()));
-        string oldPath = Path.Combine(_workspacesDir, $"{oldSanitized}.workspace.json");
-        if (File.Exists(oldPath)) File.Delete(oldPath);
+    public List<WorkspaceSnapshot> LoadAllWorkspaces() =>
+        LoadNamedWorkspaces().Workspaces.ToList();
 
-        // Save with new name
-        snapshot.Name = newName;
-        SaveWorkspace(snapshot);
-    }
+    public void RenameWorkspace(WorkspaceSnapshot snapshot, string newName) =>
+        NamedWorkspaces.Rename(snapshot, newName);
 
-    /// <summary>Deletes the workspace file that corresponds to <paramref name="snapshot"/>.</summary>
-    public void DeleteWorkspace(WorkspaceSnapshot snapshot)
-    {
-        string sanitized = string.Concat(snapshot.Name.Split(Path.GetInvalidFileNameChars()));
-        string path = Path.Combine(_workspacesDir, $"{sanitized}.workspace.json");
-        if (File.Exists(path)) File.Delete(path);
-    }
+    public void DeleteWorkspace(WorkspaceSnapshot snapshot) =>
+        NamedWorkspaces.Delete(snapshot);
 
-    /// <summary>Deletes the workspace file for the workspace identified by <paramref name="name"/>.</summary>
     public void DeleteWorkspace(string name)
     {
-        string sanitized = string.Concat(name.Split(Path.GetInvalidFileNameChars()));
-        string path = Path.Combine(_workspacesDir, $"{sanitized}.workspace.json");
-        if (File.Exists(path)) File.Delete(path);
+        WorkspaceSnapshot? workspace = LoadNamedWorkspaces().Workspaces.FirstOrDefault(
+            candidate => candidate.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (workspace != null)
+            NamedWorkspaces.Delete(workspace);
     }
-
-    // ── Private: legacy deserialization only used during migration ────────────
 
     private sealed class LegacyMonitorProfile
     {
-        public string             Fingerprint { get; set; } = "";
-        public string             DisplayName { get; set; } = "";
-        public DateTime           LastSaved   { get; set; }
-        public List<WindowRecord> Windows     { get; set; } = new();
+        public string Fingerprint { get; set; } = "";
+        public string DisplayName { get; set; } = "";
+        public DateTime LastSaved { get; set; }
+        public List<WindowRecord> Windows { get; set; } = new();
     }
 }

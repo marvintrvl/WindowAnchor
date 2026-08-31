@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace WindowAnchor.Models;
 
@@ -18,6 +19,16 @@ public enum StartupBehavior
 
     /// <summary>Show a dialog asking the user which workspace to restore.</summary>
     AskUser = 3,
+}
+
+/// <summary>Minimum severity written to the local diagnostic log.</summary>
+public enum DiagnosticLogLevel
+{
+    Debug = 0,
+    Info = 1,
+    Warning = 2,
+    Error = 3,
+    Off = 4
 }
 
 /// <summary>
@@ -41,13 +52,32 @@ public class HotkeyBinding
 /// </summary>
 public class AppSettings
 {
+    /// <summary>Current persisted settings schema version.</summary>
+    public const int CurrentSchemaVersion = 2;
+
+    /// <summary>Schema version used to serialize this settings document.</summary>
+    [JsonInclude]
+    public int SchemaVersion { get; internal set; } = CurrentSchemaVersion;
+
     // ── Startup ───────────────────────────────────────────────────────────
-    public StartupBehavior StartupBehavior   { get; set; } = StartupBehavior.None;
-    public string?         DefaultWorkspaceName { get; set; }
+    public StartupBehavior StartupBehavior { get; set; } = StartupBehavior.None;
+
+    /// <summary>Stable ID of the workspace restored by <see cref="StartupBehavior.RestoreDefault"/>.</summary>
+    public string? DefaultWorkspaceId { get; set; }
+
+    /// <summary>Legacy name-based default reference, accepted only during v1 migration.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? DefaultWorkspaceName { get; set; }
 
     // ── Notifications ────────────────────────────────────────────────────
     /// <summary>Whether WindowAnchor may show system-tray balloon notifications.</summary>
     public bool NotificationsEnabled { get; set; } = true;
+
+    // ── Diagnostics ──────────────────────────────────────────────────────
+    /// <summary>
+    /// Minimum local log severity. Exported diagnostics are independently redacted by default.
+    /// </summary>
+    public DiagnosticLogLevel DiagnosticLogLevel { get; set; } = DiagnosticLogLevel.Debug;
 
     // ── Keyboard shortcuts ────────────────────────────────────────────────
     public bool HotkeysEnabled { get; set; } = true;
@@ -60,10 +90,14 @@ public class AppSettings
 
     // ── Workspace display order ───────────────────────────────────────────
     /// <summary>
-    /// Workspace names in the user's preferred display order.
+    /// Stable workspace IDs in the user's preferred display order.
     /// The first three map to Ctrl+Alt+1/2/3 hotkeys.
     /// Workspaces not in this list are appended at the end (sorted by save date).
     /// </summary>
+    public List<string>? WorkspaceOrderIds { get; set; }
+
+    /// <summary>Legacy name-based display order, accepted only during v1 migration.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public List<string>? WorkspaceOrder { get; set; }
     // ── Monitor aliases ───────────────────────────────────────────────────
     /// <summary>

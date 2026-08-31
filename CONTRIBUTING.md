@@ -15,7 +15,8 @@ Thanks for your interest in contributing! WindowAnchor is a small, focused utili
 ```bash
 git clone https://github.com/marvintrvl/WindowAnchor
 cd WindowAnchor
-dotnet build src/WindowAnchor/WindowAnchor.csproj
+dotnet build WindowAnchor.sln
+dotnet test WindowAnchor.sln
 ```
 
 The app launches directly to the system tray — look for the anchor icon near the clock.
@@ -32,6 +33,9 @@ src/WindowAnchor/
 ├── Native/                       ← P/Invoke declarations (Windows API wrappers)
 ├── UI/                           ← WPF windows and dialogs
 └── Resources/                    ← Icons and static assets
+tests/WindowAnchor.Tests/
+├── Fixtures/                     ← Legacy, current, corrupt, and future JSON samples
+└── *.cs                          ← Service-layer characterization tests and fakes
 ```
 
 See [docs/architecture.md](docs/architecture.md) for a detailed walkthrough of each layer.
@@ -43,7 +47,7 @@ See [docs/architecture.md](docs/architecture.md) for a detailed walkthrough of e
 - **Target:** .NET 8, C# 12, WPF.
 - **Style:** Follow the existing file conventions — `var` for locals, expression-body for one-liners, align related assignments.
 - **XML docs:** Every `public` type and member must have a `<summary>`. Use `<param>`, `<returns>`, and `<remarks>` where helpful. See the [Microsoft documentation comment spec](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/documentation-comments) for reference.
-- **Logging:** Use `AppLogger.Info(...)` / `AppLogger.Warn(...)` — never `Console.WriteLine` or `Debug.WriteLine`.
+- **Logging:** Use the structured `AppLogger` overloads with a stable event ID, a non-sensitive message, and named `LogField` values. Tag paths, URLs, titles, workspace names, command lines, identifiers, and secrets with their matching sensitivity helper. Never log native-message payloads, browser page contents, OAuth tokens, cookies, or other credentials, and never use `Console.WriteLine` or `Debug.WriteLine`.
 - **Native calls:** All P/Invoke declarations go in `Native/NativeMethods.Window.cs` or `Native/NativeMethods.Display.cs`. Do not scatter `[DllImport]` through service code.
 - **UI thread:** `NotifyBalloon` and any direct WPF property writes must be dispatched via `Application.Current.Dispatcher`.
 - **No extra NuGet packages** without discussion — the dependency list is intentionally minimal.
@@ -54,9 +58,10 @@ See [docs/architecture.md](docs/architecture.md) for a detailed walkthrough of e
 
 1. **Fork** the repo and create a branch: `git checkout -b feat/my-feature`.
 2. **Write** your code following the guidelines above.
-3. **Test manually**: dock/undock a monitor, save a workspace with and without files, restore selectively.
-4. **Build clean**: `dotnet build` must produce 0 errors and 0 warnings before submitting.
-5. **Open a PR** with a short description of what changed and why.
+3. **Run automated tests**: `dotnet test WindowAnchor.sln` must pass.
+4. **Test manually**: dock/undock a monitor, save a workspace with and without files, restore selectively.
+5. **Build clean**: `dotnet build` must produce 0 errors and 0 warnings before submitting.
+6. **Open a PR** with a short description of what changed and why.
 
 ---
 
@@ -65,7 +70,7 @@ See [docs/architecture.md](docs/architecture.md) for a detailed walkthrough of e
 Please include:
 - Your Windows version (`winver`) and monitor count.
 - Steps to reproduce the problem.
-- The `app.log` file from `%AppData%\WindowAnchor\` (remove any sensitive paths before sharing).
+- A redacted diagnostic export. From PowerShell, run `./WindowAnchor.exe --export-diagnostics "$env:USERPROFILE\Desktop\WindowAnchor-diagnostics.jsonl"`. The default export removes sensitive fields; do not share the live `app.log` file.
 
 ---
 
@@ -79,4 +84,4 @@ High-value areas where contributions are especially welcome:
 | **Tier 2 file detection** | Improving Jump-List parsing coverage for more apps |
 | **Per-app restore overrides** | Letting users pin specific windows to specific monitors |
 | **Autostart on lock/unlock** | Triggering restore when the Windows session unlocks |
-| **Unit tests** | The services layer has no automated tests yet |
+| **Unit tests** | Extend service-layer characterization coverage for new matching and migration behavior |

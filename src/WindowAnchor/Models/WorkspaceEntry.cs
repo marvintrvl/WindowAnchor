@@ -1,3 +1,4 @@
+using System;
 using System.Text.Json.Serialization;
 
 namespace WindowAnchor.Models;
@@ -9,6 +10,13 @@ namespace WindowAnchor.Models;
 /// </summary>
 public class WorkspaceEntry
 {
+    /// <summary>
+    /// Stable identity for this saved entry. It is assigned once when the entry is captured or
+    /// migrated and remains unchanged while the workspace is renamed or rewritten.
+    /// </summary>
+    [JsonInclude]
+    public string EntryId { get; internal set; } = Guid.NewGuid().ToString("D");
+
     // ── App identity ─────────────────────────────────────────────────────────
     public string ExecutablePath  { get; set; } = "";
     public string ProcessName     { get; set; } = "";

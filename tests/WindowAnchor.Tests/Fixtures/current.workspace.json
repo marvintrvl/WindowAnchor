@@ -1,0 +1,198 @@
+{
+  "name": "Characterization Fixture",
+  "monitorFingerprint": "a1b2c3d4",
+  "savedAt": "2026-08-30T14:20:00Z",
+  "savedWithFiles": true,
+  "monitors": [
+    {
+      "monitorId": "1234:5678:0",
+      "friendlyName": "Primary 4K",
+      "deviceName": "\\\\.\\DISPLAY1",
+      "index": 0,
+      "widthPixels": 3840,
+      "heightPixels": 2160,
+      "isPrimary": true
+    },
+    {
+      "monitorId": "ABCD:EF01:1",
+      "friendlyName": "Portrait",
+      "deviceName": "\\\\.\\DISPLAY2",
+      "index": 1,
+      "widthPixels": 1440,
+      "heightPixels": 2560,
+      "isPrimary": false
+    }
+  ],
+  "entries": [
+    {
+      "executablePath": "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+      "processName": "brave",
+      "windowClassName": "Chrome_WidgetWin_1",
+      "appUserModelId": "Chrome._crx_abcdefghijklmnopabcdefghijklmnop",
+      "isWebApp": true,
+      "webAppName": "Market Terminal",
+      "webAppShortcutPath": "Z:\\missing\\Market Terminal.lnk",
+      "webAppLaunchTarget": "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+      "webAppLaunchArguments": "--profile-directory=Default --app-id=abcdefghijklmnopabcdefghijklmnop",
+      "fileSource": "WEB_APP_AUMID",
+      "position": {
+        "executablePath": "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+        "processName": "brave",
+        "className": "Chrome_WidgetWin_1",
+        "titleSnippet": "Market Terminal",
+        "appUserModelId": "Chrome._crx_abcdefghijklmnopabcdefghijklmnop",
+        "normalLeft": 0,
+        "normalTop": 0,
+        "normalRight": 1920,
+        "normalBottom": 1080,
+        "savedDpi": 144,
+        "monitorId": "1234:5678:0"
+      },
+      "monitorId": "1234:5678:0",
+      "monitorIndex": 0,
+      "monitorName": "Primary 4K"
+    },
+    {
+      "executablePath": "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+      "processName": "brave",
+      "windowClassName": "Chrome_WidgetWin_1",
+      "isDedicatedBrowserWindow": true,
+      "browserUrl": "https://charts.example.test/workspace",
+      "fileSource": "BROWSER_URL",
+      "position": {
+        "executablePath": "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+        "processName": "brave",
+        "className": "Chrome_WidgetWin_1",
+        "titleSnippet": "Charts",
+        "browserUrl": "https://charts.example.test/workspace",
+        "normalLeft": 1920,
+        "normalTop": 0,
+        "normalRight": 3840,
+        "normalBottom": 1080,
+        "savedDpi": 144,
+        "monitorId": "1234:5678:0"
+      },
+      "monitorId": "1234:5678:0",
+      "monitorIndex": 0,
+      "monitorName": "Primary 4K"
+    },
+    {
+      "executablePath": "C:\\Program Files\\WindowsApps\\TradingView.Desktop_2.9.0_x64__abc\\TradingView.exe",
+      "processName": "TradingView",
+      "windowClassName": "Chrome_WidgetWin_1",
+      "appUserModelId": "TradingView.Desktop_abc!App",
+      "fileSource": "NONE",
+      "position": {
+        "executablePath": "C:\\Program Files\\WindowsApps\\TradingView.Desktop_2.9.0_x64__abc\\TradingView.exe",
+        "processName": "TradingView",
+        "className": "Chrome_WidgetWin_1",
+        "titleSnippet": "BTCUSD 65000 / LTF Luis",
+        "appUserModelId": "TradingView.Desktop_abc!App",
+        "normalLeft": -1920,
+        "normalTop": 120,
+        "normalRight": -960,
+        "normalBottom": 1080,
+        "savedDpi": 96,
+        "monitorId": "ABCD:EF01:1"
+      },
+      "monitorId": "ABCD:EF01:1",
+      "monitorIndex": 1,
+      "monitorName": "Portrait"
+    },
+    {
+      "executablePath": "C:\\Program Files\\WindowsApps\\TradingView.Desktop_2.9.0_x64__abc\\TradingView.exe",
+      "processName": "TradingView",
+      "windowClassName": "Chrome_WidgetWin_1",
+      "appUserModelId": "TradingView.Desktop_abc!App",
+      "fileSource": "NONE",
+      "position": {
+        "executablePath": "C:\\Program Files\\WindowsApps\\TradingView.Desktop_2.9.0_x64__abc\\TradingView.exe",
+        "processName": "TradingView",
+        "className": "Chrome_WidgetWin_1",
+        "titleSnippet": "ETHUSD 3500 / Outlook",
+        "appUserModelId": "TradingView.Desktop_abc!App",
+        "normalLeft": -960,
+        "normalTop": 120,
+        "normalRight": 0,
+        "normalBottom": 1080,
+        "savedDpi": 96,
+        "monitorId": "ABCD:EF01:1"
+      },
+      "monitorId": "ABCD:EF01:1",
+      "monitorIndex": 1,
+      "monitorName": "Portrait"
+    },
+    {
+      "executablePath": "C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+      "processName": "WINWORD",
+      "windowClassName": "OpusApp",
+      "filePath": "C:\\Users\\fixture\\Documents\\Thesis.docx",
+      "fileConfidence": 90,
+      "fileSource": "JUMPLIST_EXACT",
+      "launchArg": "C:\\Users\\fixture\\Documents\\Thesis.docx",
+      "position": {
+        "executablePath": "C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+        "processName": "WINWORD",
+        "className": "OpusApp",
+        "titleSnippet": "Thesis - Word",
+        "normalLeft": 200,
+        "normalTop": 160,
+        "normalRight": 1500,
+        "normalBottom": 1000,
+        "savedDpi": 120,
+        "monitorId": "1234:5678:0"
+      },
+      "monitorId": "1234:5678:0",
+      "monitorIndex": 0,
+      "monitorName": "Primary 4K"
+    },
+    {
+      "executablePath": "C:\\Program Files\\WindowsApps\\Microsoft.WindowsNotepad_11.0_x64__8wekyb3d8bbwe\\Notepad.exe",
+      "processName": "Notepad",
+      "windowClassName": "Notepad",
+      "appUserModelId": "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App",
+      "fileSource": "NONE",
+      "position": {
+        "executablePath": "C:\\Program Files\\WindowsApps\\Microsoft.WindowsNotepad_11.0_x64__8wekyb3d8bbwe\\Notepad.exe",
+        "processName": "Notepad",
+        "className": "Notepad",
+        "titleSnippet": "Untitled - Notepad",
+        "appUserModelId": "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App",
+        "normalLeft": 300,
+        "normalTop": 200,
+        "normalRight": 1100,
+        "normalBottom": 800,
+        "savedDpi": 144,
+        "monitorId": "1234:5678:0"
+      },
+      "monitorId": "1234:5678:0",
+      "monitorIndex": 0,
+      "monitorName": "Primary 4K"
+    },
+    {
+      "executablePath": "C:\\Program Files\\Editor\\editor.exe",
+      "processName": "editor",
+      "windowClassName": "EditorWindow",
+      "filePath": "Z:\\missing\\gone.txt",
+      "fileConfidence": 85,
+      "fileSource": "FILE_SEARCH",
+      "launchArg": "Z:\\missing\\gone.txt",
+      "position": {
+        "executablePath": "C:\\Program Files\\Editor\\editor.exe",
+        "processName": "editor",
+        "className": "EditorWindow",
+        "titleSnippet": "gone.txt - Editor",
+        "normalLeft": 400,
+        "normalTop": 240,
+        "normalRight": 1200,
+        "normalBottom": 840,
+        "savedDpi": 96,
+        "monitorId": "1234:5678:0"
+      },
+      "monitorId": "1234:5678:0",
+      "monitorIndex": 0,
+      "monitorName": "Primary 4K"
+    }
+  ],
+  "browserSessions": []
+}

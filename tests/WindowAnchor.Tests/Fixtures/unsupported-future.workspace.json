@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 99,
+  "name": "Future Workspace",
+  "monitorFingerprint": "future99",
+  "savedAt": "2030-05-01T12:00:00Z",
+  "savedWithFiles": true,
+  "monitors": [],
+  "entries": [],
+  "browserSessions": [],
+  "futureRestorePolicy": {
+    "mode": "teleport",
+    "strict": true
+  }
+}

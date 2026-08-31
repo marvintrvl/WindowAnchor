@@ -58,7 +58,15 @@ public static class BrowserIntegrationService
                     UseShellExecute = false,
                 });
             }
-            catch (Exception ex) { AppLogger.Warn($"Could not open {browser.Name} extensions page: {ex.Message}"); }
+            catch (Exception ex)
+            {
+                AppLogger.Warn(
+                    "browser_integration.management_page_failed",
+                    "Could not open a browser extension-management page",
+                    ex,
+                    LogField.Public("browserName", browser.Name),
+                    LogField.Public("errorCategory", "browser_management_page"));
+            }
             return;
         }
     }
@@ -75,7 +83,15 @@ public static class BrowserIntegrationService
                 Registry.CurrentUser.DeleteSubKeyTree(browser.RegistryRoot + HostName, throwOnMissingSubKey: false);
                 removed++;
             }
-            catch (Exception ex) { AppLogger.Warn($"Could not remove {browser.Name} browser registration: {ex.Message}"); }
+            catch (Exception ex)
+            {
+                AppLogger.Warn(
+                    "browser_integration.registration_remove_failed",
+                    "Could not remove a browser native-host registration",
+                    ex,
+                    LogField.Public("browserName", browser.Name),
+                    LogField.Public("errorCategory", "browser_registration_remove"));
+            }
         }
         return removed;
     }

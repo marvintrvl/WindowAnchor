@@ -6,6 +6,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WindowAnchor", "src\WindowAnchor\WindowAnchor.csproj", "{C1D8C653-6562-400D-9D83-F565601591C9}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{8EB20DD9-1952-4751-83D9-2D50D167A918}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WindowAnchor.Tests", "tests\WindowAnchor.Tests\WindowAnchor.Tests.csproj", "{A6D604E9-4B7D-460D-9C1D-0C4E37D4C645}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -16,12 +20,17 @@ Global
 		{C1D8C653-6562-400D-9D83-F565601591C9}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C1D8C653-6562-400D-9D83-F565601591C9}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C1D8C653-6562-400D-9D83-F565601591C9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A6D604E9-4B7D-460D-9C1D-0C4E37D4C645}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A6D604E9-4B7D-460D-9C1D-0C4E37D4C645}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A6D604E9-4B7D-460D-9C1D-0C4E37D4C645}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A6D604E9-4B7D-460D-9C1D-0C4E37D4C645}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{C1D8C653-6562-400D-9D83-F565601591C9} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{A6D604E9-4B7D-460D-9C1D-0C4E37D4C645} = {8EB20DD9-1952-4751-83D9-2D50D167A918}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {8770115F-3D59-40D3-8CB3-90B84D0EFDD9}

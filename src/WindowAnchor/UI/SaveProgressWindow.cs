@@ -6,9 +6,9 @@ using WindowAnchor.Services;
 namespace WindowAnchor.UI;
 
 /// <summary>
-/// Non-modal progress window shown while <see cref="WorkspaceService.TakeSnapshot"/> runs on a
-/// background thread.  Open with <c>.Show()</c> before awaiting <c>Task.Run</c>; close with
-/// <c>.Close()</c> in the <c>finally</c> block when the task finishes.
+/// Non-modal progress window shown while <see cref="WorkspaceService.CaptureWorkspaceAsync"/>
+/// assembles a snapshot. Open with <c>.Show()</c> before awaiting capture; close with
+/// <c>.Close()</c> in the <c>finally</c> block when the operation finishes.
 /// Route progress updates through <c>new Progress&lt;SaveProgressReport&gt;(r =&gt; window.ApplyReport(r))</c>
 /// so that marshalling to the UI thread happens automatically.
 /// </summary>

@@ -283,8 +283,10 @@ public partial class SettingsWindow : FluentWindow
         int idx = 0;
         foreach (var ws in workspaces)
         {
-            DefaultWorkspaceCombo.Items.Add(new ComboBoxItem { Content = ws.Name, Tag = ws.Name });
-            if (ws.Name == _settingsService.Settings.DefaultWorkspaceName)
+            DefaultWorkspaceCombo.Items.Add(new ComboBoxItem { Content = ws.Name, Tag = ws.WorkspaceId });
+            if (ws.WorkspaceId.Equals(
+                    _settingsService.Settings.DefaultWorkspaceId,
+                    StringComparison.OrdinalIgnoreCase))
                 selectedIdx = idx;
             idx++;
         }
@@ -321,7 +323,7 @@ public partial class SettingsWindow : FluentWindow
         if (_suppressToggle) return;
         if (DefaultWorkspaceCombo.SelectedItem is ComboBoxItem item)
         {
-            _settingsService.Settings.DefaultWorkspaceName = item.Tag as string;
+            _settingsService.Settings.DefaultWorkspaceId = item.Tag as string;
             _settingsService.Save();
         }
     }
@@ -563,7 +565,7 @@ public partial class SettingsWindow : FluentWindow
     {
         var all = _workspaceService.GetAllWorkspaces();
         var ordered = GetOrderedWorkspaces(all);
-        string? defaultName = _settingsService.Settings.DefaultWorkspaceName;
+        string? defaultId = _settingsService.Settings.DefaultWorkspaceId;
 
         var wsRows = new List<WorkspaceRow>();
         for (int i = 0; i < ordered.Count; i++)
@@ -573,8 +575,8 @@ public partial class SettingsWindow : FluentWindow
             {
                 Source    = ws,
                 Position  = i + 1,
-                IsDefault = !string.IsNullOrEmpty(defaultName)
-                    && ws.Name.Equals(defaultName, StringComparison.OrdinalIgnoreCase),
+                IsDefault = !string.IsNullOrEmpty(defaultId)
+                    && ws.WorkspaceId.Equals(defaultId, StringComparison.OrdinalIgnoreCase),
             });
         }
 
@@ -659,35 +661,45 @@ public partial class SettingsWindow : FluentWindow
             }
             catch (Exception ex)
             {
-                AppLogger.Warn($"Failed to delete workspace '{row.Name}': {ex.Message}");
+                AppLogger.Warn(
+                    "workspace.delete_failed",
+                    "Could not delete a workspace",
+                    ex,
+                    LogField.Identifier("workspaceId", row.Source.WorkspaceId),
+                    LogField.Workspace("workspaceName", row.Name),
+                    LogField.Public("errorCategory", "workspace_delete"));
             }
         }
 
-        AppLogger.Info($"Deleted {selected.Count} workspace(s) via bulk selection");
+        AppLogger.Info(
+            "workspace.bulk_delete_completed",
+            "Completed a bulk workspace deletion",
+            LogField.Public("workspaceCount", selected.Count));
         Refresh();
     }
 
     /// <summary>
     /// Returns workspaces in the user's preferred order.
-    /// Names in <see cref="AppSettings.WorkspaceOrder"/> come first (in order),
+    /// IDs in <see cref="AppSettings.WorkspaceOrderIds"/> come first (in order),
     /// followed by any remaining workspaces sorted by save date.
     /// </summary>
     private List<WorkspaceSnapshot> GetOrderedWorkspaces(List<WorkspaceSnapshot> all)
     {
-        var order = _settingsService.Settings.WorkspaceOrder;
+        var order = _settingsService.Settings.WorkspaceOrderIds;
         if (order == null || order.Count == 0)
             return all.OrderByDescending(w => w.SavedAt).ToList();
 
         var result = new List<WorkspaceSnapshot>();
-        foreach (var name in order)
+        foreach (var workspaceId in order)
         {
-            var ws = all.FirstOrDefault(w => w.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            var ws = all.FirstOrDefault(w =>
+                w.WorkspaceId.Equals(workspaceId, StringComparison.OrdinalIgnoreCase));
             if (ws != null) result.Add(ws);
         }
         // Append workspaces not listed in the order
         foreach (var ws in all.OrderByDescending(w => w.SavedAt))
         {
-            if (!result.Any(r => r.Name.Equals(ws.Name, StringComparison.OrdinalIgnoreCase)))
+            if (!result.Any(r => r.WorkspaceId.Equals(ws.WorkspaceId, StringComparison.OrdinalIgnoreCase)))
                 result.Add(ws);
         }
         return result;
@@ -697,7 +709,7 @@ public partial class SettingsWindow : FluentWindow
     private void PersistWorkspaceOrder()
     {
         if (WorkspacesList.ItemsSource is not List<WorkspaceRow> rows) return;
-        _settingsService.Settings.WorkspaceOrder = rows.Select(r => r.Name).ToList();
+        _settingsService.Settings.WorkspaceOrderIds = rows.Select(r => r.Source.WorkspaceId).ToList();
         _settingsService.Save();
     }
 
@@ -740,13 +752,25 @@ public partial class SettingsWindow : FluentWindow
         IsEnabled = false;
         try
         {
-            await Task.Run(() => _workspaceService.TakeSnapshot(name, saveFiles,
-                selectedWindows: selectedWindows, progress: progress));
+            WorkspaceCaptureResult capture = await _workspaceService.CaptureWorkspaceAsync(
+                name,
+                saveFiles,
+                selectedWindows: selectedWindows,
+                progress: progress);
+            _workspaceService.PersistCapture(
+                capture,
+                WorkspaceArtifactKind.NamedWorkspace,
+                IncompleteBrowserCapturePolicy.SavePartialWorkspace);
             Refresh();
         }
         catch (Exception ex)
         {
-            AppLogger.Error("OnSaveNewWorkspace: TakeSnapshot failed", ex);
+            AppLogger.Error(
+                "workspace.save_failed",
+                "Workspace capture or persistence failed",
+                ex,
+                LogField.Workspace("workspaceName", name),
+                LogField.Public("errorCategory", "workspace_save"));
             System.Windows.MessageBox.Show(
                 $"Failed to save workspace: {ex.Message}",
                 "WindowAnchor",
@@ -821,7 +845,7 @@ public partial class SettingsWindow : FluentWindow
             clearDefault.Icon = new Wpf.Ui.Controls.SymbolIcon { Symbol = Wpf.Ui.Controls.SymbolRegular.StarOff24 };
             clearDefault.Click += (_, _) =>
             {
-                _settingsService.Settings.DefaultWorkspaceName = null;
+                _settingsService.Settings.DefaultWorkspaceId = null;
                 _settingsService.Save();
                 Refresh();
             };
@@ -833,7 +857,7 @@ public partial class SettingsWindow : FluentWindow
             setDefault.Icon = new Wpf.Ui.Controls.SymbolIcon { Symbol = Wpf.Ui.Controls.SymbolRegular.Star24 };
             setDefault.Click += (_, _) =>
             {
-                _settingsService.Settings.DefaultWorkspaceName = row.Name;
+                _settingsService.Settings.DefaultWorkspaceId = row.Source.WorkspaceId;
                 _settingsService.Save();
                 Refresh();
             };

@@ -79,7 +79,11 @@ public static class NativeMessagingHost
             }
             catch (Exception ex)
             {
-                AppLogger.Debug($"Native messaging pipe request failed: {ex.Message}");
+                AppLogger.Debug(
+                    "native_messaging.pipe_request_failed",
+                    "A native-messaging pipe request failed",
+                    ex,
+                    LogField.Public("errorCategory", "native_messaging_pipe"));
             }
         }
     }

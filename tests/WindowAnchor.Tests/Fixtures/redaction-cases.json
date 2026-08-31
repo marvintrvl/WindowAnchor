@@ -1,0 +1,37 @@
+[
+  {
+    "category": "Path",
+    "input": "C:\\Users\\alice\\Documents\\Taxes 2026.xlsx",
+    "expected": "<path:redacted.xlsx>"
+  },
+  {
+    "category": "Url",
+    "input": "https://alice:password@example.test/private/report?access_token=abc123#section",
+    "expected": "https://example.test/<redacted>"
+  },
+  {
+    "category": "Title",
+    "input": "Q3 Acquisition - Confidential",
+    "expected": "<title:redacted>"
+  },
+  {
+    "category": "WorkspaceName",
+    "input": "Client Merger War Room",
+    "expected": "<workspace:redacted>"
+  },
+  {
+    "category": "CommandLine",
+    "input": "browser.exe --profile Default --token \"super-secret\" --password=hunter2",
+    "expected": "browser.exe --profile Default --token <redacted> --password=<redacted>"
+  },
+  {
+    "category": "Secret",
+    "input": "must-never-appear",
+    "expected": "<redacted>"
+  },
+  {
+    "category": "Exception",
+    "input": "Failed to open /Users/alice/Documents/private.txt",
+    "expected": "Failed to open <path:redacted.txt>"
+  }
+]

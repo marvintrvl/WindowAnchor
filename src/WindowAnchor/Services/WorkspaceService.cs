@@ -9,7 +9,7 @@ using WindowAnchor.Models;
 
 namespace WindowAnchor.Services;
 
-/// <summary>Progress update emitted by <see cref="WorkspaceService.TakeSnapshot"/> for each window processed.</summary>
+/// <summary>Progress update emitted while a workspace snapshot is assembled.</summary>
 /// <param name="Current">1-based index of the window currently being processed (0 = pre-loop setup).</param>
 /// <param name="Total">Total number of windows to process.</param>
 /// <param name="AppName">Process name of the window being processed (or a stage description).</param>
@@ -27,27 +27,53 @@ public record struct SaveProgressReport(int Current, int Total, string AppName, 
 /// </remarks>
 public class WorkspaceService
 {
-    private readonly StorageService   _storageService;
-    private readonly WindowService    _windowService;
-    private readonly MonitorService   _monitorService;
-    private readonly JumpListService  _jumpListService;
-    private readonly WebAppService    _webAppService;
-    private readonly BrowserSessionBridge? _browserSessionBridge;
+    private readonly StorageService    _storageService;
+    private readonly IWindowInventory  _windowInventory;
+    private readonly IWindowMutation   _windowMutation;
+    private readonly IMonitorInventory _monitorInventory;
+    private readonly JumpListService   _jumpListService;
+    private readonly WebAppService     _webAppService;
+    private readonly IBrowserSessionConnector? _browserSessionConnector;
 
+    /// <summary>Creates the production workspace service using the native window service.</summary>
     public WorkspaceService(
         StorageService  storageService,
         WindowService   windowService,
         MonitorService  monitorService,
         JumpListService jumpListService,
         WebAppService?   webAppService = null,
-        BrowserSessionBridge? browserSessionBridge = null)
+        IBrowserSessionConnector? browserSessionConnector = null)
+        : this(
+            storageService,
+            windowService,
+            windowService,
+            monitorService,
+            jumpListService,
+            webAppService,
+            browserSessionConnector)
     {
-        _storageService  = storageService;
-        _windowService   = windowService;
-        _monitorService  = monitorService;
-        _jumpListService = jumpListService;
-        _webAppService   = webAppService ?? new WebAppService();
-        _browserSessionBridge = browserSessionBridge;
+    }
+
+    /// <summary>
+    /// Creates a workspace service with explicit inventory and mutation boundaries.
+    /// This overload supports deterministic service-layer tests without native HWNDs.
+    /// </summary>
+    public WorkspaceService(
+        StorageService     storageService,
+        IWindowInventory   windowInventory,
+        IWindowMutation    windowMutation,
+        IMonitorInventory  monitorInventory,
+        JumpListService    jumpListService,
+        WebAppService?     webAppService = null,
+        IBrowserSessionConnector? browserSessionConnector = null)
+    {
+        _storageService   = storageService;
+        _windowInventory  = windowInventory;
+        _windowMutation   = windowMutation;
+        _monitorInventory = monitorInventory;
+        _jumpListService  = jumpListService;
+        _webAppService    = webAppService ?? new WebAppService();
+        _browserSessionConnector = browserSessionConnector;
     }
 
     // ── Storage proxies ────────────────────────────────────────────
@@ -69,7 +95,7 @@ public class WorkspaceService
             .FirstOrDefault();
 
     /// <summary>Returns the current monitor fingerprint (hash of the connected display configuration).</summary>
-    public string GetCurrentMonitorFingerprint() => _monitorService.GetCurrentMonitorFingerprint();
+    public string GetCurrentMonitorFingerprint() => _monitorInventory.GetCurrentMonitorFingerprint();
 
     /// <summary>
     /// Enumerates the current monitors and counts live windows per monitor.
@@ -77,8 +103,10 @@ public class WorkspaceService
     /// </summary>
     public List<(MonitorInfo Monitor, int WindowCount)> GetMonitorDataForDialog()
     {
-        var monitors = _monitorService.GetCurrentMonitors();
-        var windows  = _windowService.SnapshotAllWindows(monitors);
+        var monitors = _monitorInventory.GetCurrentMonitors();
+        var windows  = _windowInventory.SnapshotWindows(
+            WindowCandidatePolicy.CaptureCandidate,
+            monitors);
         return monitors
             .Select(m => (m, windows.Count(w => w.MonitorId == m.MonitorId)))
             .ToList();
@@ -90,8 +118,10 @@ public class WorkspaceService
     /// </summary>
     public List<(MonitorInfo Monitor, List<WindowRecord> Windows)> GetWindowPreviewForDialog()
     {
-        var monitors = _monitorService.GetCurrentMonitors();
-        var windows  = _windowService.SnapshotAllWindows(monitors)
+        var monitors = _monitorInventory.GetCurrentMonitors();
+        var windows  = _windowInventory.SnapshotWindows(
+                WindowCandidatePolicy.CaptureCandidate,
+                monitors)
             .Where(w => !w.ProcessName.Equals("WindowAnchor", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
@@ -106,7 +136,124 @@ public class WorkspaceService
             .ToList();
     }
 
-    // ── Snapshot ─────────────────────────────────────────────────────────────
+    // ── Capture ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Assembles window and optional browser data into one complete result without writing it.
+    /// Call <see cref="PersistCapture"/> once after applying an explicit partial-capture policy.
+    /// </summary>
+    public async Task<WorkspaceCaptureResult> CaptureWorkspaceAsync(
+        string name,
+        bool saveFiles = true,
+        HashSet<string>? monitorIds = null,
+        IProgress<SaveProgressReport>? progress = null,
+        List<WindowRecord>? selectedWindows = null,
+        bool captureBrowserSessions = true,
+        CancellationToken cancellationToken = default)
+    {
+        WorkspaceSnapshot snapshot = await Task.Run(
+            () => TakeSnapshot(name, saveFiles, monitorIds, progress, selectedWindows),
+            cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        BrowserCaptureResult browserCapture;
+        if (!captureBrowserSessions)
+        {
+            browserCapture = BrowserCaptureResult.Empty(
+                BrowserCaptureStatus.Skipped,
+                "Browser capture was disabled by the caller.");
+        }
+        else
+        {
+            List<string> browserTitles = snapshot.Entries
+                .Where(entry => IsBrowserProcess(entry.ProcessName))
+                .Select(entry => entry.Position.TitleSnippet)
+                .Where(title => !string.IsNullOrWhiteSpace(title))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (browserTitles.Count == 0)
+            {
+                browserCapture = BrowserCaptureResult.Empty(
+                    BrowserCaptureStatus.Skipped,
+                    "No selected browser windows required session capture.");
+            }
+            else if (_browserSessionConnector == null)
+            {
+                browserCapture = BrowserCaptureResult.Empty(
+                    BrowserCaptureStatus.Unavailable,
+                    "No browser session connector is configured.");
+            }
+            else
+            {
+                try
+                {
+                    browserCapture = await _browserSessionConnector.CaptureAsync(
+                        name,
+                        browserTitles,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn(
+                        "workspace.browser_capture_failed",
+                        "Browser session capture failed",
+                        ex,
+                        LogField.Workspace("workspaceName", name),
+                        LogField.Public("errorCategory", "browser_capture"));
+                    browserCapture = BrowserCaptureResult.Empty(
+                        BrowserCaptureStatus.Failed,
+                        ex.Message);
+                }
+            }
+        }
+
+        snapshot.BrowserSessions = browserCapture.Sessions.ToList();
+        return new WorkspaceCaptureResult(snapshot, browserCapture);
+    }
+
+    /// <summary>Persists one already-complete capture into the requested typed repository.</summary>
+    public void PersistCapture(
+        WorkspaceCaptureResult capture,
+        WorkspaceArtifactKind destination,
+        IncompleteBrowserCapturePolicy incompleteBrowserPolicy)
+    {
+        ArgumentNullException.ThrowIfNull(capture);
+        if (!capture.BrowserCapture.IsComplete &&
+            incompleteBrowserPolicy == IncompleteBrowserCapturePolicy.RequireCompleteBrowserCapture)
+        {
+            throw new InvalidOperationException(
+                $"Browser capture did not complete ({capture.BrowserCapture.Status}); persistence was not allowed by policy.");
+        }
+
+        switch (destination)
+        {
+            case WorkspaceArtifactKind.NamedWorkspace:
+                _storageService.NamedWorkspaces.Save(capture.Snapshot);
+                break;
+            case WorkspaceArtifactKind.Checkpoint:
+                _storageService.Checkpoints.Save(capture.Snapshot);
+                break;
+            case WorkspaceArtifactKind.TemporaryCapture:
+                _storageService.TemporaryCaptures.Save(capture.Snapshot);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(destination), destination, null);
+        }
+
+        AppLogger.Info(
+            "workspace.capture_persisted",
+            "Persisted a workspace capture",
+            LogField.Workspace("workspaceName", capture.Snapshot.Name),
+            LogField.Public("artifactKind", destination),
+            LogField.Public("browserCaptureStatus", capture.BrowserCapture.Status));
+    }
+
+    // ── Side-effect-free snapshot construction ───────────────────────────────
 
     /// <summary>
     /// Captures visible windows and builds a <see cref="WorkspaceSnapshot"/>.
@@ -132,10 +279,10 @@ public class WorkspaceService
         IProgress<SaveProgressReport>? progress = null,
         List<WindowRecord>? selectedWindows = null)
     {
-        string fingerprint = _monitorService.GetCurrentMonitorFingerprint();
+        string fingerprint = _monitorInventory.GetCurrentMonitorFingerprint();
 
         // Enumerate monitors first so every WindowRecord is tagged with monitor info
-        var allMonitors = _monitorService.GetCurrentMonitors();
+        var allMonitors = _monitorInventory.GetCurrentMonitors();
 
         List<WindowRecord> windows;
 
@@ -168,7 +315,7 @@ public class WorkspaceService
                 if (saveFiles) _jumpListService.ClearSnapshotCache();
             }
 
-            progress?.Report(new SaveProgressReport(windows.Count, windows.Count, "Saving workspace file\u2026", ""));
+            progress?.Report(new SaveProgressReport(windows.Count, windows.Count, "Assembling workspace snapshot\u2026", ""));
 
             var selSnapshot = new WorkspaceSnapshot
             {
@@ -180,8 +327,13 @@ public class WorkspaceService
                 Entries            = selEntries,
             };
 
-            _storageService.SaveWorkspace(selSnapshot);
-            AppLogger.Info($"TakeSnapshot saved '{name}' — {selEntries.Count} entries (selective), saveFiles={saveFiles}");
+            AppLogger.Info(
+                "workspace.snapshot_built",
+                "Built a selective workspace snapshot",
+                LogField.Workspace("workspaceName", name),
+                LogField.Public("entryCount", selEntries.Count),
+                LogField.Public("saveFiles", saveFiles),
+                LogField.Public("captureMode", "selective"));
             return selSnapshot;
         }
 
@@ -192,7 +344,9 @@ public class WorkspaceService
             ? allMonitors
             : allMonitors.Where(m => monitorIds.Contains(m.MonitorId)).ToList();
 
-        windows = _windowService.SnapshotAllWindows(allMonitors);
+        windows = _windowInventory.SnapshotWindows(
+            WindowCandidatePolicy.CaptureCandidate,
+            allMonitors);
 
         // Filter windows to only include those on the selected monitors
         var selectedMonitorIdSet = new HashSet<string>(monitorsToSave.Select(m => m.MonitorId));
@@ -269,7 +423,12 @@ public class WorkspaceService
 
             if (saveFiles)
             {
-                AppLogger.Debug($"[FileDetect] ── {w.ProcessName} | title: \"{w.TitleSnippet}\" | exe: {w.ExecutablePath}");
+                AppLogger.Debug(
+                    "file_detection.started",
+                    "Started file detection for a window",
+                    LogField.Public("processName", w.ProcessName),
+                    LogField.Title("windowTitle", w.TitleSnippet),
+                    LogField.Path("executablePath", w.ExecutablePath));
 
                 // ── Tier 1: parse file path from window title ──────────────
                 var (titlePath, titleConf) = TitleParser.ExtractFilePath(w.ProcessName, w.TitleSnippet);
@@ -278,9 +437,15 @@ public class WorkspaceService
                 source     = titleConf > 0 ? "TITLE_PARSE" : "NONE";
 
                 if (titleConf > 0)
-                    AppLogger.Debug($"[FileDetect]   T1 TITLE_PARSE  conf={titleConf}  path=\"{titlePath}\"");
+                    AppLogger.Debug(
+                        "file_detection.title_match",
+                        "Matched a file from the window title",
+                        LogField.Public("confidence", titleConf),
+                        LogField.Path("filePath", titlePath));
                 else
-                    AppLogger.Debug($"[FileDetect]   T1 no match (process not in TitleParser or title format mismatch)");
+                    AppLogger.Debug(
+                        "file_detection.title_no_match",
+                        "Window title did not produce a file match");
 
                 // ── Tier 1.5: exact jump-list filename match for bare T1 names ──
                 // When T1 extracted only a bare filename (conf=40, no directory separator),
@@ -292,7 +457,10 @@ public class WorkspaceService
                     try
                     {
                         var jlPool = _jumpListService.GetRecentFilesForApp(w.ExecutablePath, maxFiles: 50);
-                        AppLogger.Debug($"[FileDetect]   T1.5 exact-filename search in pool of {jlPool.Count}");
+                        AppLogger.Debug(
+                            "file_detection.jump_list_exact_started",
+                            "Searching the jump list for an exact filename",
+                            LogField.Public("candidateCount", jlPool.Count));
                         string? exact = jlPool.FirstOrDefault(p =>
                             Path.GetFileName(p).Equals(filePath, StringComparison.OrdinalIgnoreCase));
                         if (exact != null)
@@ -300,14 +468,26 @@ public class WorkspaceService
                             filePath   = exact;
                             confidence = 90;
                             source     = "JUMPLIST_EXACT";
-                            AppLogger.Debug($"[FileDetect]   T1.5 JUMPLIST_EXACT: \"{exact}\"");
+                            AppLogger.Debug(
+                                "file_detection.jump_list_exact_match",
+                                "Matched an exact filename in the jump list",
+                                LogField.Path("filePath", exact));
                         }
                         else
                         {
-                            AppLogger.Debug($"[FileDetect]   T1.5 no exact match found");
+                            AppLogger.Debug(
+                                "file_detection.jump_list_exact_no_match",
+                                "No exact filename match was found in the jump list");
                         }
                     }
-                    catch (Exception ex) { AppLogger.Warn($"[FileDetect]   T1.5 exception: {ex.Message}"); }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Warn(
+                            "file_detection.jump_list_exact_failed",
+                            "Exact jump-list matching failed",
+                            ex,
+                            LogField.Public("errorCategory", "jump_list_exact"));
+                    }
                 }
 
                 // ── Tier 2: jump-list lookup ───────────────────────────────
@@ -316,9 +496,15 @@ public class WorkspaceService
                     try
                     {
                         var jlFiles = _jumpListService.GetRecentFilesForApp(w.ExecutablePath, maxFiles: 30);
-                        AppLogger.Debug($"[FileDetect]   T2 jump-list returned {jlFiles.Count} candidate(s)");
+                        AppLogger.Debug(
+                            "file_detection.jump_list_loaded",
+                            "Loaded jump-list candidates",
+                            LogField.Public("candidateCount", jlFiles.Count));
                         foreach (var jf in jlFiles)
-                            AppLogger.Debug($"[FileDetect]      JL candidate: \"{jf}\"");
+                            AppLogger.Debug(
+                                "file_detection.jump_list_candidate",
+                                "Found a jump-list candidate",
+                                LogField.Path("filePath", jf));
 
                         if (jlFiles.Count > 0)
                         {
@@ -345,46 +531,85 @@ public class WorkspaceService
                                 filePath   = jlBest;
                                 confidence = 80;
                                 source     = "JUMPLIST";
-                                AppLogger.Debug($"[FileDetect]   T2 JUMPLIST match: \"{jlBest}\"");
+                                AppLogger.Debug(
+                                    "file_detection.jump_list_match",
+                                    "Matched a jump-list candidate",
+                                    LogField.Path("filePath", jlBest));
                             }
                             else
                             {
                                 // Log why none matched: show what the title contains vs what candidates had
-                                AppLogger.Debug($"[FileDetect]   T2 no JL candidate matched title \"{w.TitleSnippet}\"");
+                                AppLogger.Debug(
+                                    "file_detection.jump_list_no_match",
+                                    "No jump-list candidate matched the window title",
+                                    LogField.Title("windowTitle", w.TitleSnippet));
                                 foreach (var jf in jlFiles)
-                                    AppLogger.Debug($"[FileDetect]      no-match detail: stem=\"{Path.GetFileNameWithoutExtension(jf)}\"  titleContains={titleLower.Contains(Path.GetFileNameWithoutExtension(jf).ToLowerInvariant())}");
+                                    AppLogger.Debug(
+                                        "file_detection.jump_list_no_match_detail",
+                                        "Recorded jump-list comparison detail",
+                                        LogField.Title("candidateStem", Path.GetFileNameWithoutExtension(jf)),
+                                        LogField.Public("titleContainsCandidate", titleLower.Contains(Path.GetFileNameWithoutExtension(jf).ToLowerInvariant())));
                             }
                         }
                         else
                         {
-                            AppLogger.Debug($"[FileDetect]   T2 jump-list empty for this exe");
+                            AppLogger.Debug(
+                                "file_detection.jump_list_empty",
+                                "No jump-list candidates were available");
                         }
                     }
-                    catch (Exception ex) { AppLogger.Warn($"[FileDetect]   T2 exception: {ex.Message}"); }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Warn(
+                            "file_detection.jump_list_failed",
+                            "Jump-list file detection failed",
+                            ex,
+                            LogField.Public("errorCategory", "jump_list"));
+                    }
                 }
 
                 // ── Tier 3: search common user folders for bare filename ───
                 if (confidence < 80 && !string.IsNullOrEmpty(filePath) && !Path.IsPathRooted(filePath))
                 {
-                    AppLogger.Debug($"[FileDetect]   T3 searching common folders for bare name \"{filePath}\"");
+                    AppLogger.Debug(
+                        "file_detection.folder_search_started",
+                        "Searching common folders for a filename",
+                        LogField.Path("fileName", filePath));
                     try
                     {
                         string? found = SearchFileInCommonLocations(filePath);
                         if (found != null)
                         {
                             filePath = found; confidence = 85; source = "FILE_SEARCH";
-                            AppLogger.Debug($"[FileDetect]   T3 FILE_SEARCH found: \"{found}\"");
+                            AppLogger.Debug(
+                                "file_detection.folder_search_match",
+                                "Found a matching file in a common folder",
+                                LogField.Path("filePath", found));
                         }
                         else
                         {
-                            AppLogger.Debug($"[FileDetect]   T3 not found (zero or ambiguous matches)");
+                            AppLogger.Debug(
+                                "file_detection.folder_search_no_match",
+                                "Common-folder search found zero or ambiguous matches");
                         }
                     }
-                    catch (Exception ex) { AppLogger.Warn($"[FileDetect]   T3 exception: {ex.Message}"); }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Warn(
+                            "file_detection.folder_search_failed",
+                            "Common-folder file detection failed",
+                            ex,
+                            LogField.Public("errorCategory", "folder_search"));
+                    }
                 }
 
                 launchArg = confidence >= 80 ? filePath : null;
-                AppLogger.Debug($"[FileDetect]   RESULT  source={source}  conf={confidence}  launchArg=\"{launchArg ?? "(null)"}\"");
+                AppLogger.Debug(
+                    "file_detection.completed",
+                    "Completed file detection for a window",
+                    LogField.Public("source", source),
+                    LogField.Public("confidence", confidence),
+                    LogField.Path("launchArgument", launchArg));
 
                 // VS Code / Cursor (Electron-based editors): launch arg must be a folder or
                 // a .code-workspace file, never a bare source file.
@@ -429,7 +654,7 @@ public class WorkspaceService
                 _jumpListService.ClearSnapshotCache();
         }
 
-        progress?.Report(new SaveProgressReport(windows.Count, windows.Count, "Saving workspace file\u2026", ""));
+        progress?.Report(new SaveProgressReport(windows.Count, windows.Count, "Assembling workspace snapshot\u2026", ""));
 
         var snapshot = new WorkspaceSnapshot
         {
@@ -441,8 +666,14 @@ public class WorkspaceService
             Entries            = entries,
         };
 
-        _storageService.SaveWorkspace(snapshot);
-        AppLogger.Info($"TakeSnapshot saved '{name}' — {entries.Count} entries across {monitorsToSave.Count} monitor(s), saveFiles={saveFiles}");
+        AppLogger.Info(
+            "workspace.snapshot_built",
+            "Built a workspace snapshot",
+            LogField.Workspace("workspaceName", name),
+            LogField.Public("entryCount", entries.Count),
+            LogField.Public("monitorCount", monitorsToSave.Count),
+            LogField.Public("saveFiles", saveFiles),
+            LogField.Public("captureMode", "all_windows"));
         return snapshot;
     }
 
@@ -494,11 +725,20 @@ public class WorkspaceService
             args         = $"--app-id={appId}";
             name         = w.TitleSnippet;
             source       = "WEB_APP_AUMID";
-            AppLogger.Warn($"[WebApp] no shortcut found for AUMID '{w.AppUserModelId}' — " +
-                           $"falling back to \"{target}\" {args}");
+            AppLogger.Warn(
+                "web_app.shortcut_not_found",
+                "No web-app shortcut was found; using an AUMID-derived launch command",
+                LogField.Identifier("appUserModelId", w.AppUserModelId),
+                LogField.Path("launchTarget", target),
+                LogField.CommandLine("launchArguments", args));
         }
 
-        AppLogger.Info($"[WebApp] '{name}' detected (AUMID={w.AppUserModelId}, source={source})");
+        AppLogger.Info(
+            "web_app.detected",
+            "Detected an installed browser web app",
+            LogField.Title("webAppName", name),
+            LogField.Identifier("appUserModelId", w.AppUserModelId),
+            LogField.Public("source", source));
 
         return new WorkspaceEntry
         {
@@ -535,7 +775,11 @@ public class WorkspaceService
     {
         if (string.IsNullOrEmpty(w.BrowserUrl)) return null;
 
-        AppLogger.Info($"[BrowserUrl] '{w.BrowserUrl}' saved as a dedicated {w.ProcessName} window");
+        AppLogger.Info(
+            "browser_url.dedicated_window_captured",
+            "Captured a dedicated browser window",
+            LogField.Url("url", w.BrowserUrl),
+            LogField.Public("processName", w.ProcessName));
 
         return new WorkspaceEntry
         {
@@ -602,7 +846,12 @@ public class WorkspaceService
 
         if (saveFiles)
         {
-            AppLogger.Debug($"[FileDetect] ── {w.ProcessName} | title: \"{w.TitleSnippet}\" | exe: {w.ExecutablePath}");
+            AppLogger.Debug(
+                "file_detection.started",
+                "Started file detection for a window",
+                LogField.Public("processName", w.ProcessName),
+                LogField.Title("windowTitle", w.TitleSnippet),
+                LogField.Path("executablePath", w.ExecutablePath));
 
             var (titlePath, titleConf) = TitleParser.ExtractFilePath(w.ProcessName, w.TitleSnippet);
             filePath   = titlePath;
@@ -610,9 +859,15 @@ public class WorkspaceService
             source     = titleConf > 0 ? "TITLE_PARSE" : "NONE";
 
             if (titleConf > 0)
-                AppLogger.Debug($"[FileDetect]   T1 TITLE_PARSE  conf={titleConf}  path=\"{titlePath}\"");
+                AppLogger.Debug(
+                    "file_detection.title_match",
+                    "Matched a file from the window title",
+                    LogField.Public("confidence", titleConf),
+                    LogField.Path("filePath", titlePath));
             else
-                AppLogger.Debug($"[FileDetect]   T1 no match");
+                AppLogger.Debug(
+                    "file_detection.title_no_match",
+                    "Window title did not produce a file match");
 
             // Tier 1.5
             if (confidence == 40 && !string.IsNullOrEmpty(filePath) && !Path.IsPathRooted(filePath))
@@ -629,7 +884,14 @@ public class WorkspaceService
                         source     = "JUMPLIST_EXACT";
                     }
                 }
-                catch (Exception ex) { AppLogger.Warn($"[FileDetect]   T1.5 exception: {ex.Message}"); }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn(
+                        "file_detection.jump_list_exact_failed",
+                        "Exact jump-list matching failed",
+                        ex,
+                        LogField.Public("errorCategory", "jump_list_exact"));
+                }
             }
 
             // Tier 2
@@ -661,7 +923,14 @@ public class WorkspaceService
                         }
                     }
                 }
-                catch (Exception ex) { AppLogger.Warn($"[FileDetect]   T2 exception: {ex.Message}"); }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn(
+                        "file_detection.jump_list_failed",
+                        "Jump-list file detection failed",
+                        ex,
+                        LogField.Public("errorCategory", "jump_list"));
+                }
             }
 
             // Tier 3
@@ -675,7 +944,14 @@ public class WorkspaceService
                         filePath = found; confidence = 85; source = "FILE_SEARCH";
                     }
                 }
-                catch (Exception ex) { AppLogger.Warn($"[FileDetect]   T3 exception: {ex.Message}"); }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn(
+                        "file_detection.folder_search_failed",
+                        "Common-folder file detection failed",
+                        ex,
+                        LogField.Public("errorCategory", "folder_search"));
+                }
             }
 
             launchArg = confidence >= 80 ? filePath : null;
@@ -690,7 +966,12 @@ public class WorkspaceService
                     launchArg = Path.GetDirectoryName(launchArg);
             }
 
-            AppLogger.Debug($"[FileDetect]   RESULT  source={source}  conf={confidence}  launchArg=\"{launchArg ?? "(null)"}\"");
+            AppLogger.Debug(
+                "file_detection.completed",
+                "Completed file detection for a window",
+                LogField.Public("source", source),
+                LogField.Public("confidence", confidence),
+                LogField.Path("launchArgument", launchArg));
         }
 
         return new WorkspaceEntry
@@ -727,6 +1008,8 @@ public class WorkspaceService
 
         var filtered = new WorkspaceSnapshot
         {
+            SchemaVersion      = snapshot.SchemaVersion,
+            WorkspaceId       = snapshot.WorkspaceId,
             Name               = snapshot.Name,
             SavedAt            = snapshot.SavedAt,
             MonitorFingerprint = snapshot.MonitorFingerprint,
@@ -750,8 +1033,10 @@ public class WorkspaceService
     ///   <item>2-second wait + second pass for slow launchers (Office, IDEs).</item>
     /// </list>
     /// </summary>
-    public Task RestoreWorkspaceAsync(WorkspaceSnapshot snapshot, CancellationToken ct = default)
-        => RestoreCoreAsync(snapshot, minimizeOthers: false, ct);
+    public async Task RestoreWorkspaceAsync(WorkspaceSnapshot snapshot, CancellationToken ct = default)
+    {
+        _ = await RestoreCoreAsync(snapshot, minimizeOthers: false, ct);
+    }
 
     /// <summary>
     /// Same as <see cref="RestoreWorkspaceAsync"/>, but after repositioning the workspace's own
@@ -759,30 +1044,49 @@ public class WorkspaceService
     /// workspace to the foreground and clear away unrelated windows without the destructive
     /// close-everything behaviour of <c>SwitchWorkspaceAsync</c>.
     /// </summary>
-    public Task RestoreWorkspaceAlignAndMinimizeAsync(WorkspaceSnapshot snapshot, CancellationToken ct = default)
-        => RestoreCoreAsync(snapshot, minimizeOthers: true, ct);
-
-    private async Task RestoreCoreAsync(WorkspaceSnapshot snapshot, bool minimizeOthers, CancellationToken ct)
+    public async Task RestoreWorkspaceAlignAndMinimizeAsync(WorkspaceSnapshot snapshot, CancellationToken ct = default)
     {
-        AppLogger.Info($"RestoreCoreAsync '{snapshot.Name}' — {snapshot.Entries.Count} entries, minimizeOthers={minimizeOthers}");
+        _ = await RestoreCoreAsync(snapshot, minimizeOthers: true, ct);
+    }
+
+    /// <summary>
+    /// Restores a workspace and returns the structured state accumulated by that restore session.
+    /// Kept internal until a UI or automation contract needs to expose the detailed result.
+    /// </summary>
+    internal Task<RestoreSessionResult> RestoreWorkspaceWithResultAsync(
+        WorkspaceSnapshot snapshot,
+        bool minimizeOthers = false,
+        CancellationToken ct = default) => RestoreCoreAsync(snapshot, minimizeOthers, ct);
+
+    private async Task<RestoreSessionResult> RestoreCoreAsync(
+        WorkspaceSnapshot snapshot,
+        bool minimizeOthers,
+        CancellationToken ct)
+    {
+        AppLogger.Info(
+            "restore.session_started",
+            "Started a workspace restore session",
+            LogField.Identifier("workspaceId", snapshot.WorkspaceId),
+            LogField.Workspace("workspaceName", snapshot.Name),
+            LogField.Public("entryCount", snapshot.Entries.Count),
+            LogField.Public("minimizeOthers", minimizeOthers));
+        var session = new RestoreSessionContext(snapshot, ct);
 
         bool browserSessionsRestored = false;
-        if (_browserSessionBridge != null && snapshot.BrowserSessions.Count > 0)
-            browserSessionsRestored = await _browserSessionBridge.RestoreAsync(snapshot.Name, snapshot.BrowserSessions, ct);
+        if (_browserSessionConnector != null && snapshot.BrowserSessions.Count > 0)
+        {
+            browserSessionsRestored = await _browserSessionConnector.RestoreAsync(snapshot.Name, snapshot.BrowserSessions, ct);
+            session.RecordBrowserRestore(browserSessionsRestored);
+        }
 
         // ── Phase 1: reposition already-running windows ───────────────────
-        // correctlyMatchedEntries tracks entries whose live window already had the right
-        // document open (title matched). Only those entries are skipped in Phase 2.
-        // matchedHwnds accumulates every live window we repositioned, so "align & minimize
-        // others" knows which windows belong to the workspace and must be left visible.
-        var liveWindows = _windowService.GetAllWindowsWithPids();
-        var restoredEntries = new HashSet<int>();
-        var correctlyMatchedEntries = new HashSet<int>();
-        var matchedHwnds = new HashSet<IntPtr>();
+        // The session owns entry and HWND assignment across all phases. A match proposed in a
+        // later pass cannot claim a still-live HWND committed during an earlier pass.
+        var liveWindows = _windowInventory.GetWindowsWithPids(
+            WindowCandidatePolicy.RestoreMatchCandidate);
+        MatchAndRestore(session, liveWindows);
 
-        MatchAndRestore(snapshot.Entries, liveWindows, restoredEntries, correctlyMatchedEntries, matchedHwnds);
-
-        if (ct.IsCancellationRequested) return;
+        if (ct.IsCancellationRequested) return session.Complete();
 
         // ── Phase 2: open documents and launch missing apps ───────────────
         // Document entries (have a LaunchArg): open the file unless it was already matched
@@ -809,17 +1113,17 @@ public class WorkspaceService
 
         // Pre-scan: collect exe paths that will be started by a document entry this pass.
         var exesWithPendingDocLaunch = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var e in snapshot.Entries)
+        foreach (var e in session.Entries)
         {
             if (!string.IsNullOrEmpty(e.LaunchArg) && !string.IsNullOrEmpty(e.ExecutablePath))
                 exesWithPendingDocLaunch.Add(e.ExecutablePath.ToLowerInvariant());
         }
 
-        for (int i = 0; i < snapshot.Entries.Count; i++)
+        for (int i = 0; i < session.Entries.Count; i++)
         {
-            if (ct.IsCancellationRequested) return;
+            if (ct.IsCancellationRequested) return session.Complete();
 
-            var entry = snapshot.Entries[i];
+            var entry = session.Entries[i];
 
             if (browserSessionsRestored && IsBrowserProcess(entry.ProcessName))
                 continue;
@@ -830,17 +1134,40 @@ public class WorkspaceService
             // to the generic browser launch, which would just open a normal browser window.
             if (entry.IsWebApp)
             {
-                if (restoredEntries.Contains(i)) continue;
+                if (session.IsEntryAssigned(i)) continue;
 
                 try
                 {
                     Process.Start(BuildProcessStartInfo(entry));
                     anyLaunched = true;
-                    AppLogger.Info($"Launched web app: {entry.WebAppName} ({entry.AppUserModelId})");
+                    session.RecordLaunch(
+                        i,
+                        RestoreSessionActionKind.ProcessLaunch,
+                        succeeded: true,
+                        "Launched installed browser web app");
+                    AppLogger.Info(
+                        "restore.entry_launch_succeeded",
+                        "Launched an installed browser web app",
+                        LogField.Identifier("entryId", entry.EntryId),
+                        LogField.Title("webAppName", entry.WebAppName),
+                        LogField.Identifier("appUserModelId", entry.AppUserModelId),
+                        LogField.Public("launchKind", "web_app"));
                 }
                 catch (Exception ex)
                 {
-                    AppLogger.Warn($"Failed to launch web app '{entry.WebAppName}': {ex.Message}");
+                    session.RecordLaunch(
+                        i,
+                        RestoreSessionActionKind.ProcessLaunch,
+                        succeeded: false,
+                        "Failed to launch installed browser web app");
+                    AppLogger.Warn(
+                        "restore.entry_launch_failed",
+                        "Failed to launch an installed browser web app",
+                        ex,
+                        LogField.Identifier("entryId", entry.EntryId),
+                        LogField.Title("webAppName", entry.WebAppName),
+                        LogField.Identifier("appUserModelId", entry.AppUserModelId),
+                        LogField.Public("errorCategory", "web_app_launch"));
                 }
                 continue;
             }
@@ -850,27 +1177,54 @@ public class WorkspaceService
             // specific window, so it can coexist with the user's normal multi-tab window.
             if (entry.IsDedicatedBrowserWindow)
             {
-                if (restoredEntries.Contains(i)) continue;
+                if (session.IsEntryAssigned(i)) continue;
 
                 try
                 {
                     Process.Start(BuildProcessStartInfo(entry));
                     anyLaunched = true;
-                    AppLogger.Info($"Opened dedicated browser window: {entry.BrowserUrl}");
+                    session.RecordLaunch(
+                        i,
+                        RestoreSessionActionKind.ResourceOpen,
+                        succeeded: true,
+                        "Opened dedicated browser resource");
+                    AppLogger.Info(
+                        "restore.entry_launch_succeeded",
+                        "Opened a dedicated browser window",
+                        LogField.Identifier("entryId", entry.EntryId),
+                        LogField.Url("url", entry.BrowserUrl),
+                        LogField.Public("launchKind", "dedicated_browser"));
                 }
                 catch (Exception ex)
                 {
-                    AppLogger.Warn($"Failed to open '{entry.BrowserUrl}': {ex.Message}");
+                    session.RecordLaunch(
+                        i,
+                        RestoreSessionActionKind.ResourceOpen,
+                        succeeded: false,
+                        "Failed to open dedicated browser resource");
+                    AppLogger.Warn(
+                        "restore.entry_launch_failed",
+                        "Failed to open a dedicated browser window",
+                        ex,
+                        LogField.Identifier("entryId", entry.EntryId),
+                        LogField.Url("url", entry.BrowserUrl),
+                        LogField.Public("errorCategory", "dedicated_browser_launch"));
                 }
                 continue;
             }
+
+            // A plain application already assigned by the identity engine is present even when
+            // an app update changed its executable path (packaged AUMID evidence survives that
+            // change). Document entries still continue so a wrong open document can be replaced.
+            if (session.IsEntryAssigned(i) && string.IsNullOrEmpty(entry.LaunchArg))
+                continue;
 
             if (string.IsNullOrEmpty(entry.ExecutablePath)) continue;
 
             if (!string.IsNullOrEmpty(entry.LaunchArg))
             {
                 // Document entry: skip only when the right document is already open.
-                if (correctlyMatchedEntries.Contains(i)) continue;
+                if (session.CorrectlyMatchedEntries.Contains(i)) continue;
 
                 try
                 {
@@ -880,11 +1234,32 @@ public class WorkspaceService
                     var psi = BuildProcessStartInfo(entry);
                     Process.Start(psi);
                     anyLaunched = true;
-                    AppLogger.Info($"Opened document: {entry.LaunchArg}");
+                    session.RecordLaunch(
+                        i,
+                        RestoreSessionActionKind.ResourceOpen,
+                        succeeded: true,
+                        "Opened saved resource");
+                    AppLogger.Info(
+                        "restore.entry_launch_succeeded",
+                        "Opened a saved resource",
+                        LogField.Identifier("entryId", entry.EntryId),
+                        LogField.Path("resourcePath", entry.LaunchArg),
+                        LogField.Public("launchKind", "resource"));
                 }
                 catch (Exception ex)
                 {
-                    AppLogger.Warn($"Failed to open document '{entry.LaunchArg}': {ex.Message}");
+                    session.RecordLaunch(
+                        i,
+                        RestoreSessionActionKind.ResourceOpen,
+                        succeeded: false,
+                        "Failed to open saved resource");
+                    AppLogger.Warn(
+                        "restore.entry_launch_failed",
+                        "Failed to open a saved resource",
+                        ex,
+                        LogField.Identifier("entryId", entry.EntryId),
+                        LogField.Path("resourcePath", entry.LaunchArg),
+                        LogField.Public("errorCategory", "resource_launch"));
                 }
             }
             else
@@ -898,7 +1273,11 @@ public class WorkspaceService
                 // would open the start screen and steal the DDE slot.
                 if (exesWithPendingDocLaunch.Contains(exeLower))
                 {
-                    AppLogger.Debug($"Phase2: skipping bare launch of {Path.GetFileName(entry.ExecutablePath)} — document entry pending for same exe");
+                    AppLogger.Debug(
+                        "restore.bare_launch_skipped",
+                        "Skipped a bare application launch because a resource entry is pending",
+                        LogField.Identifier("entryId", entry.EntryId),
+                        LogField.Path("executablePath", entry.ExecutablePath));
                     continue;
                 }
 
@@ -907,15 +1286,36 @@ public class WorkspaceService
                     var psi = BuildProcessStartInfo(entry);
                     Process.Start(psi);
                     anyLaunched = true;
+                    session.RecordLaunch(
+                        i,
+                        RestoreSessionActionKind.ProcessLaunch,
+                        succeeded: true,
+                        "Launched saved application");
                     // Log what actually launched: shell:AppsFolder for Store apps prints the
                     // FileName+Arguments, everything else the executable path.
                     string how = IsStoreApp(entry) ? $"{psi.FileName} {psi.Arguments}".Trim()
                                                    : entry.ExecutablePath;
-                    AppLogger.Info($"Launched: {how}");
+                    AppLogger.Info(
+                        "restore.entry_launch_succeeded",
+                        "Launched a saved application",
+                        LogField.Identifier("entryId", entry.EntryId),
+                        LogField.CommandLine("launchCommand", how),
+                        LogField.Public("launchKind", "application"));
                 }
                 catch (Exception ex)
                 {
-                    AppLogger.Warn($"Failed to launch '{entry.ExecutablePath}': {ex.Message}");
+                    session.RecordLaunch(
+                        i,
+                        RestoreSessionActionKind.ProcessLaunch,
+                        succeeded: false,
+                        "Failed to launch saved application");
+                    AppLogger.Warn(
+                        "restore.entry_launch_failed",
+                        "Failed to launch a saved application",
+                        ex,
+                        LogField.Identifier("entryId", entry.EntryId),
+                        LogField.Path("executablePath", entry.ExecutablePath),
+                        LogField.Public("errorCategory", "application_launch"));
                 }
             }
         }
@@ -926,32 +1326,48 @@ public class WorkspaceService
             // Phase 1. Still honour the minimize request before returning, otherwise "align &
             // minimize others" would do nothing when the workspace is already fully open.
             if (minimizeOthers && !ct.IsCancellationRequested)
-                _windowService.MinimizeUserWindowsExcept(matchedHwnds);
-            return;
+            {
+                _windowMutation.MinimizeUserWindowsExcept(
+                    WindowCandidatePolicy.MinimizeCandidate,
+                    new HashSet<IntPtr>(session.AssignedHwnds));
+                session.RecordMinimizeOthers(succeeded: true);
+            }
+            return session.Complete();
         }
 
         // ── Phase 3: wait for app initialisation ─────────────────────────
         await Task.Delay(3000, ct).ConfigureAwait(false);
-        if (ct.IsCancellationRequested) return;
+        if (ct.IsCancellationRequested) return session.Complete();
 
         // ── Phase 4: reposition newly appeared windows ────────────────────
-        liveWindows = _windowService.GetAllWindowsWithPids();
-        MatchAndRestore(snapshot.Entries, liveWindows, restoredEntries, correctlyMatchedEntries, matchedHwnds);
+        liveWindows = _windowInventory.GetWindowsWithPids(
+            WindowCandidatePolicy.RestoreMatchCandidate);
+        MatchAndRestore(session, liveWindows);
 
-        if (ct.IsCancellationRequested) return;
+        if (ct.IsCancellationRequested) return session.Complete();
 
         // ── Phase 5: second pass for slow launchers ────────────────────────
         await Task.Delay(2000, ct).ConfigureAwait(false);
-        if (ct.IsCancellationRequested) return;
+        if (ct.IsCancellationRequested) return session.Complete();
 
-        liveWindows = _windowService.GetAllWindowsWithPids();
-        MatchAndRestore(snapshot.Entries, liveWindows, restoredEntries, correctlyMatchedEntries, matchedHwnds);
+        liveWindows = _windowInventory.GetWindowsWithPids(
+            WindowCandidatePolicy.RestoreMatchCandidate);
+        MatchAndRestore(session, liveWindows);
 
         // ── Optional: minimize everything that is not part of the workspace ──
         if (minimizeOthers && !ct.IsCancellationRequested)
-            _windowService.MinimizeUserWindowsExcept(matchedHwnds);
+        {
+            _windowMutation.MinimizeUserWindowsExcept(
+                WindowCandidatePolicy.MinimizeCandidate,
+                new HashSet<IntPtr>(session.AssignedHwnds));
+            session.RecordMinimizeOthers(succeeded: true);
+        }
 
-        AppLogger.Info($"RestoreCoreAsync complete");
+        AppLogger.Info(
+            "restore.session_completed",
+            "Completed a workspace restore session",
+            LogField.Identifier("workspaceId", snapshot.WorkspaceId));
+        return session.Complete();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -964,259 +1380,64 @@ public class WorkspaceService
     /// <list type="number">
     ///   <item>For document entries (have a <see cref="WorkspaceEntry.LaunchArg"/>):
     ///     exe path + live title contains the saved document filename.
-    ///     A match here is recorded in <paramref name="correctlyMatchedEntries"/> so that
-    ///     Phase 2 knows the right document is already on screen.</item>
+    ///     A match here is recorded in the session so that Phase 2 knows the right document is
+    ///     already on screen.</item>
     ///   <item>exe path + window class name.</item>
     ///   <item>exe path + first 10 chars of saved title snippet.</item>
     /// </list>
     /// </para>
-    /// <paramref name="restoredEntries"/> prevents the same entry from being repositioned
-    /// twice across Phase 1 / 4 / 5 calls.
+    /// The planner only proposes matches. <see cref="RestoreSessionContext"/> centrally commits
+    /// each proposal and owns the one-to-one assignment across Phase 1 / 4 / 5 calls.
     /// </summary>
     private void MatchAndRestore(
-        List<WorkspaceEntry> entries,
-        Dictionary<IntPtr, (uint Pid, WindowRecord Record)> liveWindows,
-        HashSet<int> restoredEntries,
-        HashSet<int>? correctlyMatchedEntries = null,
-        HashSet<IntPtr>? matchedHwnds = null)
+        RestoreSessionContext session,
+        Dictionary<IntPtr, (uint Pid, WindowRecord Record)> liveWindows)
     {
-        // Build a consumed-hwnd set so each window only gets one entry applied.
-        var consumedHwnds = new HashSet<IntPtr>();
+        // An assignment is released only after this inventory proves its HWND disappeared.
+        // The affected entry then becomes eligible for an explicit rematch in the same pass.
+        session.ReconcileLiveWindows(liveWindows, _windowInventory.IsWindowAlive);
 
-        // Guard against cross-matching browser windows.
-        // A PWA window (Insilico Terminal, aggr.trade, …) and a plain Chrome/Brave window share
-        // the same executable and window class, so every matching tier below would happily pair
-        // them up. Whenever either side is a web app, the AppUserModelIDs must be identical.
-        // Entries from older snapshots carry no AUMID and simply never claim a web-app window.
-        static bool IdentityCompatible(WorkspaceEntry e, WindowRecord rec)
+        foreach (var match in WindowRestorePlanner.PlanMatches(
+                     session.Entries,
+                     liveWindows,
+                     session.AssignedEntryIndices,
+                     session.AssignedHwnds))
         {
-            // A dedicated browser window and a normal browser window are the same executable and
-            // class, so without this guard either could claim the other's window.
-            bool liveIsDedicated = !string.IsNullOrEmpty(rec.BrowserUrl);
-            if (e.IsDedicatedBrowserWindow || liveIsDedicated)
-            {
-                if (e.IsDedicatedBrowserWindow != liveIsDedicated) return false;
-                if (liveIsDedicated && !SameSite(rec.BrowserUrl, e.BrowserUrl)) return false;
-            }
+            int i = match.EntryIndex;
+            var entry = session.Entries[i];
 
-            string liveAumid = rec.AppUserModelId ?? "";
-            if (!e.IsWebApp && !WebAppService.LooksLikeWebAppAumid(liveAumid))
-                return true;   // both sides are ordinary windows — old behaviour
+            // The session is authoritative. A proposal that races with or duplicates an earlier
+            // assignment is rejected before any live window mutation occurs.
+            if (!session.TryCommitAssignment(match))
+                continue;
 
-            return string.Equals(e.AppUserModelId ?? "", liveAumid, StringComparison.OrdinalIgnoreCase);
+            if (match.TitleSimilarityScore is double score)
+                AppLogger.Info(
+                    "restore.entry_disambiguated",
+                    "Disambiguated a restore entry by title similarity",
+                    LogField.Identifier("entryId", entry.EntryId),
+                    LogField.Public("processName", entry.ProcessName),
+                    LogField.Public("score", score),
+                    LogField.Public("hwnd", match.Hwnd));
+
+            _windowMutation.RestoreSingleWindow(match.Hwnd, entry.Position);
+            session.RecordWindowRestored(i, match.Hwnd);
+            AppLogger.Info(
+                "restore.entry_positioned",
+                "Restored a workspace entry to its saved position",
+                LogField.Identifier("entryId", entry.EntryId),
+                LogField.Public("entryIndex", i),
+                LogField.Public("processName", entry.ProcessName),
+                LogField.Public("hwnd", match.Hwnd),
+                LogField.Public("titleMatched", match.TitleMatched),
+                LogField.Public("matchScore", match.Candidate?.Score),
+                LogField.Public("matchConfidence", match.Candidate?.Confidence),
+                LogField.Public(
+                    "matchEvidence",
+                    string.Join(',', match.Candidate?.Evidence
+                        .Where(evidence => evidence.Matched)
+                        .Select(evidence => evidence.Kind) ?? [])));
         }
-
-        for (int i = 0; i < entries.Count; i++)
-        {
-            if (restoredEntries.Contains(i)) continue;
-
-            var entry = entries[i];
-            if (string.IsNullOrEmpty(entry.ExecutablePath)) continue;
-
-            IntPtr bestHwnd = IntPtr.Zero;
-            bool titleMatched = false;
-
-            // ── Tier -1: web app match by AppUserModelID ──────────────────────────
-            // A PWA's title changes with the page it shows, so the AUMID is the only stable
-            // identifier. It is also unique per installed app, making this an exact match.
-            if (entry.IsWebApp && !string.IsNullOrEmpty(entry.AppUserModelId))
-            {
-                foreach (var (hwnd, (_, rec)) in liveWindows)
-                {
-                    if (consumedHwnds.Contains(hwnd)) continue;
-                    if (string.Equals(rec.AppUserModelId, entry.AppUserModelId,
-                                      StringComparison.OrdinalIgnoreCase))
-                    {
-                        bestHwnd = hwnd;
-                        titleMatched = true;   // right app is on screen — no relaunch needed
-                        break;
-                    }
-                }
-            }
-
-            // ── Tier -0.5: dedicated browser window match by URL ──────────────────
-            // The saved URL is the only stable identifier here: the title of such a window is
-            // just the page title and changes as the user navigates within the site.
-            if (entry.IsDedicatedBrowserWindow && !string.IsNullOrEmpty(entry.BrowserUrl))
-            {
-                foreach (var (hwnd, (_, rec)) in liveWindows)
-                {
-                    if (consumedHwnds.Contains(hwnd)) continue;
-                    if (string.IsNullOrEmpty(rec.BrowserUrl)) continue;
-                    if (!rec.ExecutablePath.Equals(entry.ExecutablePath, StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    // Same site is enough — the user may have navigated to another page on it.
-                    if (SameSite(rec.BrowserUrl, entry.BrowserUrl))
-                    {
-                        bestHwnd = hwnd;
-                        titleMatched = true;   // correct window already open — no relaunch needed
-                        break;
-                    }
-                }
-            }
-
-            // ── Tier 0: document-aware match (exe + title contains document name) ──
-            // This is the highest-priority match for document entries: we want
-            // "Diplomarbeit.docx - Word" to match only a Word window that actually
-            // has Diplomarbeit.docx open, not just any Word window.
-            if (!string.IsNullOrEmpty(entry.LaunchArg))
-            {
-                string expectedName = Path.GetFileNameWithoutExtension(entry.LaunchArg)
-                                          .ToLowerInvariant();
-                foreach (var (hwnd, (_, rec)) in liveWindows)
-                {
-                    if (consumedHwnds.Contains(hwnd)) continue;
-                    if (!IdentityCompatible(entry, rec)) continue;
-                    if (rec.ExecutablePath.Equals(entry.ExecutablePath, StringComparison.OrdinalIgnoreCase) &&
-                        rec.TitleSnippet.ToLowerInvariant().Contains(expectedName))
-                    {
-                        bestHwnd = hwnd;
-                        titleMatched = true;
-                        break;
-                    }
-                }
-            }
-
-            // ── Tier 0.5: disambiguate multiple identical windows by title similarity ──
-            // Two windows of the same app (e.g. two TradingView charts, two Explorer windows)
-            // share the same exe, window class and — for packaged apps — the same AUMID, so the
-            // tiers below cannot tell them apart and may swap their positions. When more than one
-            // live window matches this entry's exe, pick the one whose current title is most
-            // similar to the saved title. TradingView puts the layout name at the end of the
-            // title ("… / 🦁LTF Luis" vs "… / 👀Outlook"), which is exactly what disambiguates
-            // them even though the price prefix keeps changing.
-            if (bestHwnd == IntPtr.Zero)
-            {
-                var sameExe = liveWindows
-                    .Where(kv => !consumedHwnds.Contains(kv.Key))
-                    .Where(kv => IdentityCompatible(entry, kv.Value.Record))
-                    .Where(kv => kv.Value.Record.ExecutablePath.Equals(
-                        entry.ExecutablePath, StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-
-                if (sameExe.Count > 1)
-                {
-                    IntPtr bestByTitle = IntPtr.Zero;
-                    double bestScore   = -1;
-                    foreach (var kv in sameExe)
-                    {
-                        double score = TitleSimilarity(entry.Position.TitleSnippet,
-                                                       kv.Value.Record.TitleSnippet);
-                        if (score > bestScore)
-                        {
-                            bestScore   = score;
-                            bestByTitle = kv.Key;
-                        }
-                    }
-
-                    if (bestByTitle != IntPtr.Zero)
-                    {
-                        bestHwnd = bestByTitle;
-                        AppLogger.Info($"Disambiguated {entry.ProcessName} by title similarity " +
-                                       $"(score={bestScore:F2}) → hwnd {bestByTitle}");
-                    }
-                }
-            }
-
-            // ── Tier 1: exe + class ───────────────────────────────────────────────
-            if (bestHwnd == IntPtr.Zero)
-            {
-                foreach (var (hwnd, (_, rec)) in liveWindows)
-                {
-                    if (consumedHwnds.Contains(hwnd)) continue;
-                    if (!IdentityCompatible(entry, rec)) continue;
-                    if (rec.ExecutablePath.Equals(entry.ExecutablePath, StringComparison.OrdinalIgnoreCase) &&
-                        rec.ClassName == entry.WindowClassName)
-                    {
-                        bestHwnd = hwnd;
-                        break;
-                    }
-                }
-            }
-
-            // ── Tier 2: exe + title prefix (10 chars) ────────────────────────────
-            if (bestHwnd == IntPtr.Zero)
-            {
-                string prefix = entry.Position.TitleSnippet.Length >= 10
-                    ? entry.Position.TitleSnippet[..10]
-                    : entry.Position.TitleSnippet;
-
-                foreach (var (hwnd, (_, rec)) in liveWindows)
-                {
-                    if (consumedHwnds.Contains(hwnd)) continue;
-                    if (!IdentityCompatible(entry, rec)) continue;
-                    if (rec.ExecutablePath.Equals(entry.ExecutablePath, StringComparison.OrdinalIgnoreCase) &&
-                        rec.TitleSnippet.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                    {
-                        bestHwnd = hwnd;
-                        break;
-                    }
-                }
-            }
-
-            if (bestHwnd == IntPtr.Zero) continue;
-
-            consumedHwnds.Add(bestHwnd);
-            restoredEntries.Add(i);
-            matchedHwnds?.Add(bestHwnd);
-            if (titleMatched) correctlyMatchedEntries?.Add(i);
-            entry.WasRestored = true;
-
-            _windowService.RestoreSingleWindow(bestHwnd, entry.Position);
-            AppLogger.Info($"Restored entry[{i}] {entry.ProcessName} → hwnd {bestHwnd} (titleMatched={titleMatched})");
-        }
-    }
-
-    /// <summary>
-    /// Compares two URLs by host only, so a window still matches its entry after the user has
-    /// navigated to another page on the same site.
-    /// </summary>
-    private static bool SameSite(string a, string b)
-    {
-        if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b)) return false;
-        if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase)) return true;
-
-        if (Uri.TryCreate(a, UriKind.Absolute, out var ua) &&
-            Uri.TryCreate(b, UriKind.Absolute, out var ub))
-            return string.Equals(ua.Host, ub.Host, StringComparison.OrdinalIgnoreCase);
-
-        return false;
-    }
-
-    /// <summary>
-    /// Sørensen–Dice similarity (0..1) between two window titles, computed over character
-    /// bigrams. Used to tell apart two windows of the same application whose only distinguishing
-    /// feature is part of the title (e.g. a TradingView layout name). Volatile shared content
-    /// such as a live price contributes equally to every candidate, so the distinctive part of
-    /// the title dominates the ranking.
-    /// </summary>
-    private static double TitleSimilarity(string a, string b)
-    {
-        a = (a ?? "").ToLowerInvariant();
-        b = (b ?? "").ToLowerInvariant();
-        if (a.Length < 2 || b.Length < 2)
-            return string.Equals(a, b, StringComparison.Ordinal) ? 1.0 : 0.0;
-
-        var bigrams = new Dictionary<string, int>();
-        for (int i = 0; i < a.Length - 1; i++)
-        {
-            string g = a.Substring(i, 2);
-            bigrams[g] = bigrams.TryGetValue(g, out int c) ? c + 1 : 1;
-        }
-
-        int overlap = 0;
-        for (int i = 0; i < b.Length - 1; i++)
-        {
-            string g = b.Substring(i, 2);
-            if (bigrams.TryGetValue(g, out int c) && c > 0)
-            {
-                bigrams[g] = c - 1;
-                overlap++;
-            }
-        }
-
-        return 2.0 * overlap / ((a.Length - 1) + (b.Length - 1));
     }
 
     /// <summary>
@@ -1327,8 +1548,13 @@ public class WorkspaceService
             string target = entry.WebAppLaunchTarget ?? entry.ExecutablePath;
             if (!string.IsNullOrEmpty(target))
             {
-                AppLogger.Info($"[WebApp] launching '{entry.WebAppName}' via command line: " +
-                               $"{target} {entry.WebAppLaunchArguments}");
+                AppLogger.Info(
+                    "restore.launch_command_built",
+                    "Built a web-app launch command",
+                    LogField.Identifier("entryId", entry.EntryId),
+                    LogField.Title("webAppName", entry.WebAppName),
+                    LogField.CommandLine("commandLine", $"{target} {entry.WebAppLaunchArguments}"),
+                    LogField.Public("launchKind", "web_app"));
                 return new ProcessStartInfo
                 {
                     FileName        = target,
@@ -1343,7 +1569,13 @@ public class WorkspaceService
         // what makes this coexist with the user's regular multi-tab browser window.
         if (entry.IsDedicatedBrowserWindow && !string.IsNullOrEmpty(entry.BrowserUrl))
         {
-            AppLogger.Info($"[BrowserUrl] launching {entry.ProcessName} --new-window {entry.BrowserUrl}");
+            AppLogger.Info(
+                "restore.launch_command_built",
+                "Built a dedicated-browser launch command",
+                LogField.Identifier("entryId", entry.EntryId),
+                LogField.Public("processName", entry.ProcessName),
+                LogField.Url("url", entry.BrowserUrl),
+                LogField.Public("launchKind", "dedicated_browser"));
             return new ProcessStartInfo
             {
                 FileName        = entry.ExecutablePath,
@@ -1361,7 +1593,13 @@ public class WorkspaceService
         // Entries that open a document keep the file association path below.
         if (string.IsNullOrEmpty(entry.LaunchArg) && IsStoreApp(entry))
         {
-            AppLogger.Info($"[StoreApp] launching {entry.ProcessName} via shell:AppsFolder\\{entry.AppUserModelId}");
+            AppLogger.Info(
+                "restore.launch_command_built",
+                "Built a packaged-application launch command",
+                LogField.Identifier("entryId", entry.EntryId),
+                LogField.Public("processName", entry.ProcessName),
+                LogField.Identifier("appUserModelId", entry.AppUserModelId),
+                LogField.Public("launchKind", "packaged_application"));
             return new ProcessStartInfo
             {
                 FileName        = "explorer.exe",
@@ -1399,7 +1637,13 @@ public class WorkspaceService
         if (IsBrowserProcess(entry.ProcessName))
         {
             string flag = GetBrowserRestoreFlag(entry.ProcessName);
-            AppLogger.Info($"Browser detected ({entry.ProcessName}) — launching with {flag}");
+            AppLogger.Info(
+                "restore.launch_command_built",
+                "Built a browser session launch command",
+                LogField.Identifier("entryId", entry.EntryId),
+                LogField.Public("processName", entry.ProcessName),
+                LogField.CommandLine("arguments", flag),
+                LogField.Public("launchKind", "browser_session"));
             return new ProcessStartInfo
             {
                 FileName        = entry.ExecutablePath,

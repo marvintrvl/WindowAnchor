@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
@@ -23,11 +24,46 @@ public partial class App : System.Windows.Application
     private StorageService?     _storageService;
     private SettingsService?    _settingsService;
     private HotkeyService?     _hotkeyService;
-    private BrowserSessionBridge? _browserSessionBridge;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        if (e.Args.Length > 0 &&
+            e.Args[0].Equals("--export-diagnostics", StringComparison.OrdinalIgnoreCase))
+        {
+            string destination = e.Args.Length > 1
+                ? e.Args[1]
+                : Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+                    $"WindowAnchor-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.jsonl");
+            try
+            {
+                AppLogger.ExportDiagnostics(destination);
+                System.Windows.MessageBox.Show(
+                    $"A redacted diagnostic export was written to:{Environment.NewLine}{destination}",
+                    "WindowAnchor Diagnostics",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                Shutdown(0);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error(
+                    "diagnostics.export_failed",
+                    "Could not create a diagnostic export",
+                    ex,
+                    LogField.Path("destinationPath", destination),
+                    LogField.Public("errorCategory", "diagnostic_export"));
+                System.Windows.MessageBox.Show(
+                    "WindowAnchor could not create the diagnostic export.",
+                    "WindowAnchor Diagnostics",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                Shutdown(1);
+            }
+            return;
+        }
 
         if (e.Args.Length > 0 &&
             (e.Args[0].Equals("--native-messaging", StringComparison.OrdinalIgnoreCase) ||
@@ -45,7 +81,9 @@ public partial class App : System.Windows.Application
         DispatcherUnhandledException        += OnDispatcherException;
         AppDomain.CurrentDomain.UnhandledException += OnDomainException;
 
-        AppLogger.Info("WindowAnchor starting");
+        AppLogger.Info(
+            "app.starting",
+            "WindowAnchor is starting");
 
         // Apply system theme (Mica/dark/light) before any window opens
         ApplicationThemeManager.ApplySystemTheme();
@@ -58,12 +96,13 @@ public partial class App : System.Windows.Application
         _monitorService       = new MonitorService();
         // Settings must exist before WindowService: it reads the dedicated-browser URL patterns
         // to decide whether address bars are queried during a snapshot.
-        _settingsService      = new SettingsService();
+        _settingsService      = new SettingsService(storageService);
+        AppLogger.MinimumLevel = _settingsService.Settings.DiagnosticLogLevel;
         var windowService     = new WindowService(_settingsService);
         var jumpListService   = new JumpListService();
         var webAppService     = new WebAppService();
-        _browserSessionBridge = new BrowserSessionBridge();
-        var workspaceService  = new WorkspaceService(storageService, windowService, _monitorService, jumpListService, webAppService, _browserSessionBridge);
+        var browserSessionBridge = new BrowserSessionBridge();
+        var workspaceService  = new WorkspaceService(storageService, windowService, _monitorService, jumpListService, webAppService, browserSessionBridge);
 
         _workspaceService = workspaceService;
         _coordinator      = new LayoutCoordinator(_monitorService, windowService, workspaceService);
@@ -74,8 +113,14 @@ public partial class App : System.Windows.Application
         ApplyHotkeySettings();
 
         string initialFingerprint = _monitorService.GetCurrentMonitorFingerprint();
-        AppLogger.Info($"Initial monitor fingerprint: {initialFingerprint}");
-        if (minimized) AppLogger.Info("Started with --minimized — staying in tray.");
+        AppLogger.Info(
+            "display.initial_topology",
+            "Captured the initial display topology",
+            LogField.Identifier("monitorFingerprint", initialFingerprint));
+        if (minimized)
+            AppLogger.Info(
+                "app.started_minimized",
+                "WindowAnchor started minimized in the notification area");
 
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
 
@@ -105,10 +150,10 @@ public partial class App : System.Windows.Application
             switch (behavior)
             {
                 case StartupBehavior.RestoreDefault:
-                    string? defaultName = _settingsService!.Settings.DefaultWorkspaceName;
-                    if (!string.IsNullOrEmpty(defaultName))
+                    string? defaultId = _settingsService!.Settings.DefaultWorkspaceId;
+                    if (!string.IsNullOrEmpty(defaultId))
                         target = workspaces.FirstOrDefault(w =>
-                            w.Name.Equals(defaultName, StringComparison.OrdinalIgnoreCase));
+                            w.WorkspaceId.Equals(defaultId, StringComparison.OrdinalIgnoreCase));
                     break;
 
                 case StartupBehavior.RestoreLastUsed:
@@ -124,21 +169,32 @@ public partial class App : System.Windows.Application
 
             if (target != null)
             {
-                AppLogger.Info($"Startup restore: restoring '{target.Name}'");
+                AppLogger.Info(
+                    "app.startup_restore_started",
+                    "Started the configured startup restore",
+                    LogField.Identifier("workspaceId", target.WorkspaceId),
+                    LogField.Workspace("workspaceName", target.Name));
                 await _coordinator!.RestoreWorkspaceAsync(target);
                 ShowBalloon("Workspace Restored", $"\u201c{target.Name}\u201d restored on startup");
             }
         }
         catch (Exception ex)
         {
-            AppLogger.Error("HandleStartupRestoreAsync failed", ex);
+            AppLogger.Error(
+                "app.startup_restore_failed",
+                "Startup restore failed",
+                ex,
+                LogField.Public("errorCategory", "startup_restore"));
         }
     }
 
     private void OnDisplaySettingsChanged(object? sender, EventArgs e)
     {
         string fingerprint = _monitorService?.GetCurrentMonitorFingerprint() ?? "unknown";
-        AppLogger.Info($"DisplaySettingsChanged — new fingerprint: {fingerprint}");
+        AppLogger.Info(
+            "display.settings_changed",
+            "Received a display-settings change notification",
+            LogField.Identifier("monitorFingerprint", fingerprint));
         _coordinator?.HandleDisplayChangeAsync();
     }
 
@@ -158,7 +214,11 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex)
         {
-            AppLogger.Warn($"ShowSaveWorkspaceDialog: could not enumerate windows: {ex.Message}");
+            AppLogger.Warn(
+                "workspace.preview_enumeration_failed",
+                "Could not enumerate windows for the save dialog",
+                ex,
+                LogField.Public("errorCategory", "window_enumeration"));
             windowPreview = new();
         }
 
@@ -184,24 +244,33 @@ public partial class App : System.Windows.Application
 
         try
         {
-            var snapshot = await Task.Run(
-                () => _workspaceService!.TakeSnapshot(name, saveFiles: saveFiles,
-                    selectedWindows: selectedWindows, progress: progress));
-            var selectedBrowserTitles = selectedWindows
-                .Where(w => WorkspaceService.IsBrowserProcess(w.ProcessName))
-                .Select(w => w.TitleSnippet)
-                .Where(title => !string.IsNullOrWhiteSpace(title));
-            snapshot.BrowserSessions = _browserSessionBridge == null
-                ? new List<BrowserSession>()
-                : await _browserSessionBridge.CaptureAsync(name, selectedBrowserTitles);
-            _storageService!.SaveWorkspace(snapshot);
-            AppLogger.Info($"Workspace '{name}' saved (files={saveFiles})");
+            WorkspaceCaptureResult capture = await _workspaceService!.CaptureWorkspaceAsync(
+                name,
+                saveFiles: saveFiles,
+                selectedWindows: selectedWindows,
+                progress: progress);
+            _workspaceService.PersistCapture(
+                capture,
+                WorkspaceArtifactKind.NamedWorkspace,
+                IncompleteBrowserCapturePolicy.SavePartialWorkspace);
+            AppLogger.Info(
+                "workspace.saved",
+                "Saved a named workspace",
+                LogField.Identifier("workspaceId", capture.Snapshot.WorkspaceId),
+                LogField.Workspace("workspaceName", name),
+                LogField.Public("saveFiles", saveFiles),
+                LogField.Public("browserCaptureStatus", capture.BrowserCapture.Status));
             ShowBalloon("Workspace Saved",
                 $"\u201c{name}\u201d saved \u2014 {selectedWindows.Count} window(s)");
         }
         catch (Exception ex)
         {
-            AppLogger.Error("ShowSaveWorkspaceDialog: TakeSnapshot failed", ex);
+            AppLogger.Error(
+                "workspace.save_failed",
+                "Workspace capture or persistence failed",
+                ex,
+                LogField.Workspace("workspaceName", name),
+                LogField.Public("errorCategory", "workspace_save"));
             System.Windows.MessageBox.Show($"Failed to save workspace: {ex.Message}", "WindowAnchor",
                 System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
         }
@@ -359,22 +428,22 @@ public partial class App : System.Windows.Application
 
     private void RestoreDefaultWorkspace()
     {
-        string? name = _settingsService?.Settings.DefaultWorkspaceName;
-        if (string.IsNullOrEmpty(name)) return;
+        string? workspaceId = _settingsService?.Settings.DefaultWorkspaceId;
+        if (string.IsNullOrEmpty(workspaceId)) return;
 
         var ws = _workspaceService?.GetAllWorkspaces()
-            .FirstOrDefault(w => w.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            .FirstOrDefault(w => w.WorkspaceId.Equals(workspaceId, StringComparison.OrdinalIgnoreCase));
         if (ws != null)
             _ = _coordinator!.RestoreWorkspaceAsync(ws);
     }
 
     private void SwitchDefaultWorkspace()
     {
-        string? name = _settingsService?.Settings.DefaultWorkspaceName;
-        if (string.IsNullOrEmpty(name)) return;
+        string? workspaceId = _settingsService?.Settings.DefaultWorkspaceId;
+        if (string.IsNullOrEmpty(workspaceId)) return;
 
         var ws = _workspaceService?.GetAllWorkspaces()
-            .FirstOrDefault(w => w.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            .FirstOrDefault(w => w.WorkspaceId.Equals(workspaceId, StringComparison.OrdinalIgnoreCase));
         if (ws != null)
             _ = _coordinator!.SwitchWorkspaceAsync(ws);
     }
@@ -400,19 +469,20 @@ public partial class App : System.Windows.Application
     private List<Models.WorkspaceSnapshot> GetOrderedWorkspaces()
     {
         var all   = _workspaceService?.GetAllWorkspaces() ?? new();
-        var order = _settingsService?.Settings.WorkspaceOrder;
+        var order = _settingsService?.Settings.WorkspaceOrderIds;
         if (order == null || order.Count == 0)
             return all.OrderByDescending(w => w.SavedAt).ToList();
 
         var result = new List<Models.WorkspaceSnapshot>();
-        foreach (var name in order)
+        foreach (var workspaceId in order)
         {
-            var ws = all.FirstOrDefault(w => w.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            var ws = all.FirstOrDefault(w =>
+                w.WorkspaceId.Equals(workspaceId, StringComparison.OrdinalIgnoreCase));
             if (ws != null) result.Add(ws);
         }
         foreach (var ws in all.OrderByDescending(w => w.SavedAt))
         {
-            if (!result.Any(r => r.Name.Equals(ws.Name, StringComparison.OrdinalIgnoreCase)))
+            if (!result.Any(r => r.WorkspaceId.Equals(ws.WorkspaceId, StringComparison.OrdinalIgnoreCase)))
                 result.Add(ws);
         }
         return result;
@@ -432,7 +502,11 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex)
         {
-            AppLogger.Warn($"ShowBalloon failed: {ex.Message}");
+            AppLogger.Warn(
+                "notification.show_failed",
+                "Could not show a notification",
+                ex,
+                LogField.Public("errorCategory", "notification"));
         }
     }
 
@@ -440,7 +514,11 @@ public partial class App : System.Windows.Application
 
     private void OnDispatcherException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
-        AppLogger.Error("Unhandled dispatcher exception", e.Exception);
+        AppLogger.Error(
+            "app.unhandled_dispatcher_exception",
+            "An unhandled dispatcher exception reached the application boundary",
+            e.Exception,
+            LogField.Public("errorCategory", "unhandled_dispatcher_exception"));
         _trayIcon?.Dispose();   // prevent ghost tray icon
         e.Handled = false;      // let Windows show the crash dialog
     }
@@ -448,7 +526,11 @@ public partial class App : System.Windows.Application
     private void OnDomainException(object sender, UnhandledExceptionEventArgs e)
     {
         if (e.ExceptionObject is Exception ex)
-            AppLogger.Error("Unhandled domain exception", ex);
+            AppLogger.Error(
+                "app.unhandled_domain_exception",
+                "An unhandled domain exception reached the application boundary",
+                ex,
+                LogField.Public("errorCategory", "unhandled_domain_exception"));
         _trayIcon?.Dispose();   // prevent ghost tray icon
     }
 }

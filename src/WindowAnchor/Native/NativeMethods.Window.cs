@@ -45,6 +45,11 @@ public static class NativeMethodsWindow
     [DllImport("user32.dll")]
     public static extern bool IsWindowVisible(IntPtr hWnd);
 
+    /// <summary>Returns whether an HWND still identifies an existing window.</summary>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsWindow(IntPtr hWnd);
+
     [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
 

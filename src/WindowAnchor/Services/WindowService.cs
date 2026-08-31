@@ -4,7 +4,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Text.Json;
 using WindowAnchor.Models;
 using WindowAnchor.Native;
@@ -12,35 +11,31 @@ using WindowAnchor.Native;
 namespace WindowAnchor.Services;
 
 /// <summary>
-/// Enumerates, captures, and restores top-level application windows via P/Invoke.
-/// Uses <c>EnumWindows</c>, <c>GetWindowPlacement</c>, <c>QueryFullProcessImageName</c>,
-/// and <c>SetWindowPlacement</c> for DPI-aware position handling.
+/// Applies named selection policies to raw window observations, enriches capture/match records,
+/// and performs live window mutations via P/Invoke.
 /// </summary>
-public class WindowService
+public class WindowService : IWindowInventory, IWindowMutation
 {
     private readonly SettingsService? _settingsService;
+    private readonly IRawWindowInventory _rawInventory;
 
     /// <param name="settingsService">
     ///   Optional. Supplies <see cref="Models.AppSettings.DedicatedBrowserUrlPatterns"/>; when
     ///   omitted no browser URLs are read during a snapshot.
     /// </param>
     public WindowService(SettingsService? settingsService = null)
+        : this(new WindowInventory(), settingsService)
     {
-        _settingsService = settingsService;
     }
 
-    // Skip-list of well-known OS-chrome window classes that should never be saved.
-    private static readonly string[] OsWindowClassSkipList = new[]
+    /// <summary>Creates a window service over an explicit raw inventory.</summary>
+    internal WindowService(
+        IRawWindowInventory rawInventory,
+        SettingsService? settingsService = null)
     {
-        // Shell and DWM infrastructure
-        "Shell_TrayWnd", "DV2ControlHost", "MsgrIMEWindowClass",
-        "SysShadow", "Button", "Windows.UI.Core.CoreWindow",
-        "Progman", "WorkerW",
-        // Additional explorer.exe-hosted shell utility windows that are not
-        // user content windows (system tray overflow, clock, task list, etc.)
-        "NotifyIconOverflowWindow", "TrayClockWClass", "MSTaskListWClass",
-        "MSTaskSwWClass", "ReBarWindow32", "TopLevelWindowForOverflowXamlIsland"
-    };
+        _rawInventory = rawInventory;
+        _settingsService = settingsService;
+    }
 
     /// <summary>
     /// Snapshots all visible top-level user windows.
@@ -48,37 +43,39 @@ public class WindowService
     /// <see cref="MonitorService.GetCurrentMonitors"/>), each record is tagged with the
     /// monitor it belongs to via <see cref="WindowRecord.MonitorId"/> etc.
     /// </summary>
-    public List<WindowRecord> SnapshotAllWindows(List<MonitorInfo>? monitors = null)
+    public List<WindowRecord> SnapshotWindows(
+        WindowCandidatePolicy policy,
+        List<MonitorInfo>? monitors = null)
     {
+        RequirePolicy(policy, WindowCandidatePolicy.CaptureCandidate);
         var records = new List<WindowRecord>();
 
         // Build Explorer folder map once before iterating — uses Shell.Application COM to
         // get the folder open in each File Explorer window, keyed by HWND.
         var explorerFolderMap = BuildExplorerFolderMap();
 
-        NativeMethodsWindow.EnumWindows((hWnd, lParam) =>
+        foreach (var observed in _rawInventory.EnumerateWindows())
         {
-            if (ShouldIncludeWindow(hWnd))
+            if (!WindowPolicyEvaluator.Includes(observed, policy))
+                continue;
+
+            var record = CaptureWindowRecord(observed, explorerFolderMap);
+            if (record != null)
             {
-                var record = CaptureWindowRecord(hWnd, explorerFolderMap);
-                if (record != null)
+                // Tag with monitor while HWND is still valid
+                if (monitors != null)
                 {
-                    // Tag with monitor while HWND is still valid
-                    if (monitors != null)
+                    var mon = MonitorService.GetMonitorForWindow(observed.Hwnd, monitors);
+                    if (mon != null)
                     {
-                        var mon = MonitorService.GetMonitorForWindow(hWnd, monitors);
-                        if (mon != null)
-                        {
-                            record.MonitorId    = mon.MonitorId;
-                            record.MonitorIndex = mon.Index;
-                            record.MonitorName  = mon.FriendlyName;
-                        }
+                        record.MonitorId    = mon.MonitorId;
+                        record.MonitorIndex = mon.Index;
+                        record.MonitorName  = mon.FriendlyName;
                     }
-                    records.Add(record);
                 }
+                records.Add(record);
             }
-            return true;
-        }, IntPtr.Zero);
+        }
 
         return records;
     }
@@ -130,40 +127,11 @@ public class WindowService
         return map;
     }
 
-    private bool ShouldIncludeWindow(IntPtr hWnd)
+    private WindowRecord? CaptureWindowRecord(
+        ObservedWindow observed,
+        Dictionary<IntPtr, string>? explorerFolderMap = null)
     {
-        if (!NativeMethodsWindow.IsWindowVisible(hWnd)) return false;
-
-        // Skip windows that have an owner (child windows, dialogs owned by main windows)
-        if (NativeMethodsWindow.GetWindow(hWnd, NativeMethodsWindow.GW_OWNER) != IntPtr.Zero) return false;
-
-        // Skip OS/Shell windows per spec skip-list
-        var className = new StringBuilder(256);
-        NativeMethodsWindow.GetClassName(hWnd, className, className.Capacity);
-        string cName = className.ToString();
-        if (OsWindowClassSkipList.Contains(cName)) return false;
-
-        // Skip windows with no title (often background windows)
-        var title = new StringBuilder(256);
-        NativeMethodsWindow.GetWindowText(hWnd, title, title.Capacity);
-        if (string.IsNullOrWhiteSpace(title.ToString())) return false;
-
-        // Skip windows that are too small to be user content windows.
-        // explorer.exe hosts many tiny shell utility windows (tray overflow,
-        // notification popups, etc.) that have titles and no owner but are not
-        // meaningful windows to save/restore.
-        if (NativeMethodsWindow.GetWindowRect(hWnd, out var sizeRect))
-        {
-            int w = sizeRect.Right - sizeRect.Left;
-            int h = sizeRect.Bottom - sizeRect.Top;
-            if (w < 100 || h < 100) return false;
-        }
-
-        return true;
-    }
-
-    private WindowRecord? CaptureWindowRecord(IntPtr hWnd, Dictionary<IntPtr, string>? explorerFolderMap = null)
-    {
+        IntPtr hWnd = observed.Hwnd;
         var placement = new NativeMethodsWindow.WindowPlacement();
         placement.Length = Marshal.SizeOf(typeof(NativeMethodsWindow.WindowPlacement));
 
@@ -174,9 +142,15 @@ public class WindowService
         // For normal (non-maximized/minimized) windows, compare with actual position.
         if (placement.ShowCmd == 1) // 1 = SW_SHOWNORMAL
         {
-            NativeMethodsWindow.Rect actualRect;
-            if (NativeMethodsWindow.GetWindowRect(hWnd, out actualRect))
+            if (observed.Bounds is { } bounds)
             {
+                var actualRect = new NativeMethodsWindow.Rect
+                {
+                    Left = bounds.Left,
+                    Top = bounds.Top,
+                    Right = bounds.Right,
+                    Bottom = bounds.Bottom
+                };
                 // If actual position differs from rcNormalPosition, use actual
                 // Lowered threshold to 5 pixels for better Snap detection
                 int leftDiff = Math.Abs(actualRect.Left - placement.RcNormalPosition.Left);
@@ -189,34 +163,19 @@ public class WindowService
                 // Real Snap Layout diffs are 100-1000+ px, so 15px is safe.
                 if (leftDiff > 15 || topDiff > 15 || rightDiff > 15 || bottomDiff > 15)
                 {
-                    AppLogger.Info($"Snap stale rcNormalPosition on hwnd {hWnd} — using GetWindowRect");
+                    AppLogger.Info(
+                        "window.capture_stale_placement_corrected",
+                        "Used the live window bounds instead of stale normal-position data",
+                        LogField.Public("hwnd", hWnd));
                     placement.RcNormalPosition = actualRect;
                 }
             }
         }
 
-        uint processId;
-        NativeMethodsWindow.GetWindowThreadProcessId(hWnd, out processId);
-
-        string exePath = "";
-        string processName = "";
-        try
-        {
-            using var process = Process.GetProcessById((int)processId);
-            processName = process.ProcessName;
-            exePath = process.MainModule?.FileName ?? "";
-        }
-        catch
-        {
-            // Fails on elevated processes if we are not admin
-        }
-
-        var className = new StringBuilder(256);
-        NativeMethodsWindow.GetClassName(hWnd, className, className.Capacity);
-
-        var title = new StringBuilder(256);
-        NativeMethodsWindow.GetWindowText(hWnd, title, title.Capacity);
-        string fullTitle = title.ToString();
+        uint processId = observed.ProcessId;
+        string exePath = observed.ExecutablePath;
+        string processName = observed.ProcessName;
+        string fullTitle = observed.Title;
         // Store up to 200 chars — enough for any realistic window title while still bounding
         // storage size. The old 40-char limit clipped " - Word" / " - Notepad" suffixes on
         // longer document names, causing Tier-1 pattern matches to fail and Tier-2 jump-list
@@ -230,16 +189,7 @@ public class WindowService
         //     them *with package identity*. Starting their exe under C:\Program Files\WindowsApps
         //     directly gives the app no package container, so it loses its settings.
         // Classic desktop apps usually have no explicit AUMID — the empty string is expected.
-        string appUserModelId = WebAppService.GetWindowAppUserModelId(hWnd);
-
-        // Fallback for packaged (Store/MSIX) apps: their windows usually carry no explicit AUMID,
-        // so read it from the process's package identity instead. This is what lets us relaunch
-        // TradingView, Notepad, … via shell:AppsFolder with their settings intact.
-        if (string.IsNullOrEmpty(appUserModelId) &&
-            exePath.Contains(@"\WindowsApps\", StringComparison.OrdinalIgnoreCase))
-        {
-            appUserModelId = WebAppService.GetProcessAppUserModelId(processId);
-        }
+        string appUserModelId = observed.AppUserModelId;
 
         // For browser windows, read the address bar only when the user configured URL patterns
         // and the window's URL matches one. This keeps the (comparatively slow) UI Automation
@@ -252,7 +202,11 @@ public class WindowService
             if (BrowserUrlService.MatchesAnyPattern(url, urlPatterns))
             {
                 browserUrl = url;
-                AppLogger.Info($"[BrowserUrl] dedicated window matched: {url}");
+                AppLogger.Info(
+                    "browser_url.pattern_matched",
+                    "A browser window matched a configured dedicated-window pattern",
+                    LogField.Url("url", url),
+                    LogField.Public("processName", processName));
             }
         }
 
@@ -269,7 +223,7 @@ public class WindowService
         {
             ExecutablePath = exePath,
             ProcessName = processName,
-            ClassName = className.ToString(),
+            ClassName = observed.ClassName,
             TitleSnippet = snippet,
             ShowCmd = placement.ShowCmd,
             NormalLeft = placement.RcNormalPosition.Left,
@@ -291,7 +245,11 @@ public class WindowService
         // Get current placement to preserve flags
         if (!NativeMethodsWindow.GetWindowPlacement(hWnd, ref placement))
         {
-            AppLogger.Warn($"GetWindowPlacement failed for hwnd {hWnd}");
+            AppLogger.Warn(
+                "window.placement_read_failed",
+                "Could not read a live window placement",
+                LogField.Public("hwnd", hWnd),
+                LogField.Public("errorCategory", "get_window_placement"));
             return;
         }
 
@@ -313,7 +271,11 @@ public class WindowService
         var targetRect = ScaleCoordsForDpi(savedRect, savedDpi, currentDpi);
         if (savedDpi != currentDpi)
         {
-            AppLogger.Info($"DPI changed ({savedDpi} → {currentDpi}) — scaling coords");
+            AppLogger.Info(
+                "window.dpi_coordinates_scaled",
+                "Scaled saved window coordinates for a DPI change",
+                LogField.Public("savedDpi", savedDpi),
+                LogField.Public("currentDpi", currentDpi));
         }
 
         placement.ShowCmd = record.ShowCmd;
@@ -327,7 +289,11 @@ public class WindowService
 
         bool success = NativeMethodsWindow.SetWindowPlacement(hWnd, ref placement);
         if (!success)
-            AppLogger.Warn($"SetWindowPlacement failed for hwnd {hWnd}");
+            AppLogger.Warn(
+                "window.placement_write_failed",
+                "Could not apply a saved window placement",
+                LogField.Public("hwnd", hWnd),
+                LogField.Public("errorCategory", "set_window_placement"));
 
         // Spec: "If ShowCmd == 3 (maximized), also call ShowWindow(hwnd, 3)"
         if (record.ShowCmd == 3)
@@ -359,24 +325,29 @@ public class WindowService
     /// pairing each with its process ID and a captured <see cref="WindowRecord"/>.
     /// Used by <c>WorkspaceService</c> to match restored entries to live windows.
     /// </summary>
-    public Dictionary<IntPtr, (uint Pid, WindowRecord Record)> GetAllWindowsWithPids()
+    public Dictionary<IntPtr, (uint Pid, WindowRecord Record)> GetWindowsWithPids(
+        WindowCandidatePolicy policy)
     {
+        RequirePolicy(policy, WindowCandidatePolicy.RestoreMatchCandidate);
         var result = new Dictionary<IntPtr, (uint Pid, WindowRecord Record)>();
 
-        NativeMethodsWindow.EnumWindows((hWnd, _) =>
+        foreach (var observed in _rawInventory.EnumerateWindows())
         {
-            if (!ShouldIncludeWindow(hWnd)) return true;
+            if (!WindowPolicyEvaluator.Includes(observed, policy))
+                continue;
 
-            var record = CaptureWindowRecord(hWnd);
-            if (record == null) return true;
+            var record = CaptureWindowRecord(observed);
+            if (record == null)
+                continue;
 
-            NativeMethodsWindow.GetWindowThreadProcessId(hWnd, out uint pid);
-            result[hWnd] = (pid, record);
-            return true;
-        }, IntPtr.Zero);
+            result[observed.Hwnd] = (observed.ProcessId, record);
+        }
 
         return result;
     }
+
+    /// <inheritdoc />
+    public bool IsWindowAlive(IntPtr hWnd) => _rawInventory.IsWindowAlive(hWnd);
 
     /// <summary>
     /// Public alias for <see cref="RestoreWindow"/> — restores a single window to the
@@ -390,7 +361,7 @@ public class WindowService
     /// </summary>
     public void WriteDebugSnapshotToFile(string filePath)
     {
-        var snapshot = SnapshotAllWindows();
+        var snapshot = SnapshotWindows(WindowCandidatePolicy.CaptureCandidate);
         var options = new JsonSerializerOptions
         {
             WriteIndented = true,
@@ -398,10 +369,27 @@ public class WindowService
         };
         string json = JsonSerializer.Serialize(snapshot, options);
         File.WriteAllText(filePath, json);
-        AppLogger.Info($"Wrote debug snapshot to {filePath} — {snapshot.Count} windows");
+        AppLogger.Info(
+            "window.debug_snapshot_written",
+            "Wrote a window debug snapshot",
+            LogField.Path("snapshotPath", filePath),
+            LogField.Public("windowCount", snapshot.Count));
     }
 
     // ── Close all user windows ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the raw observations selected for safe-switch risk inspection. Unlike capture
+    /// selection, this includes owned dialogs and small/untitled transient windows.
+    /// </summary>
+    public IReadOnlyList<ObservedWindow> InspectUserWindows(WindowCandidatePolicy policy)
+    {
+        RequirePolicy(policy, WindowCandidatePolicy.SwitchRiskCandidate);
+        uint ownPid = (uint)Process.GetCurrentProcess().Id;
+        return _rawInventory.EnumerateWindows()
+            .Where(window => WindowPolicyEvaluator.Includes(window, policy, ownPid))
+            .ToArray();
+    }
 
     /// <summary>
     /// Gracefully closes all visible top-level user windows by posting WM_CLOSE.
@@ -410,24 +398,29 @@ public class WindowService
     /// responds (or cancels).
     /// Returns the number of windows that were sent a close message.
     /// </summary>
-    public int CloseAllUserWindows()
+    public int CloseAllUserWindows(WindowCandidatePolicy policy)
     {
+        RequirePolicy(policy, WindowCandidatePolicy.SwitchCloseCandidate);
         int closed = 0;
         var ownPid = (uint)Process.GetCurrentProcess().Id;
 
-        NativeMethodsWindow.EnumWindows((hWnd, _) =>
+        foreach (var observed in _rawInventory.EnumerateWindows())
         {
-            if (!ShouldIncludeWindow(hWnd)) return true;
+            if (!WindowPolicyEvaluator.Includes(observed, policy, ownPid))
+                continue;
 
-            NativeMethodsWindow.GetWindowThreadProcessId(hWnd, out uint pid);
-            if (pid == ownPid) return true;   // skip our own windows
-
-            NativeMethodsWindow.PostMessage(hWnd, NativeMethodsWindow.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+            NativeMethodsWindow.PostMessage(
+                observed.Hwnd,
+                NativeMethodsWindow.WM_CLOSE,
+                IntPtr.Zero,
+                IntPtr.Zero);
             closed++;
-            return true;
-        }, IntPtr.Zero);
+        }
 
-        AppLogger.Info($"CloseAllUserWindows: sent WM_CLOSE to {closed} windows");
+        AppLogger.Info(
+            "window.close_requests_sent",
+            "Sent close requests to user windows",
+            LogField.Public("windowCount", closed));
         return closed;
     }
 
@@ -437,26 +430,30 @@ public class WindowService
     /// Used by the "align &amp; minimize others" restore mode to clear away windows that are not
     /// part of the workspace without closing them. Returns the number of windows minimized.
     /// </summary>
-    public int MinimizeUserWindowsExcept(HashSet<IntPtr> keep)
+    public int MinimizeUserWindowsExcept(
+        WindowCandidatePolicy policy,
+        HashSet<IntPtr> keep)
     {
+        RequirePolicy(policy, WindowCandidatePolicy.MinimizeCandidate);
         const int SW_MINIMIZE = 6;   // minimize without activating another window
         int minimized = 0;
         var ownPid = (uint)Process.GetCurrentProcess().Id;
 
-        NativeMethodsWindow.EnumWindows((hWnd, _) =>
+        foreach (var observed in _rawInventory.EnumerateWindows())
         {
-            if (!ShouldIncludeWindow(hWnd)) return true;
-            if (keep.Contains(hWnd)) return true;
+            if (!WindowPolicyEvaluator.Includes(observed, policy, ownPid))
+                continue;
+            if (keep.Contains(observed.Hwnd))
+                continue;
 
-            NativeMethodsWindow.GetWindowThreadProcessId(hWnd, out uint pid);
-            if (pid == ownPid) return true;   // never touch our own windows
-
-            NativeMethodsWindow.ShowWindow(hWnd, SW_MINIMIZE);
+            NativeMethodsWindow.ShowWindow(observed.Hwnd, SW_MINIMIZE);
             minimized++;
-            return true;
-        }, IntPtr.Zero);
+        }
 
-        AppLogger.Info($"MinimizeUserWindowsExcept: minimized {minimized} window(s) not in the workspace");
+        AppLogger.Info(
+            "window.non_workspace_windows_minimized",
+            "Minimized windows outside the restored workspace",
+            LogField.Public("windowCount", minimized));
         return minimized;
     }
 
@@ -465,21 +462,18 @@ public class WindowService
     /// WindowAnchor's own windows).  Used to poll whether all windows have
     /// finished closing after <see cref="CloseAllUserWindows"/>.
     /// </summary>
-    public int CountUserWindows()
+    public int CountUserWindows(WindowCandidatePolicy policy)
     {
-        int count = 0;
-        var ownPid = (uint)Process.GetCurrentProcess().Id;
+        return InspectUserWindows(policy).Count;
+    }
 
-        NativeMethodsWindow.EnumWindows((hWnd, _) =>
-        {
-            if (!ShouldIncludeWindow(hWnd)) return true;
-
-            NativeMethodsWindow.GetWindowThreadProcessId(hWnd, out uint pid);
-            if (pid != ownPid)
-                count++;
-            return true;
-        }, IntPtr.Zero);
-
-        return count;
+    private static void RequirePolicy(
+        WindowCandidatePolicy actual,
+        WindowCandidatePolicy expected)
+    {
+        if (actual != expected)
+            throw new ArgumentException(
+                $"{expected} is required for this operation; received {actual}.",
+                nameof(actual));
     }
 }

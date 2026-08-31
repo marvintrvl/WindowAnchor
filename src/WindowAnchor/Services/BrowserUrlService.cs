@@ -48,7 +48,12 @@ public static class BrowserUrlService
         }
         catch (Exception ex)
         {
-            AppLogger.Debug($"[BrowserUrl] query failed for hwnd {hWnd}: {ex.Message}");
+            AppLogger.Debug(
+                "browser_url.query_failed",
+                "Could not query a browser address bar",
+                ex,
+                LogField.Public("hwnd", hWnd),
+                LogField.Public("errorCategory", "browser_url_query"));
             return "";
         }
     }
@@ -86,7 +91,11 @@ public static class BrowserUrlService
         }
         catch (Exception ex)
         {
-            AppLogger.Debug($"[BrowserUrl] ReadAddressBar failed: {ex.Message}");
+            AppLogger.Debug(
+                "browser_url.read_failed",
+                "Could not read a browser address bar",
+                ex,
+                LogField.Public("errorCategory", "browser_url_read"));
         }
 
         return "";

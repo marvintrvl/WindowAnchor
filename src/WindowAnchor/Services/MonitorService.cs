@@ -14,7 +14,7 @@ namespace WindowAnchor.Services;
 /// All identifiers are derived from EDID data via <c>DisplayConfigGetDeviceInfo</c>
 /// so they survive resolution and refresh-rate changes.
 /// </summary>
-public class MonitorService
+public class MonitorService : IMonitorInventory
 {
     // ── Monitor fingerprint ──────────────────────────────────────────────────
 
@@ -70,10 +70,16 @@ public class MonitorService
             }
         }
 
-        if (monitorIds.Count == 0) return "no_monitors";
+        return ComputeFingerprint(monitorIds);
+    }
 
-        monitorIds.Sort();
-        string joined = string.Join("|", monitorIds);
+    internal static string ComputeFingerprint(IEnumerable<string> monitorIds)
+    {
+        var sortedIds = monitorIds.ToList();
+        if (sortedIds.Count == 0) return "no_monitors";
+
+        sortedIds.Sort();
+        string joined = string.Join("|", sortedIds);
         using var sha256 = SHA256.Create();
         byte[] hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(joined));
         return BitConverter.ToString(hashBytes).Replace("-", "").ToLower().Substring(0, 8);

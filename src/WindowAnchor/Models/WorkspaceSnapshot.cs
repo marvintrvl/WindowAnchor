@@ -11,6 +11,20 @@ namespace WindowAnchor.Models;
 /// </summary>
 public class WorkspaceSnapshot
 {
+    /// <summary>Current persisted workspace schema version.</summary>
+    public const int CurrentSchemaVersion = 3;
+
+    /// <summary>Schema version used to serialize this workspace document.</summary>
+    [System.Text.Json.Serialization.JsonInclude]
+    public int SchemaVersion { get; internal set; } = CurrentSchemaVersion;
+
+    /// <summary>
+    /// Stable workspace identity. It is assigned once when a workspace is created or migrated
+    /// and is unaffected by display-name changes.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonInclude]
+    public string WorkspaceId { get; internal set; } = Guid.NewGuid().ToString("D");
+
     /// <summary>User-visible name of this workspace.</summary>
     public string   Name               { get; set; } = "";
     /// <summary>8-character hex fingerprint of the monitor set, used for auto-restore matching.</summary>

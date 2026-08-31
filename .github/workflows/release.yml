@@ -18,6 +18,9 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: Run service-layer tests
+        run: dotnet test WindowAnchor.sln --configuration Release
+
       - name: Build Windows executable
         shell: pwsh
         run: |

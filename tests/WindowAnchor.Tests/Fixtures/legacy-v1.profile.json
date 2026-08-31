@@ -1,0 +1,31 @@
+{
+  "fingerprint": "legacy42",
+  "displayName": "Legacy Desk",
+  "lastSaved": "2024-01-15T10:30:00Z",
+  "windows": [
+    {
+      "executablePath": "C:\\Program Files\\Editor\\editor.exe",
+      "processName": "editor",
+      "className": "EditorWindow",
+      "titleSnippet": "notes.txt - Editor",
+      "showCmd": 1,
+      "normalLeft": 100,
+      "normalTop": 120,
+      "normalRight": 900,
+      "normalBottom": 720,
+      "savedDpi": 96
+    },
+    {
+      "executablePath": "C:\\Program Files\\Browser\\browser.exe",
+      "processName": "browser",
+      "className": "BrowserWindow",
+      "titleSnippet": "Legacy browser",
+      "showCmd": 3,
+      "normalLeft": 1920,
+      "normalTop": 0,
+      "normalRight": 3840,
+      "normalBottom": 1080,
+      "savedDpi": 144
+    }
+  ]
+}

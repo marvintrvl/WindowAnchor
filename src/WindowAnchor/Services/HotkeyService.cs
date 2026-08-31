@@ -78,12 +78,24 @@ public sealed class HotkeyService : IDisposable
 
         if (!RegisterHotKey(_hwndSource.Handle, id, fsModifiers, vk))
         {
-            AppLogger.Warn($"HotkeyService: RegisterHotKey failed for id {id} ({modifiers}+{key}) — error {Marshal.GetLastWin32Error()}");
+            AppLogger.Warn(
+                "hotkey.registration_failed",
+                "Could not register a global hotkey",
+                LogField.Public("hotkeyId", id),
+                LogField.Public("modifiers", modifiers),
+                LogField.Public("key", key),
+                LogField.Public("nativeError", Marshal.GetLastWin32Error()),
+                LogField.Public("errorCategory", "register_hotkey"));
             return 0;
         }
 
         _callbacks[id] = callback;
-        AppLogger.Info($"HotkeyService: registered {modifiers}+{key} → id {id}");
+        AppLogger.Info(
+            "hotkey.registered",
+            "Registered a global hotkey",
+            LogField.Public("hotkeyId", id),
+            LogField.Public("modifiers", modifiers),
+            LogField.Public("key", key));
         return id;
     }
 
@@ -201,7 +213,15 @@ public sealed class HotkeyService : IDisposable
             if (_callbacks.TryGetValue(id, out var cb))
             {
                 try { cb(); }
-                catch (Exception ex) { AppLogger.Warn($"HotkeyService: callback error for id {id} — {ex.Message}"); }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn(
+                        "hotkey.callback_failed",
+                        "A global hotkey callback failed",
+                        ex,
+                        LogField.Public("hotkeyId", id),
+                        LogField.Public("errorCategory", "hotkey_callback"));
+                }
                 handled = true;
             }
         }

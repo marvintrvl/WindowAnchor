@@ -23,7 +23,11 @@ public static class AutostartService
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[AutostartService] IsEnabled error: {ex.Message}");
+            AppLogger.Debug(
+                "autostart.status_query_failed",
+                "Could not query the autostart registration",
+                ex,
+                LogField.Public("errorCategory", "autostart_query"));
             return false;
         }
     }
@@ -37,11 +41,18 @@ public static class AutostartService
             using var key  = Registry.CurrentUser.OpenSubKey(RegistryKeyPath, writable: true)
                           ?? Registry.CurrentUser.CreateSubKey(RegistryKeyPath);
             key.SetValue(ValueName, $"\"{exePath}\" --minimized");
-            Debug.WriteLine($"[AutostartService] Enabled: \"{exePath}\" --minimized");
+            AppLogger.Info(
+                "autostart.enabled",
+                "Enabled autostart",
+                LogField.CommandLine("commandLine", $"\"{exePath}\" --minimized"));
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[AutostartService] Enable error: {ex.Message}");
+            AppLogger.Warn(
+                "autostart.enable_failed",
+                "Could not enable autostart",
+                ex,
+                LogField.Public("errorCategory", "autostart_enable"));
         }
     }
 
@@ -54,12 +65,18 @@ public static class AutostartService
             if (key?.GetValue(ValueName) is not null)
             {
                 key.DeleteValue(ValueName);
-                Debug.WriteLine("[AutostartService] Disabled.");
+                AppLogger.Info(
+                    "autostart.disabled",
+                    "Disabled autostart");
             }
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[AutostartService] Disable error: {ex.Message}");
+            AppLogger.Warn(
+                "autostart.disable_failed",
+                "Could not disable autostart",
+                ex,
+                LogField.Public("errorCategory", "autostart_disable"));
         }
     }
 

@@ -1,0 +1,14 @@
+{
+  "startupBehavior": 1,
+  "defaultWorkspaceName": "Characterization Fixture",
+  "notificationsEnabled": true,
+  "hotkeysEnabled": true,
+  "workspaceOrder": [
+    "Stable Workspace",
+    "Characterization Fixture",
+    "Missing Workspace"
+  ],
+  "monitorAliases": {
+    "1234:5678:0": "Main Desk"
+  }
+}

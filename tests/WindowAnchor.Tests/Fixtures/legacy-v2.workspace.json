@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 2,
+  "name": "Legacy V2 Workspace",
+  "monitorFingerprint": "v2legacy",
+  "savedAt": "2025-02-10T08:15:00Z",
+  "savedWithFiles": true,
+  "monitors": [],
+  "entries": [
+    {
+      "executablePath": "C:\\Apps\\editor.exe",
+      "processName": "editor",
+      "windowClassName": "EditorWindow",
+      "filePath": "C:\\Documents\\notes.txt",
+      "fileConfidence": 90,
+      "fileSource": "JUMPLIST_EXACT",
+      "launchArg": "C:\\Documents\\notes.txt",
+      "position": {
+        "executablePath": "C:\\Apps\\editor.exe",
+        "processName": "editor",
+        "className": "EditorWindow",
+        "titleSnippet": "notes.txt - Editor",
+        "normalLeft": 100,
+        "normalTop": 100,
+        "normalRight": 900,
+        "normalBottom": 700,
+        "savedDpi": 96
+      }
+    }
+  ],
+  "browserSessions": []
+}

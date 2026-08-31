@@ -17,7 +17,7 @@ public partial class SaveWorkspaceDialog : FluentWindow
 
     /// <summary>
     /// Returns the list of <see cref="WindowRecord"/>s the user checked.
-    /// Pass this to <see cref="Services.WorkspaceService.TakeSnapshot"/> as <c>selectedWindows</c>.
+    /// Pass this to <see cref="Services.WorkspaceService.CaptureWorkspaceAsync"/> as <c>selectedWindows</c>.
     /// </summary>
     public List<WindowRecord> SelectedWindows =>
         _monitorGroups

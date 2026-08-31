@@ -104,7 +104,12 @@ public class WebAppService
         }
         catch (Exception ex)
         {
-            AppLogger.Debug($"[WebApp] GetWindowAppUserModelId failed for hwnd {hWnd}: {ex.Message}");
+            AppLogger.Debug(
+                "web_app.window_aumid_query_failed",
+                "Could not query a window AppUserModelID",
+                ex,
+                LogField.Public("hwnd", hWnd),
+                LogField.Public("errorCategory", "window_aumid_query"));
             return "";
         }
         finally
@@ -143,7 +148,12 @@ public class WebAppService
         }
         catch (Exception ex)
         {
-            AppLogger.Debug($"[WebApp] GetProcessAppUserModelId({processId}) failed: {ex.Message}");
+            AppLogger.Debug(
+                "web_app.process_aumid_query_failed",
+                "Could not query a process AppUserModelID",
+                ex,
+                LogField.Public("processId", processId),
+                LogField.Public("errorCategory", "process_aumid_query"));
             return "";
         }
         finally
@@ -216,12 +226,20 @@ public class WebAppService
                 }
                 catch (Exception ex)
                 {
-                    AppLogger.Debug($"[WebApp] shortcut '{lnk}' unreadable: {ex.Message}");
+                    AppLogger.Debug(
+                        "web_app.shortcut_read_failed",
+                        "Could not read a candidate web-app shortcut",
+                        ex,
+                        LogField.Path("shortcutPath", lnk),
+                        LogField.Public("errorCategory", "shortcut_read"));
                 }
             }
         }
 
-        AppLogger.Info($"[WebApp] shortcut index built — {index.Count} installed web app(s) found");
+        AppLogger.Info(
+            "web_app.shortcut_index_built",
+            "Built the installed web-app shortcut index",
+            LogField.Public("webAppCount", index.Count));
         return index;
     }
 

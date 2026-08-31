@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 99,
+  "startupBehavior": 0,
+  "defaultWorkspaceId": null,
+  "workspaceOrderIds": [],
+  "futureAutomationPolicy": {
+    "mode": "autonomous"
+  }
+}
