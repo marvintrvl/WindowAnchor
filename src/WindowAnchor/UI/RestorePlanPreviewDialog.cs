@@ -7,6 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using Wpf.Ui.Controls;
+using WindowAnchor.Models;
 using WindowAnchor.Services;
 using Brush = System.Windows.Media.Brush;
 using Brushes = System.Windows.Media.Brushes;
@@ -19,7 +20,7 @@ namespace WindowAnchor.UI;
 /// </summary>
 internal sealed class RestorePlanPreviewDialog : FluentWindow
 {
-    private readonly RestorePlan _previewPlan;
+    private RestorePlan _workingPlan;
     private readonly Dictionary<int, System.Windows.Controls.CheckBox> _entryControls = new();
     private readonly Wpf.Ui.Controls.Button _restoreButton;
     private readonly System.Windows.Controls.TextBlock _selectionSummary;
@@ -28,15 +29,22 @@ internal sealed class RestorePlanPreviewDialog : FluentWindow
     private readonly Dictionary<int, StackPanel> _entryActionPanels = new();
     private readonly Dictionary<int, System.Windows.Controls.TextBlock> _entryOutcomeLabels = new();
     private readonly Dictionary<int, Border> _entryCards = new();
+    private readonly Dictionary<(int EntryIndex, long WindowHandle), System.Windows.Controls.RadioButton> _candidateControls = new();
+    private readonly Dictionary<int, System.Windows.Controls.CheckBox> _rememberControls = new();
+    private readonly bool _isWorkspaceSwitch;
 
     internal RestorePlan? ApprovedPlan { get; private set; }
+    internal IReadOnlyList<WindowMatchHint> ApprovedMatchHints { get; private set; } =
+        Array.Empty<WindowMatchHint>();
 
-    internal RestorePlanPreviewDialog(RestorePlan previewPlan)
+    internal RestorePlanPreviewDialog(RestorePlan previewPlan, bool isWorkspaceSwitch = false)
     {
-        _previewPlan = previewPlan ?? throw new ArgumentNullException(nameof(previewPlan));
-        RestorePlanPreview preview = RestorePlanPreviewBuilder.Build(previewPlan);
+        _workingPlan = previewPlan ?? throw new ArgumentNullException(nameof(previewPlan));
+        _isWorkspaceSwitch = isWorkspaceSwitch;
+        RestorePlanPreview preview = RestorePlanPreviewBuilder.Build(_workingPlan);
 
-        Title = $"Review restore: {preview.WorkspaceName}";
+        string operation = isWorkspaceSwitch ? "switch" : "restore";
+        Title = $"Review {operation}: {preview.WorkspaceName}";
         Width = 780;
         Height = 720;
         MinWidth = 640;
@@ -52,11 +60,11 @@ internal sealed class RestorePlanPreviewDialog : FluentWindow
 
         var titleBar = new TitleBar
         {
-            Title = $"Review restore: {preview.WorkspaceName}",
+            Title = $"Review {operation}: {preview.WorkspaceName}",
             ShowMinimize = false,
             ShowMaximize = false
         };
-        AutomationProperties.SetName(titleBar, $"Restore plan preview for {preview.WorkspaceName}");
+        AutomationProperties.SetName(titleBar, $"{operation} plan preview for {preview.WorkspaceName}");
         Grid.SetRow(titleBar, 0);
         root.Children.Add(titleBar);
 
@@ -72,7 +80,9 @@ internal sealed class RestorePlanPreviewDialog : FluentWindow
 
         var heading = new System.Windows.Controls.TextBlock
         {
-            Text = "Review what WindowAnchor will change",
+            Text = isWorkspaceSwitch
+                ? "Review the destination workspace"
+                : "Review what WindowAnchor will change",
             FontSize = 20,
             FontWeight = FontWeights.SemiBold,
             Foreground = Brush("TextFillColorPrimaryBrush", Brushes.Black)
@@ -82,8 +92,11 @@ internal sealed class RestorePlanPreviewDialog : FluentWindow
 
         var introduction = new System.Windows.Controls.TextBlock
         {
-            Text = $"Mode: {ModeLabel(preview.Mode)} · {preview.Entries.Count} saved entries. " +
-                   "Clear an entry to remove its actions from the approved plan.",
+            Text = isWorkspaceSwitch
+                ? $"{preview.Entries.Count} saved entries. Matching destination windows stay open; " +
+                  "unrelated windows will be asked to close after approval. Clear an entry to exclude it."
+                : $"Mode: {ModeLabel(preview.Mode)} · {preview.Entries.Count} saved entries. " +
+                  "Clear an entry to remove its actions from the approved plan.",
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 5, 0, 12),
             Foreground = Brush("TextFillColorSecondaryBrush", Brushes.DimGray)
@@ -93,11 +106,13 @@ internal sealed class RestorePlanPreviewDialog : FluentWindow
 
         var notices = new StackPanel();
         Border destructiveNotice = Notice(
-            preview.DestructiveSummary,
-            preview.DestructiveActionCount > 0
+            isWorkspaceSwitch
+                ? "Switching can show save prompts for unrelated open windows; WindowAnchor never force-closes them."
+                : preview.DestructiveSummary,
+            isWorkspaceSwitch || preview.DestructiveActionCount > 0
                 ? Brush("SystemFillColorCautionBrush", Brushes.DarkOrange)
                 : Brush("SystemFillColorSuccessBrush", Brushes.SeaGreen),
-            preview.DestructiveActionCount > 0
+            isWorkspaceSwitch || preview.DestructiveActionCount > 0
                 ? Brush("SystemFillColorCautionBackgroundBrush", Brushes.LemonChiffon)
                 : Brush("SystemFillColorSuccessBackgroundBrush", Brushes.Honeydew));
         AutomationProperties.SetName(
@@ -174,19 +189,38 @@ internal sealed class RestorePlanPreviewDialog : FluentWindow
 
         _restoreButton = new Wpf.Ui.Controls.Button
         {
-            Content = "Restore selected",
+            Content = isWorkspaceSwitch ? "Switch to selected" : "Restore selected",
             Appearance = ControlAppearance.Primary,
             IsDefault = true,
             TabIndex = tabIndex
         };
-        AutomationProperties.SetName(_restoreButton, "Approve plan and restore selected entries");
+        AutomationProperties.SetName(
+            _restoreButton,
+            isWorkspaceSwitch
+                ? "Approve plan and switch to selected entries"
+                : "Approve plan and restore selected entries");
         AutomationProperties.SetHelpText(
             _restoreButton,
-            "Executes the exact actions shown in this preview after stale-plan validation.");
+            isWorkspaceSwitch
+                ? "Preserves approved destination windows, closes unrelated windows safely, then executes this exact plan."
+                : "Executes the exact actions shown in this preview after stale-plan validation.");
         _restoreButton.Click += (_, _) =>
         {
             ApprovedPlan = DeriveCurrentPlan();
             if (!ApprovedPlan.CanExecute || ApprovedPlan.Actions.Count == 0) return;
+            ApprovedMatchHints = _rememberControls
+                .Where(item => item.Value.IsChecked == true)
+                .Select(item => ApprovedPlan.Entries.Single(entry =>
+                    entry.EntryIndex == item.Key))
+                .Where(entry => entry.SelectedMatch is
+                    { CanRememberChoice: true, IdentityHint: not null })
+                .Select(entry => new WindowMatchHint
+                {
+                    WorkspaceId = ApprovedPlan.WorkspaceId,
+                    EntryId = entry.EntryId,
+                    Identity = entry.SelectedMatch!.IdentityHint!
+                })
+                .ToArray();
             DialogResult = true;
         };
         buttons.Children.Add(cancelButton);
@@ -273,6 +307,8 @@ internal sealed class RestorePlanPreviewDialog : FluentWindow
             Margin = new Thickness(0, 2, 0, 4),
             Foreground = Brush("TextFillColorTertiaryBrush", Brushes.Gray)
         });
+        if (entry.Candidates.Count > 0)
+            details.Children.Add(BuildCandidatePanel(entry));
         var actionPanel = new StackPanel();
         _entryActionPanels[entry.EntryIndex] = actionPanel;
         details.Children.Add(actionPanel);
@@ -284,6 +320,126 @@ internal sealed class RestorePlanPreviewDialog : FluentWindow
         return card;
     }
 
+    private FrameworkElement BuildCandidatePanel(RestorePlanPreviewEntry entry)
+    {
+        var panel = new StackPanel
+        {
+            Margin = new Thickness(0, 4, 0, 6)
+        };
+        panel.Children.Add(new System.Windows.Controls.TextBlock
+        {
+            Text = entry.Outcome == RestorePreviewOutcomeKind.Ambiguous
+                ? "Choose the window that belongs to this entry:"
+                : "Selected match evidence:",
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brush("TextFillColorSecondaryBrush", Brushes.DimGray),
+            Margin = new Thickness(0, 0, 0, 3)
+        });
+
+        foreach (RestorePlanPreviewCandidate candidate in entry.Candidates)
+        {
+            FrameworkElement content = CandidateContent(candidate);
+            if (entry.Outcome != RestorePreviewOutcomeKind.Ambiguous)
+            {
+                panel.Children.Add(content);
+                continue;
+            }
+
+            bool usedByAnother = _workingPlan.Entries.Any(item =>
+                item.EntryIndex != entry.EntryIndex &&
+                item.SelectedMatch?.WindowHandle == candidate.WindowHandle);
+            var radio = new System.Windows.Controls.RadioButton
+            {
+                GroupName = $"restore-match-{entry.EntryIndex}",
+                Content = content,
+                IsChecked = candidate.IsSelected,
+                IsEnabled = !usedByAnother,
+                Margin = new Thickness(0, 2, 0, 3),
+                Tag = candidate.WindowHandle
+            };
+            AutomationProperties.SetName(
+                radio,
+                $"Select {candidate.DisplayTitle}. {candidate.IdentityLabel}. " +
+                $"{candidate.ConfidenceLabel}. {string.Join(" ", candidate.Reasons)}");
+            radio.Checked += (_, _) => SelectCandidate(entry.EntryIndex, candidate);
+            _candidateControls[(entry.EntryIndex, candidate.WindowHandle)] = radio;
+            panel.Children.Add(radio);
+        }
+
+        if (entry.Outcome == RestorePreviewOutcomeKind.Ambiguous)
+        {
+            bool anyPersistable = entry.Candidates.Any(candidate => candidate.CanRememberChoice);
+            var remember = new System.Windows.Controls.CheckBox
+            {
+                Content = "Remember this choice for this workspace entry",
+                IsEnabled = false,
+                Margin = new Thickness(23, 2, 0, 0),
+                FontSize = 11,
+                ToolTip = anyPersistable
+                    ? "Uses stable workspace/entry IDs and a composite app identity; HWND and PID are never saved."
+                    : "These candidates do not have distinct stable composite identities, so this choice cannot be remembered safely."
+            };
+            AutomationProperties.SetName(remember, "Remember the selected window match");
+            _rememberControls[entry.EntryIndex] = remember;
+            panel.Children.Add(remember);
+        }
+        return panel;
+    }
+
+    private static FrameworkElement CandidateContent(RestorePlanPreviewCandidate candidate)
+    {
+        var content = new StackPanel();
+        content.Children.Add(new System.Windows.Controls.TextBlock
+        {
+            Text = candidate.DisplayTitle,
+            FontWeight = FontWeights.SemiBold,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Foreground = Brush("TextFillColorPrimaryBrush", Brushes.Black)
+        });
+        content.Children.Add(new System.Windows.Controls.TextBlock
+        {
+            Text = $"{candidate.IdentityLabel} · {candidate.ConfidenceLabel} · {candidate.ScoreLabel}",
+            FontSize = 10,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = Brush("TextFillColorTertiaryBrush", Brushes.Gray)
+        });
+        foreach (string reason in candidate.Reasons.Take(3))
+        {
+            content.Children.Add(new System.Windows.Controls.TextBlock
+            {
+                Text = $"Evidence: {reason}",
+                FontSize = 10,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = Brush("TextFillColorTertiaryBrush", Brushes.Gray)
+            });
+        }
+        return content;
+    }
+
+    private void SelectCandidate(int entryIndex, RestorePlanPreviewCandidate candidate)
+    {
+        try
+        {
+            _workingPlan = RestorePlanner.ResolveAmbiguousMatch(
+                _workingPlan,
+                entryIndex,
+                candidate.WindowHandle);
+            if (_rememberControls.TryGetValue(entryIndex, out var remember))
+            {
+                remember.IsEnabled = candidate.CanRememberChoice;
+                if (!candidate.CanRememberChoice)
+                    remember.IsChecked = false;
+            }
+            RefreshApprovalState();
+        }
+        catch (InvalidOperationException)
+        {
+            if (_candidateControls.TryGetValue((entryIndex, candidate.WindowHandle), out var radio))
+                radio.IsChecked = false;
+        }
+    }
+
     private void RefreshApprovalState()
     {
         if (_restoreButton is null || _selectionSummary is null || _blockingNotice is null) return;
@@ -293,9 +449,19 @@ internal sealed class RestorePlanPreviewDialog : FluentWindow
         int blockers = approved.BlockingErrors.Count;
         _selectionSummary.Text = blockers > 0
             ? $"{selected} selected · {blockers} blocking error{(blockers == 1 ? "" : "s")}"
-            : $"{selected} selected · ready to restore";
+            : $"{selected} selected · ready to {(_isWorkspaceSwitch ? "switch" : "restore")}";
         _blockingNotice.Visibility = blockers > 0 ? Visibility.Visible : Visibility.Collapsed;
         _restoreButton.IsEnabled = approved.CanExecute && approved.Actions.Count > 0;
+        foreach (((int entryIndex, long handle), System.Windows.Controls.RadioButton radio) in _candidateControls)
+        {
+            RestorePlanEntry? entry = _workingPlan.Entries.SingleOrDefault(item =>
+                item.EntryIndex == entryIndex);
+            radio.IsChecked = entry?.SelectedMatch?.WindowHandle == handle;
+            radio.IsEnabled = !_workingPlan.Entries.Any(entry =>
+                entry.EntryIndex != entryIndex &&
+                entry.SelectedMatch?.WindowHandle == handle &&
+                !_workingPlan.DisabledEntryIndexes.Contains(entry.EntryIndex));
+        }
         RenderEntryActions(approved);
         RenderGlobalActions(approved);
     }
@@ -384,7 +550,7 @@ internal sealed class RestorePlanPreviewDialog : FluentWindow
             .Where(item => item.Value.IsEnabled && item.Value.IsChecked != true)
             .Select(item => item.Key)
             .ToArray();
-        return RestorePlanner.DeriveApprovedPlan(_previewPlan, disabled);
+        return RestorePlanner.DeriveApprovedPlan(_workingPlan, disabled);
     }
 
     private static Border Notice(string text, Brush border, Brush background) => new()

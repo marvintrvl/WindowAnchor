@@ -64,11 +64,14 @@ internal class FakeWindowInventory : IWindowInventory
     internal List<WindowCandidatePolicy> LivePolicies { get; } = new();
     internal Func<int, Dictionary<IntPtr, (uint Pid, WindowRecord Record)>>? LiveProvider { get; set; }
     internal Func<IntPtr, bool>? IsAliveProvider { get; set; }
+    internal Action? OnSnapshotWindows { get; set; }
+    internal IReadOnlyList<RunningApplicationIdentity> RunningApplications { get; set; } = [];
 
     public virtual List<WindowRecord> SnapshotWindows(
         WindowCandidatePolicy policy,
         List<MonitorInfo>? monitors = null)
     {
+        OnSnapshotWindows?.Invoke();
         SnapshotPolicies.Add(policy);
         SuppliedMonitors = monitors;
         return Snapshot;
@@ -84,6 +87,9 @@ internal class FakeWindowInventory : IWindowInventory
 
     public virtual bool IsWindowAlive(IntPtr hWnd) =>
         IsAliveProvider?.Invoke(hWnd) ?? Live.ContainsKey(hWnd);
+
+    public virtual IReadOnlyList<RunningApplicationIdentity> GetRunningApplications() =>
+        RunningApplications;
 }
 
 internal sealed class ThrowingWindowInventory : FakeWindowInventory
@@ -106,9 +112,13 @@ internal class RecordingWindowMutation : IWindowMutation
     internal List<(IntPtr Hwnd, WindowRecord Record)> Restores { get; } = new();
     internal List<HashSet<IntPtr>> MinimizeCalls { get; } = new();
     internal List<WindowCandidatePolicy> MinimizePolicies { get; } = new();
+    internal Action<IntPtr, WindowRecord>? OnRestore { get; set; }
 
-    public virtual void RestoreSingleWindow(IntPtr hWnd, WindowRecord record) =>
+    public virtual void RestoreSingleWindow(IntPtr hWnd, WindowRecord record)
+    {
         Restores.Add((hWnd, record));
+        OnRestore?.Invoke(hWnd, record);
+    }
 
     public int MinimizeUserWindowsExcept(WindowCandidatePolicy policy, HashSet<IntPtr> keep)
     {
@@ -178,13 +188,98 @@ internal sealed class FakeRestoreClock : IRestoreClock
 {
     internal List<TimeSpan> Delays { get; } = new();
     internal Action<int>? OnDelay { get; set; }
+    private long _elapsedTicks;
+
+    internal TimeSpan Elapsed => TimeSpan.FromTicks(_elapsedTicks);
+
+    internal void Advance(TimeSpan duration) => _elapsedTicks += duration.Ticks;
+
+    public long GetTimestamp() => _elapsedTicks;
+
+    public TimeSpan GetElapsedTime(long startingTimestamp) =>
+        TimeSpan.FromTicks(_elapsedTicks - startingTimestamp);
 
     public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         Delays.Add(delay);
+        Advance(delay);
         OnDelay?.Invoke(Delays.Count);
         return Task.CompletedTask;
+    }
+}
+
+internal sealed class RecordingProgress<T> : IProgress<T>
+{
+    internal List<T> Reports { get; } = new();
+
+    public void Report(T value) => Reports.Add(value);
+}
+
+internal sealed class FakeWindowPlacementProbe : IWindowPlacementProbe
+{
+    internal int ObservationCalls { get; private set; }
+    internal Func<int, IntPtr, WindowPlacementObservation>? ObservationProvider { get; set; }
+    internal WindowPlacementObservation DefaultObservation { get; set; } =
+        new(true, true, 0, 0, 800, 600, 0, 96);
+
+    public WindowPlacementObservation Observe(IntPtr hwnd)
+    {
+        ObservationCalls++;
+        return ObservationProvider?.Invoke(ObservationCalls, hwnd) ?? DefaultObservation;
+    }
+}
+
+internal sealed class FakePackagedAppResolver : IPackagedAppResolver
+{
+    internal PackagedAppResolution? Resolution { get; set; }
+    internal List<(string ExecutablePath, string AppUserModelId)> Calls { get; } = new();
+
+    public PackagedAppResolution? Resolve(string executablePath, string? appUserModelId = null)
+    {
+        Calls.Add((executablePath, appUserModelId ?? ""));
+        return Resolution;
+    }
+}
+
+internal sealed class FakeAppReadinessProbe : IAppReadinessProbe
+{
+    private readonly FakeWindowInventory _inventory;
+
+    internal FakeAppReadinessProbe(FakeWindowInventory inventory) => _inventory = inventory;
+
+    internal int ObservationCalls { get; private set; }
+    internal HashSet<long> UnresponsiveWindowHandles { get; } = new();
+    internal HashSet<string> AdditionalProcessNames { get; } =
+        new(StringComparer.OrdinalIgnoreCase);
+    internal Func<int, AppReadinessObservation>? ObservationProvider { get; set; }
+
+    public AppReadinessObservation Observe()
+    {
+        ObservationCalls++;
+        if (ObservationProvider is not null)
+            return ObservationProvider(ObservationCalls);
+
+        Dictionary<IntPtr, (uint Pid, WindowRecord Record)> records =
+            _inventory.GetWindowsWithPids(WindowCandidatePolicy.RestoreMatchCandidate);
+        LiveWindowIdentity[] windows = records
+            .Select(item => WindowIdentityExtractor.FromLive(
+                item.Key,
+                item.Value.Pid,
+                item.Value.Record))
+            .OrderBy(window => window.Hwnd.ToInt64())
+            .ToArray();
+        var processNames = new HashSet<string>(AdditionalProcessNames, StringComparer.OrdinalIgnoreCase);
+        processNames.UnionWith(windows.Select(window => window.ProcessName));
+        return new AppReadinessObservation
+        {
+            Windows = windows,
+            RunningProcessNames = processNames,
+            ResponsiveWindowHandles = windows
+                .Select(window => window.Hwnd.ToInt64())
+                .Where(handle => !UnresponsiveWindowHandles.Contains(handle))
+                .ToHashSet()
+        };
     }
 }
 
@@ -239,4 +334,23 @@ internal sealed class RecordingAtomicFileWriter : IAtomicFileWriter
         Destinations.Add(path);
         _inner.WriteAllText(path, contents);
     }
+}
+
+internal sealed class ThrowingAtomicFileWriter : IAtomicFileWriter
+{
+    internal int Calls { get; private set; }
+
+    public void WriteAllText(string path, string contents)
+    {
+        Calls++;
+        throw new IOException("Injected atomic write failure");
+    }
+}
+
+internal sealed class FakeCheckpointClock : ICheckpointClock
+{
+    internal DateTime UtcNow { get; set; } =
+        new(2026, 9, 2, 10, 0, 0, DateTimeKind.Utc);
+
+    DateTime ICheckpointClock.UtcNow => UtcNow;
 }

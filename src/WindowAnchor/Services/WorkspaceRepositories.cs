@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using WindowAnchor.Models;
 
 namespace WindowAnchor.Services;
@@ -137,7 +138,7 @@ public abstract class WorkspaceRepository
     public virtual void Save(WorkspaceSnapshot snapshot) => SaveCanonical(snapshot);
 
     /// <summary>Deletes the artifact with the supplied stable ID from this repository only.</summary>
-    public void Delete(string workspaceId)
+    public virtual void Delete(string workspaceId)
     {
         string path = GetCanonicalPath(workspaceId);
         if (File.Exists(path))
@@ -302,10 +303,172 @@ public sealed class NamedWorkspaceRepository : WorkspaceRepository
 /// <summary>Recovery checkpoints stored exclusively under <c>checkpoints/</c>.</summary>
 public sealed class CheckpointRepository : WorkspaceRepository
 {
-    internal CheckpointRepository(string directory, IAtomicFileWriter writer)
+    private readonly string _directory;
+    private readonly IAtomicFileWriter _writer;
+    private readonly CheckpointRetentionPolicy _retention;
+    private readonly ICheckpointClock _clock;
+    private readonly object _sync = new();
+    private static readonly JsonSerializerOptions IndexJsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
+
+    static CheckpointRepository() =>
+        IndexJsonOptions.Converters.Add(new JsonStringEnumConverter());
+
+    internal CheckpointRepository(
+        string directory,
+        IAtomicFileWriter writer,
+        CheckpointRetentionPolicy? retention = null,
+        ICheckpointClock? clock = null)
         : base(directory, ".checkpoint.json", WorkspaceArtifactKind.Checkpoint, writer)
     {
+        _directory = directory;
+        _writer = writer;
+        _retention = retention ?? new CheckpointRetentionPolicy();
+        _clock = clock ?? new SystemCheckpointClock();
+        if (_retention.MaximumCount <= 0)
+            throw new ArgumentOutOfRangeException(nameof(retention), "Checkpoint count must be positive.");
+        if (_retention.MaximumAge <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(retention), "Checkpoint age must be positive.");
     }
+
+    public override void Save(WorkspaceSnapshot snapshot) =>
+        Save(snapshot, WorkspaceCheckpointTrigger.ManualCapture, "");
+
+    /// <summary>
+    /// Atomically commits a versioned checkpoint, then applies bounded retention and refreshes the
+    /// reconstructable metadata index. A committed payload remains usable if index maintenance
+    /// subsequently fails.
+    /// </summary>
+    public CheckpointSaveReceipt Save(
+        WorkspaceSnapshot snapshot,
+        WorkspaceCheckpointTrigger trigger,
+        string targetWorkspaceId)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (!string.IsNullOrWhiteSpace(targetWorkspaceId) && !Guid.TryParse(targetWorkspaceId, out _))
+            throw new ArgumentException("Target workspace ID must be a GUID when supplied.", nameof(targetWorkspaceId));
+
+        lock (_sync)
+        {
+            DateTime createdAt = _clock.UtcNow;
+            snapshot.SavedAt = createdAt;
+            snapshot.Checkpoint = new WorkspaceCheckpointMetadata
+            {
+                SchemaVersion = WorkspaceCheckpointMetadata.CurrentSchemaVersion,
+                CheckpointId = snapshot.WorkspaceId,
+                Trigger = trigger,
+                CreatedAtUtc = createdAt,
+                ExpiresAtUtc = createdAt.Add(_retention.MaximumAge),
+                TargetWorkspaceId = targetWorkspaceId,
+                SourceMonitorFingerprint = snapshot.MonitorFingerprint
+            };
+
+            // This is the transaction's durability boundary. If it fails, the caller must not
+            // begin any restore mutation.
+            SaveCanonical(snapshot);
+            TryMaintainHistoryAndIndex(writeIndexWhenUnchanged: true);
+
+            return new CheckpointSaveReceipt(
+                snapshot.Checkpoint.CheckpointId,
+                snapshot.Checkpoint.CreatedAtUtc,
+                snapshot.Checkpoint.ExpiresAtUtc,
+                snapshot.Checkpoint.Trigger,
+                snapshot.Checkpoint.TargetWorkspaceId);
+        }
+    }
+
+    /// <summary>Returns the newest healthy, non-expired checkpoint; corrupt peers are isolated.</summary>
+    public WorkspaceSnapshot? GetLatest()
+    {
+        lock (_sync)
+        {
+            TryMaintainHistoryAndIndex(writeIndexWhenUnchanged: false);
+            DateTime now = _clock.UtcNow;
+            return Load().Workspaces
+                .Where(checkpoint => GetExpiry(checkpoint) > now)
+                .OrderByDescending(GetCreatedAt)
+                .ThenByDescending(checkpoint => checkpoint.WorkspaceId, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault();
+        }
+    }
+
+    public override void Delete(string workspaceId)
+    {
+        lock (_sync)
+        {
+            base.Delete(workspaceId);
+            TryMaintainHistoryAndIndex(writeIndexWhenUnchanged: true);
+        }
+    }
+
+    private void TryMaintainHistoryAndIndex(bool writeIndexWhenUnchanged)
+    {
+        try
+        {
+            DateTime now = _clock.UtcNow;
+            WorkspaceLoadResult loaded = Load();
+            WorkspaceSnapshot[] newest = loaded.Workspaces
+                .Where(checkpoint => GetExpiry(checkpoint) > now)
+                .OrderByDescending(GetCreatedAt)
+                .ThenByDescending(checkpoint => checkpoint.WorkspaceId, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            var deleteIds = loaded.Workspaces
+                .Where(checkpoint => GetExpiry(checkpoint) <= now)
+                .Select(checkpoint => checkpoint.WorkspaceId)
+                .Concat(newest.Skip(_retention.MaximumCount).Select(checkpoint => checkpoint.WorkspaceId))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            foreach (string checkpointId in deleteIds)
+                base.Delete(checkpointId);
+
+            if (deleteIds.Length == 0 && !writeIndexWhenUnchanged)
+                return;
+
+            WorkspaceLoadResult retained = Load();
+            var index = new CheckpointIndexDocument
+            {
+                UpdatedAtUtc = now,
+                IsolatedFailureCount = retained.Issues.Count,
+                Checkpoints = retained.Workspaces
+                    .Where(checkpoint => GetExpiry(checkpoint) > now)
+                    .OrderByDescending(GetCreatedAt)
+                    .Select(checkpoint => new CheckpointIndexEntry(
+                        checkpoint.WorkspaceId,
+                        GetCreatedAt(checkpoint),
+                        GetExpiry(checkpoint),
+                        checkpoint.Checkpoint?.Trigger ?? WorkspaceCheckpointTrigger.ManualCapture,
+                        checkpoint.Checkpoint?.TargetWorkspaceId ?? "",
+                        checkpoint.Checkpoint?.SourceMonitorFingerprint ?? checkpoint.MonitorFingerprint,
+                        checkpoint.Entries.Count))
+                    .ToArray()
+            };
+            _writer.WriteAllText(
+                Path.Combine(_directory, "checkpoint-index.json"),
+                JsonSerializer.Serialize(index, IndexJsonOptions));
+        }
+        catch (Exception ex)
+        {
+            // The payload was already committed atomically. The index is a cache and is rebuilt
+            // on the next successful save/delete, so maintenance failure must not invalidate an
+            // otherwise safe pre-restore checkpoint.
+            AppLogger.Warn(
+                "checkpoint.maintenance_failed",
+                "Checkpoint retention or metadata-index maintenance failed",
+                ex,
+                LogField.Public("errorCategory", "checkpoint_maintenance"));
+        }
+    }
+
+    private DateTime GetCreatedAt(WorkspaceSnapshot checkpoint) =>
+        checkpoint.Checkpoint?.CreatedAtUtc.ToUniversalTime() ?? checkpoint.SavedAt.ToUniversalTime();
+
+    private DateTime GetExpiry(WorkspaceSnapshot checkpoint) =>
+        checkpoint.Checkpoint?.ExpiresAtUtc.ToUniversalTime() ??
+        checkpoint.SavedAt.ToUniversalTime().Add(_retention.MaximumAge);
 }
 
 /// <summary>Short-lived captures stored exclusively under <c>temporary-captures/</c>.</summary>

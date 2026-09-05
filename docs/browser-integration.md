@@ -23,6 +23,12 @@ the preview. If the saved session cannot be restored, only a fallback already de
 may launch an ordinary browser. Disabling the relevant browser entry removes the global session
 action and protects that entry from fallback launch, placement, and terminal minimize behavior.
 
+Browser work is covered by the same transactional and progress boundaries as desktop restoration.
+The current desktop checkpoint is durable before a connector restore can create a browser window;
+the progress UI names the browser stage and remains cancellable. A successful connector action
+starts readiness only for its related saved entries, so an unrelated browser or process action
+cannot trigger another entry's timeout.
+
 ## Installing the host for local testing
 
 1. Publish WindowAnchor and place the executable at the path used by `browser-extension/native-host-manifest.json`.

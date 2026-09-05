@@ -62,6 +62,14 @@ public static class TitleParser
 
         string rawFile = match.Groups["file"].Value.Trim('*', ' ', '●', '•');
 
+        // VS Code and Cursor append the folder/workspace name before their product suffix:
+        // "README.md - My Workspace - Visual Studio Code". The generic greedy expression sees
+        // the whole prefix as a filename, which previously triggered a recursive search for an
+        // impossible name. Peel workspace suffixes only until the remaining value looks like a
+        // real filename; filenames containing " - " remain intact when their extension is valid.
+        if (normalizedProc is "code" or "cursor" && !Path.IsPathRooted(rawFile))
+            rawFile = NormalizeEditorFileCandidate(rawFile);
+
         // Check if it's a rooted path
         if (Path.IsPathRooted(rawFile) && File.Exists(rawFile))
         {
@@ -75,5 +83,32 @@ public static class TitleParser
         }
 
         return (null, 0);
+    }
+
+    private static string NormalizeEditorFileCandidate(string candidate)
+    {
+        string current = candidate;
+        while (!LooksLikeFileName(current))
+        {
+            int separator = current.LastIndexOf(" - ", StringComparison.Ordinal);
+            if (separator < 0)
+                break;
+            current = current[..separator].TrimEnd();
+        }
+        return current;
+    }
+
+    private static bool LooksLikeFileName(string value)
+    {
+        string extension = Path.GetExtension(value);
+        if (extension.Length is < 2 or > 20)
+            return false;
+        for (int index = 1; index < extension.Length; index++)
+        {
+            char character = extension[index];
+            if (!char.IsLetterOrDigit(character) && character is not ('-' or '_'))
+                return false;
+        }
+        return true;
     }
 }

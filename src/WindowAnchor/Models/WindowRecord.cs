@@ -59,6 +59,20 @@ public class WindowRecord
     public uint SavedDpi     { get; set; } = 96;
 
     /// <summary>
+    /// Work-area-relative geometry and semantic anchors captured alongside the exact pixel
+    /// rectangle. Null identifies a legacy snapshot and activates the safe legacy fallback.
+    /// </summary>
+    public NormalizedWindowLayout? NormalizedLayout { get; set; }
+
+    /// <summary>
+    /// Runtime-only marker used by the restore executor when coordinates have already been
+    /// converted to the target monitor. Prevents the mutation boundary from scaling them again
+    /// using the window's pre-move monitor DPI.
+    /// </summary>
+    [JsonIgnore]
+    public bool CoordinatesAreFinal { get; set; }
+
+    /// <summary>
     /// For File Explorer windows: the folder open at snapshot time.
     /// Populated via Shell.Application COM. Empty for non-Explorer windows.
     /// </summary>

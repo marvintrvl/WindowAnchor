@@ -30,7 +30,11 @@ public class StorageService
     {
     }
 
-    internal StorageService(string baseDirectory, IAtomicFileWriter? atomicWriter = null)
+    internal StorageService(
+        string baseDirectory,
+        IAtomicFileWriter? atomicWriter = null,
+        CheckpointRetentionPolicy? checkpointRetention = null,
+        ICheckpointClock? checkpointClock = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(baseDirectory);
 
@@ -45,7 +49,9 @@ public class StorageService
             AtomicWriter);
         Checkpoints = new CheckpointRepository(
             Path.Combine(_baseDir, "checkpoints"),
-            AtomicWriter);
+            AtomicWriter,
+            checkpointRetention,
+            checkpointClock);
         TemporaryCaptures = new TemporaryCaptureRepository(
             Path.Combine(_baseDir, "temporary-captures"),
             AtomicWriter);

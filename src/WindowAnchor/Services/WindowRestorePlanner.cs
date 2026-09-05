@@ -43,10 +43,10 @@ internal static class WindowRestorePlanner
             if (restoredEntries.Contains(entryIndex)) continue;
 
             SavedWindowIdentity saved = WindowIdentityExtractor.FromSaved(entries[entryIndex]);
-            WindowMatchCandidate? selected = WindowMatcher.FindCandidates(
+            WindowMatchCandidate? selected = WindowMatcher.Resolve(
                     saved,
                     liveIdentities.Where(live => !consumedHwnds.Contains(live.Hwnd)))
-                .FirstOrDefault(candidate => candidate.IsEligible);
+                .SelectedCandidate;
             if (selected == null) continue;
 
             consumedHwnds.Add(selected.Hwnd);

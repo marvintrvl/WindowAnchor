@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
@@ -48,12 +49,39 @@ public class HotkeyBinding
 }
 
 /// <summary>
+/// Persisted, runtime-independent description of a live window selected by the user. The
+/// executable/class or stronger application identity anchors the hint; title tokens are only a
+/// secondary discriminator and are never persisted as the sole identity.
+/// </summary>
+public sealed record WindowIdentityHint
+{
+    public string ExecutablePath { get; init; } = "";
+    public string ProcessName { get; init; } = "";
+    public string WindowClassName { get; init; } = "";
+    public string AppUserModelId { get; init; } = "";
+    public string PackageFamilyName { get; init; } = "";
+    public string FolderPath { get; init; } = "";
+    public string BrowserFamily { get; init; } = "";
+    public string BrowserSiteHost { get; init; } = "";
+    public string PwaIdentity { get; init; } = "";
+    public IReadOnlyList<string> TitleTokens { get; init; } = Array.Empty<string>();
+}
+
+/// <summary>A learned match scoped by immutable workspace and entry identifiers.</summary>
+public sealed record WindowMatchHint
+{
+    public string WorkspaceId { get; init; } = "";
+    public string EntryId { get; init; } = "";
+    public WindowIdentityHint Identity { get; init; } = new();
+}
+
+/// <summary>
 /// Persisted application settings stored in %AppData%\WindowAnchor\settings.json.
 /// </summary>
 public class AppSettings
 {
     /// <summary>Current persisted settings schema version.</summary>
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     /// <summary>Schema version used to serialize this settings document.</summary>
     [JsonInclude]
@@ -123,4 +151,11 @@ public class AppSettings
     /// </para>
     /// </summary>
     public List<string>? DedicatedBrowserUrlPatterns { get; set; }
+
+    // ── Learned window matching ──────────────────────────────────────────
+    /// <summary>
+    /// User-approved match hints keyed by stable workspace and entry IDs. Runtime HWND/PID values
+    /// are deliberately never persisted.
+    /// </summary>
+    public List<WindowMatchHint>? WindowMatchHints { get; set; }
 }

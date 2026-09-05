@@ -1,3 +1,4 @@
+using WindowAnchor.Native;
 using WindowAnchor.Services;
 
 namespace WindowAnchor.Tests;
@@ -49,6 +50,59 @@ public class WindowPolicyTests
                 Includes(candidate, WindowCandidatePolicy.CaptureCandidate),
                 Includes(candidate, WindowCandidatePolicy.RestoreMatchCandidate));
         }
+    }
+
+    [Theory]
+    [InlineData(NativeMethodsWindow.WS_EX_TOOLWINDOW)]
+    [InlineData(NativeMethodsWindow.WS_EX_NOACTIVATE)]
+    public void Os_marked_non_task_surfaces_are_not_workspace_windows(long extendedStyle)
+    {
+        ObservedWindow surface = Window() with
+        {
+            ExtendedStyle = extendedStyle
+        };
+
+        Assert.False(Includes(surface, WindowCandidatePolicy.CaptureCandidate));
+        Assert.False(Includes(surface, WindowCandidatePolicy.RestoreMatchCandidate));
+        Assert.False(Includes(surface, WindowCandidatePolicy.SwitchCloseCandidate));
+        Assert.False(Includes(surface, WindowCandidatePolicy.SwitchRiskCandidate));
+        Assert.False(Includes(surface, WindowCandidatePolicy.MinimizeCandidate));
+    }
+
+    [Fact]
+    public void Dwm_cloaked_surfaces_are_not_workspace_windows_or_switch_risks()
+    {
+        ObservedWindow cloaked = Window() with { IsCloaked = true };
+
+        foreach (WindowCandidatePolicy policy in Enum.GetValues<WindowCandidatePolicy>())
+            Assert.False(Includes(cloaked, policy));
+    }
+
+    [Fact]
+    public void Appwindow_style_explicitly_opts_an_owned_window_into_task_policies()
+    {
+        ObservedWindow appWindow = Window() with
+        {
+            OwnerHwnd = new IntPtr(99),
+            ExtendedStyle = NativeMethodsWindow.WS_EX_APPWINDOW |
+                NativeMethodsWindow.WS_EX_NOACTIVATE
+        };
+
+        Assert.True(Includes(appWindow, WindowCandidatePolicy.CaptureCandidate));
+        Assert.True(Includes(appWindow, WindowCandidatePolicy.RestoreMatchCandidate));
+        Assert.True(Includes(appWindow, WindowCandidatePolicy.SwitchCloseCandidate));
+    }
+
+    [Fact]
+    public void Temporary_popup_does_not_remove_its_independent_root_from_capture()
+    {
+        ObservedWindow root = Window() with
+        {
+            TaskSwitcherRepresentativeHwnd = new IntPtr(12)
+        };
+
+        Assert.True(Includes(root, WindowCandidatePolicy.CaptureCandidate));
+        Assert.True(Includes(root, WindowCandidatePolicy.RestoreMatchCandidate));
     }
 
     [Fact]
@@ -136,6 +190,31 @@ public class WindowPolicyTests
             service.InspectUserWindows(WindowCandidatePolicy.CaptureCandidate));
         Assert.Throws<ArgumentException>(() =>
             service.SnapshotWindows(WindowCandidatePolicy.SwitchRiskCandidate));
+    }
+
+    [Fact]
+    public void Safe_switch_close_returns_only_requested_non_preserved_handles()
+    {
+        uint otherPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id + 1;
+        ObservedWindow close = Window() with { Hwnd = new IntPtr(11), ProcessId = otherPid };
+        ObservedWindow preserve = Window() with { Hwnd = new IntPtr(12), ProcessId = otherPid };
+        ObservedWindow ownedRisk = Window() with
+        {
+            Hwnd = new IntPtr(13),
+            ProcessId = otherPid,
+            OwnerHwnd = new IntPtr(11)
+        };
+        var service = new WindowService(new FakeRawWindowInventory
+        {
+            Windows = [close, preserve, ownedRisk]
+        });
+
+        IReadOnlySet<IntPtr> requested = service.RequestCloseUserWindowsExcept(
+            WindowCandidatePolicy.SwitchCloseCandidate,
+            new HashSet<IntPtr> { preserve.Hwnd });
+
+        Assert.Equal([close.Hwnd], requested);
+        Assert.DoesNotContain(ownedRisk.Hwnd, requested);
     }
 
     private static bool Includes(

@@ -38,3 +38,8 @@ The desktop app represents browser restore as an explicit action in its immutabl
 Manual restores show the action before approval, recheck connector availability before mutation,
 and use an ordinary-browser fallback only when that fallback was included in the approved plan.
 Disabling the corresponding entry prevents both the session action and its fallback.
+
+Desktop restoration commits a recovery checkpoint before sending a browser restore request and
+reports connector work in the cancellable restore-progress window. Readiness waits are correlated
+to the successful browser action for the same saved entry rather than to unrelated application
+activity.

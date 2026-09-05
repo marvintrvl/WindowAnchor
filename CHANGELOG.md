@@ -6,6 +6,91 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-09-05
+
+### Added
+- **Matching confidence and ambiguity resolver** — Deterministic service-layer thresholds now classify exact, strong, probable, ambiguous, missing, and ineligible outcomes. Candidates inside the top-vs-runner-up safety margin receive no automatic HWND assignment.
+- **Interactive ambiguity resolution** — Restore Preview exposes candidate title, process/class, monitor, bounds, score, confidence, and evidence; selecting a candidate derives a new immutable plan while preserving session-wide one-HWND ownership.
+- **Optional learned matches** — User-approved choices can be persisted by stable workspace/entry IDs plus composite application identity. HWND/PID and title-only hints are never stored, and all remembered choices can be cleared in Settings.
+- **Application readiness engine** — Approved launches now progress through `NotStarted`, `ProcessStarted`, `WindowFound`, `Ready`, `TimedOut`, or `Failed` using process existence, safe identity matching, responsiveness, and stable title/class/bounds observations.
+- **Adapter readiness strategies** — Application-specific strategies can override the generic stability rule while retaining the shared ambiguity-safe window matcher.
+- **Post-restore placement verification** — Assigned windows are re-read after a short settling
+  interval and compared with planned normal bounds/state using DPI-aware tolerance. Mismatches use
+  bounded same-HWND retries and report `Applied`, `Rejected`, `MovedByApp`, or `WindowGone` with
+  retry count and strategy.
+- **Placement verification strategies** — Application adapters may override verification delay,
+  tolerance, and retry count without bypassing matching or session-wide HWND ownership.
+- **Semantic and normalized window layouts** — Workspace schema v4 stores source monitor bounds,
+  work areas, DPI, normalized X/Y/W/H, horizontal/vertical anchors, and detected full, half, third,
+  centered, or custom layouts alongside legacy exact pixels.
+- **Reviewed workspace switching** — Tray, Settings, and switch hotkeys now show the same confidence,
+  ambiguity, evidence, and adapted-placement preview used by manual restore.
+- **Transactional pre-restore checkpoints** — Restores, adaptive/automatic restores,
+  align-and-minimize, workspace switches, and undo capture the current desktop through the shared
+  snapshot pipeline and atomically persist it before the first mutation. A failed checkpoint blocks
+  the operation without moving, minimizing, closing, or launching anything.
+- **Undo Last Restore** — The tray exposes the latest healthy recovery point. Undo restores it
+  through the normal planner and first captures a new safety checkpoint, making undo itself
+  recoverable.
+- **Bounded checkpoint storage** — Versioned recovery metadata and a reconstructable metadata index
+  support a default maximum of ten checkpoints retained for seven days. Expired/oldest checkpoints
+  are pruned without scanning named workspaces, and corrupt checkpoint files are isolated.
+- **Restore progress window** — Manual restore, switch, hotkey restore, and undo now identify the
+  active checkpoint, resource, browser, launch, readiness, close-wait, and placement stage, with
+  item counts, continuously updating elapsed/limit timing, and safe cancellation.
+
+### Changed
+- **Settings schema v3** — Existing settings migrate automatically to the learned-match-capable schema without changing prior preferences.
+- **Safer reconciliation** — Legacy and post-launch matching paths now leave close candidates unresolved instead of selecting the lowest HWND.
+- **Signal-driven launch reconciliation** — Fixed three-second/two-second restore sleeps were replaced by cancellable 250 ms polling with a 45-second per-entry timeout. Ready entries are positioned immediately while slower entries continue independently, and a wait starts only after a successful launch/browser action related to that entry.
+- **Startup restore scheduling** — Startup restore is queued at dispatcher idle instead of imposing an unrelated two-second delay.
+- **Topology-aware placement policy** — Identical monitor geometry uses exact saved pixels; changed,
+  resized, rotated, taskbar-adjusted, mixed-DPI, or missing-monitor topologies use semantic/normalized
+  work-area placement. Legacy rectangles remain supported and are clamped fully on-screen.
+- **Destination-window preservation during switching** — Approved target HWNDs remain open and are
+  reused; only unrelated close candidates receive `WM_CLOSE`.
+- **Pre-cancelled restore safety** — Cancellation before the transaction durability gate now performs
+  zero mutation instead of allowing an initial window move.
+- **Bounded capture discovery** — Recovery checkpoints use fast title, Explorer-folder, PWA, and
+  browser metadata without parsing Jump Lists or recursively scanning user folders. Comprehensive
+  named saves retain Jump List discovery and share one five-second Tier-3 folder-search budget
+  instead of paying an unbounded cost per window.
+
+### Fixed
+- **Slow restore and switch startup** — Pre-restore checkpoints no longer rebuild every Windows
+  jump-list or recursively search Documents, Desktop, Downloads, and OneDrive. VS Code/Cursor
+  workspace suffixes are no longer mistaken for part of a filename. Transactional checkpoints also
+  skip per-application Jump List parsing, preventing a large or locked Chrome list from blocking a switch.
+- **Readiness timeout wall clock** — The readiness limit now includes time spent probing windows
+  and processes; expensive observations can no longer stretch it beyond its configured 45 seconds.
+- **Changeable ambiguity choices** — Selecting a different candidate after initially resolving an
+  ambiguous entry now updates the immutable plan and keeps exactly one radio button visibly selected.
+- **Expected switch closures marked stale** — Candidate HWNDs intentionally closed by the active
+  workspace-switch transaction may disappear without invalidating selected target assignments;
+  newly appearing eligible candidates still invalidate the reviewed plan.
+- **Background surfaces captured as apps** — Window selection now uses native task semantics
+  (`WS_EX_TOOLWINDOW`, `WS_EX_NOACTIVATE`, `WS_EX_APPWINDOW`, ownership, and
+  DWM cloaking) instead of product, process, class, or title blacklists. Existing running processes
+  with no eligible task window are explained and skipped without a readiness timeout.
+- **Unrelated readiness waits** — A successful launch no longer starts polling every passive wait
+  in the plan. Each wait is correlated with its own launch, browser-session restore, or a successful
+  launch for the same stable application identity.
+- **Unsafe duplicate and hosted-window assumptions** — Captured window multiplicity is preserved,
+  while session-wide HWND ownership prevents one live window from satisfying multiple entries.
+  Cross-process matching requires an exact AppUserModelID within the same package family;
+  title-only runtime-host exceptions were removed.
+- **Endless switch waiting notifications** — The switch close phase tracks only HWNDs it actually
+  asked to close instead of polling the broader transient-risk inventory. A newer switch cancels
+  the previous one, execution is serialized, timeout uses wall-clock time, and waiting toasts are
+  rate-limited.
+- **Missing-monitor off-screen restoration** — Fallback placement is rebased into the selected
+  monitor work area and cannot remain fully outside the visible desktop.
+- **Target-DPI double scaling** — Planner-produced final coordinates are no longer rescaled using
+  the live window's pre-move monitor DPI.
+- **Store/MSIX paths invalidated by app updates** — Stale versioned `WindowsApps` executables are
+  rebound to the currently registered package and activated through the stable
+  `PackageFamilyName!ApplicationId`; the missing old path is now a warning instead of a blocker.
+
 ## [1.5.0] - 2026-09-01
 
 ### Added

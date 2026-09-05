@@ -132,7 +132,7 @@ public class RestoreSessionContextTests
     }
 
     [Fact]
-    public void Equal_candidates_are_deterministic_regardless_of_inventory_insertion_order()
+    public void Equal_candidates_are_not_proposed_regardless_of_inventory_insertion_order()
     {
         const string exe = @"C:\Apps\editor.exe";
         var entry = Entry(exe, "same title");
@@ -143,13 +143,10 @@ public class RestoreSessionContextTests
             (402, Record(exe, "same title")),
             (401, Record(exe, "same title")));
 
-        var first = Assert.Single(WindowRestorePlanner.PlanMatches(
+        Assert.Empty(WindowRestorePlanner.PlanMatches(
             [entry], ascending, new HashSet<int>()));
-        var second = Assert.Single(WindowRestorePlanner.PlanMatches(
+        Assert.Empty(WindowRestorePlanner.PlanMatches(
             [entry], descending, new HashSet<int>()));
-
-        Assert.Equal(new IntPtr(401), first.Hwnd);
-        Assert.Equal(first.Hwnd, second.Hwnd);
     }
 
     [Fact]

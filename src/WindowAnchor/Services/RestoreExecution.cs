@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -41,6 +42,32 @@ public enum RestoreExecutionEntryStatus
     Failed
 }
 
+/// <summary>Stable stages surfaced while a restore or workspace switch is executing.</summary>
+public enum RestoreProgressStage
+{
+    PreparingCheckpoint,
+    DetectingResources,
+    CapturingBrowserSession,
+    SavingCheckpoint,
+    ClosingWindows,
+    LaunchingApplications,
+    WaitingForApplications,
+    VerifyingPlacements
+}
+
+/// <summary>
+/// User-facing progress for one restore transaction. Titles and application names are intended
+/// for the local UI; structured diagnostics continue to apply their normal sensitivity policy.
+/// </summary>
+public sealed record RestoreProgressReport(
+    RestoreProgressStage Stage,
+    string Message,
+    string Detail = "",
+    int Current = 0,
+    int Total = 0,
+    TimeSpan? Elapsed = null,
+    TimeSpan? Timeout = null);
+
 /// <summary>Why an approved action no longer matches current external state.</summary>
 public enum RestorePlanStaleReason
 {
@@ -61,7 +88,13 @@ public sealed record RestoreExecutionActionResult(
     RestoreExecutionActionStatus Status,
     RestorePlanStaleReason? StaleReason,
     long? WindowHandle,
-    string Explanation);
+    string Explanation,
+    AppReadinessState? ReadinessState = null,
+    string? ReadinessStrategy = null,
+    WindowPlacementVerificationState? PlacementVerification = null,
+    int PlacementRetryCount = 0,
+    string? PlacementVerificationStrategy = null,
+    int? PlacementTolerancePixels = null);
 
 /// <summary>Structured execution result for one saved entry.</summary>
 public sealed record RestoreExecutionEntryResult(
@@ -69,7 +102,13 @@ public sealed record RestoreExecutionEntryResult(
     string EntryId,
     RestoreExecutionEntryStatus Status,
     long? AssignedWindowHandle,
-    string Explanation);
+    string Explanation,
+    AppReadinessState? ReadinessState = null,
+    string? ReadinessStrategy = null,
+    WindowPlacementVerificationState? PlacementVerification = null,
+    int PlacementRetryCount = 0,
+    string? PlacementVerificationStrategy = null,
+    int? PlacementTolerancePixels = null);
 
 /// <summary>Structured outcome of executing an immutable restore plan.</summary>
 public sealed record RestoreExecutionResult(
@@ -80,7 +119,18 @@ public sealed record RestoreExecutionResult(
     IReadOnlyList<RestoreExecutionActionResult> Actions,
     IReadOnlySet<long> AssignedWindowHandles)
 {
+    /// <summary>
+    /// Durable pre-mutation checkpoint outcome. Null only for deliberately non-transactional
+    /// low-level executor use or a plan that contained no executable actions.
+    /// </summary>
+    public RestoreCheckpointOutcome? Checkpoint { get; init; }
+
     public bool HasStalePlan => Status == RestoreExecutionStatus.StalePlan;
+
+    public IReadOnlyList<RestoreExecutionEntryResult> PlacementFailures => Entries
+        .Where(entry => entry.PlacementVerification is not null and not
+            WindowPlacementVerificationState.Applied)
+        .ToArray();
 }
 
 /// <summary>Result of immediately revalidating a launch target.</summary>
@@ -97,9 +147,11 @@ public interface IRestoreProcessLauncher
     void Launch(RestoreAction action);
 }
 
-/// <summary>Fixed-delay boundary used by the compatibility execution phases.</summary>
+/// <summary>Cancellation-aware delay boundary used by deterministic readiness polling.</summary>
 public interface IRestoreClock
 {
+    long GetTimestamp();
+    TimeSpan GetElapsedTime(long startingTimestamp);
     Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken);
 }
 
@@ -131,9 +183,14 @@ public sealed class SystemRestoreProcessLauncher : IRestoreProcessLauncher
     }
 }
 
-/// <summary>Production compatibility clock backed by <see cref="Task.Delay(TimeSpan, CancellationToken)"/>.</summary>
+/// <summary>Production readiness clock backed by <see cref="Task.Delay(TimeSpan, CancellationToken)"/>.</summary>
 public sealed class SystemRestoreClock : IRestoreClock
 {
+    public long GetTimestamp() => Stopwatch.GetTimestamp();
+
+    public TimeSpan GetElapsedTime(long startingTimestamp) =>
+        Stopwatch.GetElapsedTime(startingTimestamp);
+
     public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken) =>
         Task.Delay(delay, cancellationToken);
 }

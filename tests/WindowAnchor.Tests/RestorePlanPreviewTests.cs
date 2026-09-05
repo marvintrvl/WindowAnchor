@@ -1,3 +1,4 @@
+using WindowAnchor.Models;
 using WindowAnchor.Services;
 
 namespace WindowAnchor.Tests;
@@ -202,6 +203,84 @@ public class RestorePlanPreviewTests
         Assert.Equal(RestoreActionCondition.BrowserSessionUnavailable, secondFallback.Condition);
     }
 
+    [Fact]
+    public void Ambiguous_preview_exposes_distinguishing_candidates_and_resolution_updates_plan()
+    {
+        RestorePlanCandidate north = Candidate(41, WindowMatchConfidence.Strong) with
+        {
+            Title = "Alpha report north",
+            ProcessName = "editor",
+            WindowClassName = "EditorWindow",
+            MonitorId = "primary",
+            Bounds = new WindowIdentityBounds(10, 20, 810, 620),
+            IdentityHint = new WindowIdentityHint
+            {
+                ExecutablePath = @"c:\apps\editor.exe",
+                ProcessName = "editor",
+                WindowClassName = "EditorWindow",
+                TitleTokens = ["alpha", "north", "report"]
+            },
+            IsWithinAmbiguityMargin = true,
+            CanRememberChoice = true,
+            Evidence =
+            [
+                new WindowMatchEvidence(
+                    WindowMatchEvidenceKind.TitleSimilarity,
+                    true,
+                    6800,
+                    "The saved and live titles are strongly similar.")
+            ]
+        };
+        RestorePlanCandidate south = north with
+        {
+            WindowHandle = 42,
+            ProcessId = 1042,
+            Title = "Alpha report south",
+            IdentityHint = north.IdentityHint! with
+            {
+                TitleTokens = ["alpha", "report", "south"]
+            }
+        };
+        RestorePlanIssue ambiguity = new(
+            RestorePlanIssueCode.AmbiguousMatch,
+            RestorePlanIssueSeverity.Warning,
+            "Two candidates are inside the safety margin.");
+        RestorePlanEntry entry = Entry(
+            0,
+            RestorePlanEntryOutcome.Blocked,
+            Placement(),
+            selected: null,
+            warnings: [ambiguity],
+            candidates: [north, south]);
+        var plan = new RestorePlan
+        {
+            WorkspaceId = "11111111-1111-4111-8111-111111111111",
+            Entries = [entry],
+            Warnings = [ambiguity],
+            ProtectedWindowHandles = new HashSet<long> { 41, 42 }
+        };
+
+        RestorePlanPreviewEntry preview = Assert.Single(RestorePlanPreviewBuilder.Build(plan).Entries);
+
+        Assert.Equal(RestorePreviewOutcomeKind.Ambiguous, preview.Outcome);
+        Assert.Collection(
+            preview.Candidates,
+            candidate =>
+            {
+                Assert.Equal(41, candidate.WindowHandle);
+                Assert.Contains("EditorWindow", candidate.IdentityLabel);
+                Assert.Contains("strongly similar", Assert.Single(candidate.Reasons));
+                Assert.True(candidate.CanRememberChoice);
+            },
+            candidate => Assert.Equal(42, candidate.WindowHandle));
+
+        RestorePlan resolved = RestorePlanner.ResolveAmbiguousMatch(plan, 0, 42);
+        RestorePlanPreviewEntry resolvedEntry = Assert.Single(
+            RestorePlanPreviewBuilder.Build(resolved).Entries);
+        Assert.Equal(RestorePreviewOutcomeKind.Ready, resolvedEntry.Outcome);
+        Assert.True(Assert.Single(resolvedEntry.Candidates).IsSelected);
+    }
+
     private static RestorePlanEntry BrowserEntry(int index, RestoreAction action) => new(
         index,
         $"browser-{index}",
@@ -240,7 +319,8 @@ public class RestorePlanPreviewTests
         RestorePlanCandidate? selected,
         IReadOnlyList<RestoreAction>? actions = null,
         IReadOnlyList<RestorePlanIssue>? warnings = null,
-        IReadOnlyList<RestorePlanIssue>? blockingErrors = null) => new(
+        IReadOnlyList<RestorePlanIssue>? blockingErrors = null,
+        IReadOnlyList<RestorePlanCandidate>? candidates = null) => new(
             index,
             $"entry-{index}",
             outcome,
@@ -251,7 +331,7 @@ public class RestorePlanPreviewTests
                 ProcessName = $"app-{index}",
                 Title = $"Window {index}"
             },
-            selected is null ? [] : [selected],
+            candidates ?? (selected is null ? [] : [selected]),
             selected,
             placement,
             RestoreLaunchRequirement.None("No launch."),

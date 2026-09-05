@@ -65,7 +65,9 @@ public class StorageServiceTests
         Assert.False(File.Exists(legacyPath));
         using var migratedJson = JsonDocument.Parse(
             File.ReadAllText(WorkspacePath(directory, migrated.WorkspaceId)));
-        Assert.Equal(3, migratedJson.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(
+            WorkspaceSnapshot.CurrentSchemaVersion,
+            migratedJson.RootElement.GetProperty("schemaVersion").GetInt32());
         Assert.Equal(migrated.WorkspaceId, migratedJson.RootElement.GetProperty("workspaceId").GetString());
     }
 
@@ -171,6 +173,73 @@ public class StorageServiceTests
 
         Assert.Equal(originalId, replacement.WorkspaceId);
         Assert.Equal(originalId, Assert.Single(storage.LoadAllWorkspaces()).WorkspaceId);
+    }
+
+    [Fact]
+    public void Current_workspace_round_trips_monitor_work_area_and_normalized_layout()
+    {
+        using var directory = new TestDirectory();
+        var storage = new StorageService(directory.Path);
+        var snapshot = new WorkspaceSnapshot
+        {
+            Name = "Semantic layout",
+            SavedAt = DateTime.UtcNow,
+            Monitors =
+            [
+                new MonitorInfo
+                {
+                    MonitorId = "display",
+                    Index = 0,
+                    WidthPixels = 1920,
+                    HeightPixels = 1080,
+                    BoundsRight = 1920,
+                    BoundsBottom = 1080,
+                    WorkAreaRight = 1920,
+                    WorkAreaBottom = 1040,
+                    Dpi = 144,
+                    IsPrimary = true
+                }
+            ],
+            Entries =
+            [
+                new WorkspaceEntry
+                {
+                    MonitorId = "display",
+                    Position = new WindowRecord
+                    {
+                        NormalRight = 960,
+                        NormalBottom = 1040,
+                        SavedDpi = 144,
+                        NormalizedLayout = new NormalizedWindowLayout
+                        {
+                            X = 0,
+                            Y = 0,
+                            Width = .5,
+                            Height = 1,
+                            Kind = WindowLayoutKind.LeftHalf,
+                            HorizontalAnchor = HorizontalWindowAnchor.Left,
+                            VerticalAnchor = VerticalWindowAnchor.Stretch
+                        }
+                    }
+                }
+            ]
+        };
+
+        storage.SaveWorkspace(snapshot);
+        WorkspaceSnapshot restored = Assert.Single(storage.LoadAllWorkspaces());
+
+        Assert.Equal(WorkspaceSnapshot.CurrentSchemaVersion, restored.SchemaVersion);
+        Assert.Equal((0, 0, 1920, 1040, (uint)144),
+            (restored.Monitors[0].WorkAreaLeft,
+             restored.Monitors[0].WorkAreaTop,
+             restored.Monitors[0].WorkAreaRight,
+             restored.Monitors[0].WorkAreaBottom,
+             restored.Monitors[0].Dpi));
+        NormalizedWindowLayout layout = Assert.IsType<NormalizedWindowLayout>(
+            restored.Entries[0].Position.NormalizedLayout);
+        Assert.Equal(WindowLayoutKind.LeftHalf, layout.Kind);
+        Assert.Equal(.5, layout.Width);
+        Assert.Equal(VerticalWindowAnchor.Stretch, layout.VerticalAnchor);
     }
 
     [Fact]
@@ -355,6 +424,87 @@ public class StorageServiceTests
         Assert.Empty(storage.TemporaryCaptures.Load().Workspaces);
         Assert.Single(storage.NamedWorkspaces.Load().Workspaces);
         Assert.Single(storage.Checkpoints.Load().Workspaces);
+    }
+
+    [Fact]
+    public void Checkpoint_retention_prunes_oldest_and_expired_without_touching_named_workspaces()
+    {
+        using var directory = new TestDirectory();
+        var clock = new FakeCheckpointClock();
+        var storage = new StorageService(
+            directory.Path,
+            checkpointRetention: new CheckpointRetentionPolicy
+            {
+                MaximumCount = 2,
+                MaximumAge = TimeSpan.FromDays(2)
+            },
+            checkpointClock: clock);
+        var named = new WorkspaceSnapshot { Name = "Permanent", SavedAt = clock.UtcNow };
+        storage.NamedWorkspaces.Save(named);
+
+        var first = new WorkspaceSnapshot { Name = "First" };
+        storage.Checkpoints.Save(first, WorkspaceCheckpointTrigger.Restore, named.WorkspaceId);
+        clock.UtcNow = clock.UtcNow.AddHours(1);
+        var second = new WorkspaceSnapshot { Name = "Second" };
+        storage.Checkpoints.Save(second, WorkspaceCheckpointTrigger.WorkspaceSwitch, named.WorkspaceId);
+        clock.UtcNow = clock.UtcNow.AddHours(1);
+        var third = new WorkspaceSnapshot { Name = "Third" };
+        storage.Checkpoints.Save(third, WorkspaceCheckpointTrigger.Undo, first.WorkspaceId);
+
+        WorkspaceSnapshot[] retained = storage.Checkpoints.Load().Workspaces
+            .OrderBy(checkpoint => checkpoint.SavedAt)
+            .ToArray();
+        Assert.Equal([second.WorkspaceId, third.WorkspaceId], retained.Select(item => item.WorkspaceId));
+        Assert.Equal("Permanent", Assert.Single(storage.NamedWorkspaces.Load().Workspaces).Name);
+
+        clock.UtcNow = clock.UtcNow.AddDays(3);
+        var newest = new WorkspaceSnapshot { Name = "Newest" };
+        storage.Checkpoints.Save(newest, WorkspaceCheckpointTrigger.Restore, named.WorkspaceId);
+
+        Assert.Equal(newest.WorkspaceId, Assert.Single(storage.Checkpoints.Load().Workspaces).WorkspaceId);
+        Assert.Equal("Permanent", Assert.Single(storage.NamedWorkspaces.Load().Workspaces).Name);
+
+        clock.UtcNow = clock.UtcNow.AddDays(3);
+        Assert.Null(storage.Checkpoints.GetLatest());
+        Assert.Empty(storage.Checkpoints.Load().Workspaces);
+        Assert.Equal("Permanent", Assert.Single(storage.NamedWorkspaces.Load().Workspaces).Name);
+    }
+
+    [Fact]
+    public void Checkpoint_index_is_versioned_and_corrupt_checkpoint_is_isolated()
+    {
+        using var directory = new TestDirectory();
+        var clock = new FakeCheckpointClock();
+        var storage = new StorageService(directory.Path, checkpointClock: clock);
+        var healthy = new WorkspaceSnapshot
+        {
+            Name = "Healthy",
+            MonitorFingerprint = "topology-safe"
+        };
+        storage.Checkpoints.Save(
+            healthy,
+            WorkspaceCheckpointTrigger.AdaptiveRestore,
+            Guid.NewGuid().ToString("D"));
+        string corruptPath = Path.Combine(
+            directory.Path,
+            "checkpoints",
+            $"{Guid.NewGuid():D}.checkpoint.json");
+        File.WriteAllText(corruptPath, "{ definitely not json");
+
+        WorkspaceLoadResult loaded = storage.Checkpoints.Load();
+        WorkspaceSnapshot latest = Assert.IsType<WorkspaceSnapshot>(storage.Checkpoints.GetLatest());
+
+        Assert.Equal(healthy.WorkspaceId, latest.WorkspaceId);
+        Assert.Single(loaded.Workspaces);
+        Assert.Contains(loaded.Issues, issue => issue.FailureKind == StorageLoadFailureKind.CorruptJson);
+        using JsonDocument index = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+            directory.Path,
+            "checkpoints",
+            "checkpoint-index.json")));
+        Assert.Equal(1, index.RootElement.GetProperty("schemaVersion").GetInt32());
+        JsonElement indexed = Assert.Single(index.RootElement.GetProperty("checkpoints").EnumerateArray());
+        Assert.Equal(healthy.WorkspaceId, indexed.GetProperty("checkpointId").GetString());
+        Assert.Equal("AdaptiveRestore", indexed.GetProperty("trigger").GetString());
     }
 
     private static string WorkspacePath(TestDirectory directory, string workspaceId) =>

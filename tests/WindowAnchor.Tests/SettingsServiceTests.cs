@@ -41,7 +41,7 @@ public class SettingsServiceTests
     {
         using var directory = new TestDirectory();
         directory.CopyFixture("current-v3.workspace.json", @"workspaces\Stable Workspace.workspace.json");
-        string settingsPath = directory.CopyFixture("current-v2.settings.json", "settings.json");
+        string settingsPath = directory.CopyFixture("current-v3.settings.json", "settings.json");
         var storage = new StorageService(directory.Path);
         var workspace = Assert.Single(storage.LoadAllWorkspaces());
         var settings = new SettingsService(settingsPath, storage);
@@ -70,7 +70,7 @@ public class SettingsServiceTests
         service.Save();
 
         using var json = JsonDocument.Parse(File.ReadAllText(settingsPath));
-        Assert.Equal(2, json.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(3, json.RootElement.GetProperty("schemaVersion").GetInt32());
         Assert.Equal(workspaceId, json.RootElement.GetProperty("defaultWorkspaceId").GetString());
         Assert.Equal(
             workspaceId,
@@ -111,7 +111,7 @@ public class SettingsServiceTests
     public void Current_settings_load_without_rewrite()
     {
         using var directory = new TestDirectory();
-        string settingsPath = directory.CopyFixture("current-v2.settings.json", "settings.json");
+        string settingsPath = directory.CopyFixture("current-v3.settings.json", "settings.json");
         string original = File.ReadAllText(settingsPath);
 
         var service = new SettingsService(settingsPath, new StorageService(directory.Path));
@@ -122,11 +122,58 @@ public class SettingsServiceTests
     }
 
     [Fact]
+    public void V2_settings_migrate_to_current_schema_without_losing_preferences()
+    {
+        using var directory = new TestDirectory();
+        string settingsPath = directory.CopyFixture("current-v2.settings.json", "settings.json");
+
+        var service = new SettingsService(settingsPath, new StorageService(directory.Path));
+
+        Assert.Equal(AppSettings.CurrentSchemaVersion, service.Settings.SchemaVersion);
+        Assert.Equal("11111111-1111-4111-8111-111111111111", service.Settings.DefaultWorkspaceId);
+        Assert.Null(service.Settings.WindowMatchHints);
+        Assert.Contains("\"schemaVersion\": 3", File.ReadAllText(settingsPath));
+    }
+
+    [Fact]
+    public void Learned_matches_use_stable_ids_never_runtime_handles_and_can_be_cleared()
+    {
+        using var directory = new TestDirectory();
+        string settingsPath = Path.Combine(directory.Path, "settings.json");
+        var service = new SettingsService(settingsPath, new StorageService(directory.Path));
+        const string workspaceId = "11111111-1111-4111-8111-111111111111";
+        const string entryId = "22222222-2222-4222-8222-222222222222";
+        var identity = new WindowIdentityHint
+        {
+            ExecutablePath = @"c:\apps\editor.exe",
+            ProcessName = "editor",
+            WindowClassName = "EditorWindow",
+            TitleTokens = ["alpha", "north", "report"]
+        };
+
+        service.RememberWindowMatch(workspaceId, entryId, identity);
+
+        WindowMatchHint hint = Assert.Single(service.GetWindowMatchHints(workspaceId));
+        Assert.Equal(entryId, hint.EntryId);
+        string json = File.ReadAllText(settingsPath);
+        Assert.DoesNotContain("windowHandle", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("processId", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("hwnd", json, StringComparison.OrdinalIgnoreCase);
+
+        var reloaded = new SettingsService(settingsPath, new StorageService(directory.Path));
+        Assert.Single(reloaded.Settings.WindowMatchHints!);
+        Assert.Equal(1, reloaded.ClearAllWindowMatches());
+        Assert.Null(reloaded.Settings.WindowMatchHints);
+        Assert.Empty(new SettingsService(settingsPath, new StorageService(directory.Path))
+            .Settings.WindowMatchHints ?? []);
+    }
+
+    [Fact]
     public void Interrupted_settings_commit_preserves_the_previous_valid_document()
     {
         using var directory = new TestDirectory();
         _ = new StorageService(directory.Path); // Creates the legacy-import marker before injection.
-        string settingsPath = directory.CopyFixture("current-v2.settings.json", "settings.json");
+        string settingsPath = directory.CopyFixture("current-v3.settings.json", "settings.json");
         string original = File.ReadAllText(settingsPath);
         var failingStorage = new StorageService(
             directory.Path,

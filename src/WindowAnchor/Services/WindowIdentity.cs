@@ -99,6 +99,8 @@ public enum WindowMatchEvidenceKind
     BrowserFamilyExact,
     TitlePrefixExact,
     TitleSimilarity,
+    LearnedIdentityHint,
+    UserSelectedCandidate,
     MonitorIdExact,
     GeometrySimilarity,
     NoSupportedFallback
@@ -114,11 +116,28 @@ public sealed record WindowMatchEvidence(
 /// <summary>Qualitative interpretation of a candidate's numeric score.</summary>
 public enum WindowMatchConfidence
 {
+    Missing,
     Ineligible,
-    Weak,
+    Ambiguous,
     Probable,
     Strong,
     Exact
+}
+
+/// <summary>
+/// Deterministic thresholds used by matching and ambiguity resolution. Values live in the service
+/// layer so UI presentation cannot silently alter assignment safety.
+/// </summary>
+public sealed record WindowMatchPolicy
+{
+    public double MinimumTitleSimilarity { get; init; } = 0.45;
+    public double StrongTitleSimilarity { get; init; } = 0.70;
+    public double MinimumGeometrySimilarity { get; init; } = 0.50;
+    public double MinimumCandidateScore { get; init; } = 3000;
+    public double AmbiguityScoreMargin { get; init; } = 175;
+    public double LearnedHintBonus { get; init; } = 2000;
+
+    public static WindowMatchPolicy Default { get; } = new();
 }
 
 /// <summary>
@@ -134,7 +153,29 @@ public sealed record WindowMatchCandidate(
     WindowMatchConfidence Confidence,
     IReadOnlyList<WindowMatchEvidence> Evidence,
     double? TitleSimilarityScore,
-    bool IsTopScoreTie = false);
+    string Title,
+    string ProcessName,
+    string WindowClassName,
+    string MonitorId,
+    WindowIdentityBounds Bounds,
+    WindowIdentityHint IdentityHint,
+    bool IsTopScoreTie = false,
+    bool IsWithinAmbiguityMargin = false,
+    bool IsLearnedHintMatch = false);
+
+/// <summary>
+/// Result of applying confidence and top-vs-runner-up thresholds. Ambiguous and missing results
+/// deliberately contain no selected candidate.
+/// </summary>
+public sealed record WindowMatchResolution(
+    WindowMatchConfidence Confidence,
+    WindowMatchCandidate? SelectedCandidate,
+    IReadOnlyList<WindowMatchCandidate> Candidates,
+    string Explanation)
+{
+    public bool IsAmbiguous => Confidence == WindowMatchConfidence.Ambiguous;
+    public bool IsMissing => Confidence == WindowMatchConfidence.Missing;
+}
 
 /// <summary>Central, side-effect-free extraction of saved and live window identity evidence.</summary>
 public static partial class WindowIdentityExtractor
@@ -205,6 +246,29 @@ public static partial class WindowIdentityExtractor
         };
     }
 
+    /// <summary>
+    /// Creates a persistable composite identity from a live candidate without copying HWND/PID.
+    /// </summary>
+    public static WindowIdentityHint ToHint(LiveWindowIdentity identity)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        return new WindowIdentityHint
+        {
+            ExecutablePath = identity.ExecutablePath,
+            ProcessName = identity.ProcessName,
+            WindowClassName = identity.WindowClassName,
+            AppUserModelId = identity.AppUserModelId,
+            PackageFamilyName = identity.PackageFamilyName,
+            FolderPath = identity.FolderPath,
+            BrowserFamily = identity.BrowserFamily,
+            BrowserSiteHost = identity.BrowserSiteHost,
+            PwaIdentity = identity.PwaIdentity,
+            TitleTokens = identity.NormalizedTitleTokens
+                .OrderBy(token => token, StringComparer.Ordinal)
+                .ToArray()
+        };
+    }
+
     public static IReadOnlyList<string> NormalizeTitleTokens(string? title) =>
         TitleTokenRegex().Matches(title ?? "")
             .Select(match => match.Value.ToLowerInvariant())
@@ -225,7 +289,7 @@ public static partial class WindowIdentityExtractor
         return value.EndsWith(".exe", StringComparison.Ordinal) ? value[..^4] : value;
     }
 
-    private static string PackageFamily(string? appUserModelId)
+    internal static string PackageFamily(string? appUserModelId)
     {
         string value = appUserModelId ?? "";
         int separator = value.IndexOf('!');
@@ -276,10 +340,13 @@ public static class WindowMatcher
 {
     public static IReadOnlyList<WindowMatchCandidate> FindCandidates(
         SavedWindowIdentity saved,
-        IEnumerable<LiveWindowIdentity> liveWindows)
+        IEnumerable<LiveWindowIdentity> liveWindows,
+        WindowIdentityHint? learnedHint = null,
+        WindowMatchPolicy? policy = null)
     {
         ArgumentNullException.ThrowIfNull(saved);
         ArgumentNullException.ThrowIfNull(liveWindows);
+        policy ??= WindowMatchPolicy.Default;
 
         LiveWindowIdentity[] live = liveWindows
             .OrderBy(candidate => candidate.Hwnd.ToInt64())
@@ -288,7 +355,13 @@ public static class WindowMatcher
             KindCompatible(saved, candidate) && ExecutableExact(saved, candidate));
 
         WindowMatchCandidate[] ordered = live
-            .Select(candidate => Evaluate(saved, candidate, compatibleSameExecutableCount))
+            .Select(candidate => Evaluate(
+                saved,
+                candidate,
+                compatibleSameExecutableCount,
+                policy))
+            .Select(candidate => ApplyMinimumScore(candidate, policy))
+            .Select(candidate => ApplyLearnedHint(candidate, learnedHint, policy))
             .OrderByDescending(candidate => candidate.IsEligible)
             .ThenByDescending(candidate => candidate.Score)
             .ThenBy(candidate => candidate.Hwnd.ToInt64())
@@ -296,17 +369,73 @@ public static class WindowMatcher
 
         WindowMatchCandidate? best = ordered.FirstOrDefault(candidate => candidate.IsEligible);
         if (best == null) return ordered;
-
         int topCount = ordered.Count(candidate =>
             candidate.IsEligible && Math.Abs(candidate.Score - best.Score) < 0.000001);
-        if (topCount < 2) return ordered;
 
         return ordered
-            .Select(candidate => candidate.IsEligible &&
-                                 Math.Abs(candidate.Score - best.Score) < 0.000001
-                ? candidate with { IsTopScoreTie = true }
-                : candidate)
+            .Select(candidate => candidate with
+            {
+                IsTopScoreTie = topCount > 1 && candidate.IsEligible &&
+                    Math.Abs(candidate.Score - best.Score) < 0.000001,
+                IsWithinAmbiguityMargin = candidate.IsEligible &&
+                    best.Score - candidate.Score <= policy.AmbiguityScoreMargin
+            })
             .ToArray();
+    }
+
+    /// <summary>Scores and resolves candidates using the configured deterministic thresholds.</summary>
+    public static WindowMatchResolution Resolve(
+        SavedWindowIdentity saved,
+        IEnumerable<LiveWindowIdentity> liveWindows,
+        WindowIdentityHint? learnedHint = null,
+        WindowMatchPolicy? policy = null)
+    {
+        policy ??= WindowMatchPolicy.Default;
+        return ResolveCandidates(FindCandidates(saved, liveWindows, learnedHint, policy), policy);
+    }
+
+    /// <summary>Resolves an already-scored candidate set without observing external state.</summary>
+    public static WindowMatchResolution ResolveCandidates(
+        IReadOnlyList<WindowMatchCandidate> candidates,
+        WindowMatchPolicy? policy = null)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
+        policy ??= WindowMatchPolicy.Default;
+        WindowMatchCandidate[] eligible = candidates
+            .Where(candidate => candidate.IsEligible)
+            .OrderByDescending(candidate => candidate.Score)
+            .ThenBy(candidate => candidate.Hwnd.ToInt64())
+            .ToArray();
+        if (eligible.Length == 0)
+        {
+            return new WindowMatchResolution(
+                WindowMatchConfidence.Missing,
+                null,
+                candidates,
+                "No live window met the minimum evidence threshold.");
+        }
+
+        WindowMatchCandidate best = eligible[0];
+        if (eligible.Length > 1 && best.Score - eligible[1].Score <= policy.AmbiguityScoreMargin)
+        {
+            return new WindowMatchResolution(
+                WindowMatchConfidence.Ambiguous,
+                null,
+                candidates,
+                $"The top {eligible.Count(candidate => best.Score - candidate.Score <= policy.AmbiguityScoreMargin)} " +
+                $"candidates are within the {policy.AmbiguityScoreMargin:0}-point safety margin.");
+        }
+
+        string reason = best.Evidence
+            .Where(evidence => evidence.Matched)
+            .OrderByDescending(evidence => evidence.ScoreContribution)
+            .Select(evidence => evidence.Explanation)
+            .FirstOrDefault() ?? "The candidate met the configured evidence threshold.";
+        return new WindowMatchResolution(
+            best.Confidence,
+            best,
+            candidates,
+            $"{best.Confidence} confidence. {reason}");
     }
 
     public static bool SameSite(string? first, string? second)
@@ -349,7 +478,8 @@ public static class WindowMatcher
     private static WindowMatchCandidate Evaluate(
         SavedWindowIdentity saved,
         LiveWindowIdentity live,
-        int compatibleSameExecutableCount)
+        int compatibleSameExecutableCount,
+        WindowMatchPolicy policy)
     {
         var evidence = new List<WindowMatchEvidence>();
         if (string.IsNullOrWhiteSpace(saved.ExecutablePath))
@@ -462,14 +592,21 @@ public static class WindowMatcher
                 saved.Title,
                 live.Title);
             double score = 6000 + (similarity * 1000);
-            Add(evidence, WindowMatchEvidenceKind.TitleSimilarity, true, score,
-                "Multiple same-executable windows were ranked by title similarity.");
+            bool meetsMinimum = similarity >= policy.MinimumTitleSimilarity;
+            Add(evidence, WindowMatchEvidenceKind.TitleSimilarity, meetsMinimum, score,
+                meetsMinimum
+                    ? "Multiple same-executable windows were ranked by title similarity."
+                    : $"Title similarity is below the {policy.MinimumTitleSimilarity:P0} minimum.");
             return Candidate(
                 saved,
                 live,
-                true,
-                score,
-                similarity >= 0.65 ? WindowMatchConfidence.Strong : WindowMatchConfidence.Weak,
+                meetsMinimum,
+                meetsMinimum ? score : 0,
+                !meetsMinimum
+                    ? WindowMatchConfidence.Ineligible
+                    : similarity >= policy.StrongTitleSimilarity
+                        ? WindowMatchConfidence.Strong
+                        : WindowMatchConfidence.Probable,
                 evidence,
                 similarity);
         }
@@ -486,12 +623,12 @@ public static class WindowMatcher
         {
             Add(evidence, WindowMatchEvidenceKind.TitlePrefixExact, true, 4000,
                 "Executable path and saved title prefix match.");
-            return Candidate(saved, live, true, 4000, WindowMatchConfidence.Weak, evidence, null);
+            return Candidate(saved, live, true, 4000, WindowMatchConfidence.Probable, evidence, null);
         }
 
         double? geometry = GeometrySimilarity(saved.PreviousBounds, live.Bounds);
         bool sameMonitor = MonitorExact(saved, live);
-        if (sameMonitor || geometry >= 0.5)
+        if (sameMonitor || geometry >= policy.MinimumGeometrySimilarity)
         {
             double contribution = 3000 + ((geometry ?? 0) * 500);
             if (geometry != null)
@@ -500,7 +637,7 @@ public static class WindowMatcher
             else
                 Add(evidence, WindowMatchEvidenceKind.MonitorIdExact, true, contribution,
                     "Saved and live monitor identities provide weak context.");
-            return Candidate(saved, live, true, contribution, WindowMatchConfidence.Weak, evidence, null);
+            return Candidate(saved, live, true, contribution, WindowMatchConfidence.Probable, evidence, null);
         }
 
         return Rejected(saved, live, evidence, WindowMatchEvidenceKind.NoSupportedFallback,
@@ -549,7 +686,7 @@ public static class WindowMatcher
 
     private static bool BrowserFamilyExact(SavedWindowIdentity saved, LiveWindowIdentity live) =>
         !string.IsNullOrWhiteSpace(saved.BrowserFamily) &&
-        string.Equals(saved.BrowserFamily, live.BrowserFamily, StringComparison.OrdinalIgnoreCase);
+            string.Equals(saved.BrowserFamily, live.BrowserFamily, StringComparison.OrdinalIgnoreCase);
 
     private static bool FolderExact(SavedWindowIdentity saved, LiveWindowIdentity live) =>
         !string.IsNullOrWhiteSpace(saved.FolderPath) &&
@@ -609,7 +746,108 @@ public static class WindowMatcher
             score,
             confidence,
             evidence.ToArray(),
-            titleSimilarity);
+            titleSimilarity,
+            live.Title,
+            live.ProcessName,
+            live.WindowClassName,
+            live.MonitorId,
+            live.Bounds,
+            WindowIdentityExtractor.ToHint(live));
+
+    private static WindowMatchCandidate ApplyMinimumScore(
+        WindowMatchCandidate candidate,
+        WindowMatchPolicy policy)
+    {
+        if (!candidate.IsEligible || candidate.Score >= policy.MinimumCandidateScore)
+            return candidate;
+        return candidate with
+        {
+            IsEligible = false,
+            Confidence = WindowMatchConfidence.Ineligible,
+            Evidence = candidate.Evidence.Append(new WindowMatchEvidence(
+                WindowMatchEvidenceKind.NoSupportedFallback,
+                false,
+                0,
+                $"The candidate score is below the {policy.MinimumCandidateScore:0}-point minimum.")).ToArray()
+        };
+    }
+
+    private static WindowMatchCandidate ApplyLearnedHint(
+        WindowMatchCandidate candidate,
+        WindowIdentityHint? learnedHint,
+        WindowMatchPolicy policy)
+    {
+        if (!candidate.IsEligible || learnedHint is null ||
+            !MatchesHint(learnedHint, candidate.IdentityHint))
+        {
+            return candidate;
+        }
+
+        WindowMatchEvidence[] evidence = candidate.Evidence.Append(new WindowMatchEvidence(
+            WindowMatchEvidenceKind.LearnedIdentityHint,
+            true,
+            policy.LearnedHintBonus,
+            "A remembered choice for this workspace entry matches this composite identity.")).ToArray();
+        return candidate with
+        {
+            Score = candidate.Score + policy.LearnedHintBonus,
+            Confidence = candidate.Confidence == WindowMatchConfidence.Exact
+                ? WindowMatchConfidence.Exact
+                : WindowMatchConfidence.Strong,
+            Evidence = evidence,
+            IsLearnedHintMatch = true
+        };
+    }
+
+    /// <summary>
+    /// Compares composite persisted identities. At least executable/class or a stronger application
+    /// identity must anchor the comparison; title tokens can only refine that anchor.
+    /// </summary>
+    public static bool MatchesHint(WindowIdentityHint expected, WindowIdentityHint observed)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        ArgumentNullException.ThrowIfNull(observed);
+        bool strongerIdentity = SameNonEmpty(expected.AppUserModelId, observed.AppUserModelId) ||
+            SameNonEmpty(expected.PwaIdentity, observed.PwaIdentity) ||
+            SameNonEmpty(expected.PackageFamilyName, observed.PackageFamilyName) ||
+            SameNonEmpty(expected.BrowserSiteHost, observed.BrowserSiteHost) ||
+            SameNonEmpty(expected.FolderPath, observed.FolderPath);
+        bool executableAndClass = SameNonEmpty(expected.ExecutablePath, observed.ExecutablePath) &&
+            SameNonEmpty(expected.WindowClassName, observed.WindowClassName);
+        if (!strongerIdentity && !executableAndClass)
+            return false;
+
+        if (!CompatibleOptional(expected.ExecutablePath, observed.ExecutablePath) ||
+            !CompatibleOptional(expected.ProcessName, observed.ProcessName) ||
+            !CompatibleOptional(expected.WindowClassName, observed.WindowClassName) ||
+            !CompatibleOptional(expected.AppUserModelId, observed.AppUserModelId) ||
+            !CompatibleOptional(expected.PackageFamilyName, observed.PackageFamilyName) ||
+            !CompatibleOptional(expected.FolderPath, observed.FolderPath) ||
+            !CompatibleOptional(expected.BrowserFamily, observed.BrowserFamily) ||
+            !CompatibleOptional(expected.BrowserSiteHost, observed.BrowserSiteHost) ||
+            !CompatibleOptional(expected.PwaIdentity, observed.PwaIdentity))
+        {
+            return false;
+        }
+
+        string[] expectedTokens = expected.TitleTokens
+            .Where(token => !string.IsNullOrWhiteSpace(token))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(token => token, StringComparer.Ordinal)
+            .ToArray();
+        if (expectedTokens.Length == 0) return true;
+        var observedTokens = observed.TitleTokens.ToHashSet(StringComparer.Ordinal);
+        int overlap = expectedTokens.Count(observedTokens.Contains);
+        return overlap >= Math.Max(1, (int)Math.Ceiling(expectedTokens.Length * 0.75));
+    }
+
+    private static bool SameNonEmpty(string expected, string observed) =>
+        !string.IsNullOrWhiteSpace(expected) &&
+        string.Equals(expected, observed, StringComparison.OrdinalIgnoreCase);
+
+    private static bool CompatibleOptional(string expected, string observed) =>
+        string.IsNullOrWhiteSpace(expected) ||
+        string.Equals(expected, observed, StringComparison.OrdinalIgnoreCase);
 
     private static void Add(
         List<WindowMatchEvidence>? evidence,

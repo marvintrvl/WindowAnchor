@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using WindowAnchor.Models;
 
@@ -172,5 +173,66 @@ public class SettingsService
             Settings.MonitorAliases = null;
 
         Save();
+    }
+
+    // ── Learned window-match helpers ─────────────────────────────────────
+
+    /// <summary>Returns learned hints for one stable workspace ID.</summary>
+    public IReadOnlyList<WindowMatchHint> GetWindowMatchHints(string workspaceId) =>
+        (Settings.WindowMatchHints ?? [])
+            .Where(hint => hint.WorkspaceId.Equals(
+                workspaceId,
+                StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+    /// <summary>Creates or replaces the learned composite identity for one workspace entry.</summary>
+    public void RememberWindowMatch(
+        string workspaceId,
+        string entryId,
+        WindowIdentityHint identity)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(workspaceId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(entryId);
+        ArgumentNullException.ThrowIfNull(identity);
+        if (!Guid.TryParse(workspaceId, out _) || !Guid.TryParse(entryId, out _))
+            throw new ArgumentException("Learned matches require stable workspace and entry GUIDs.");
+        if (!WindowMatcher.MatchesHint(identity, identity))
+            throw new ArgumentException(
+                "A learned match requires an executable/class or stronger application identity anchor.",
+                nameof(identity));
+
+        Settings.WindowMatchHints ??= [];
+        Settings.WindowMatchHints.RemoveAll(hint =>
+            hint.WorkspaceId.Equals(workspaceId, StringComparison.OrdinalIgnoreCase) &&
+            hint.EntryId.Equals(entryId, StringComparison.OrdinalIgnoreCase));
+        Settings.WindowMatchHints.Add(new WindowMatchHint
+        {
+            WorkspaceId = workspaceId,
+            EntryId = entryId,
+            Identity = identity
+        });
+        Save();
+    }
+
+    /// <summary>Clears one learned workspace-entry match, returning whether it existed.</summary>
+    public bool ClearWindowMatch(string workspaceId, string entryId)
+    {
+        int removed = Settings.WindowMatchHints?.RemoveAll(hint =>
+            hint.WorkspaceId.Equals(workspaceId, StringComparison.OrdinalIgnoreCase) &&
+            hint.EntryId.Equals(entryId, StringComparison.OrdinalIgnoreCase)) ?? 0;
+        if (Settings.WindowMatchHints?.Count == 0)
+            Settings.WindowMatchHints = null;
+        if (removed > 0) Save();
+        return removed > 0;
+    }
+
+    /// <summary>Clears every learned window-match hint and returns the number removed.</summary>
+    public int ClearAllWindowMatches()
+    {
+        int count = Settings.WindowMatchHints?.Count ?? 0;
+        if (count == 0) return 0;
+        Settings.WindowMatchHints = null;
+        Save();
+        return count;
     }
 }

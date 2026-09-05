@@ -9,12 +9,27 @@ using WindowAnchor.Models;
 
 namespace WindowAnchor.Services;
 
+/// <summary>Stages emitted while a workspace snapshot is assembled.</summary>
+public enum WorkspaceCaptureProgressStage
+{
+    Preparing,
+    DetectingResources,
+    SearchingCommonFolders,
+    CapturingBrowserSession,
+    Finalizing
+}
+
 /// <summary>Progress update emitted while a workspace snapshot is assembled.</summary>
 /// <param name="Current">1-based index of the window currently being processed (0 = pre-loop setup).</param>
 /// <param name="Total">Total number of windows to process.</param>
 /// <param name="AppName">Process name of the window being processed (or a stage description).</param>
 /// <param name="Detail">Window title snippet or a short stage description.</param>
-public record struct SaveProgressReport(int Current, int Total, string AppName, string Detail);
+public record struct SaveProgressReport(
+    int Current,
+    int Total,
+    string AppName,
+    string Detail,
+    WorkspaceCaptureProgressStage Stage = WorkspaceCaptureProgressStage.DetectingResources);
 
 /// <summary>
 /// Orchestrates the save and restore pipeline for workspaces.
@@ -27,15 +42,19 @@ public record struct SaveProgressReport(int Current, int Total, string AppName, 
 /// </remarks>
 public class WorkspaceService
 {
+    private static readonly TimeSpan DefaultCommonFolderSearchBudget = TimeSpan.FromSeconds(5);
     private readonly StorageService    _storageService;
     private readonly IWindowInventory  _windowInventory;
     private readonly IWindowMutation   _windowMutation;
     private readonly IMonitorInventory _monitorInventory;
     private readonly JumpListService   _jumpListService;
     private readonly WebAppService     _webAppService;
+    private readonly IPackagedAppResolver _packagedAppResolver;
     private readonly IBrowserSessionConnector? _browserSessionConnector;
     private readonly IRestoreResourceBoundary _restoreResources;
     private readonly RestoreExecutor _restoreExecutor;
+    private readonly SettingsService? _settingsService;
+    private readonly SemaphoreSlim _restoreTransactionGate = new(1, 1);
 
     /// <summary>Creates the production workspace service using the native window service.</summary>
     public WorkspaceService(
@@ -47,7 +66,15 @@ public class WorkspaceService
         IBrowserSessionConnector? browserSessionConnector = null,
         IRestoreProcessLauncher? restoreProcessLauncher = null,
         IRestoreClock? restoreClock = null,
-        IRestoreResourceBoundary? restoreResources = null)
+        IRestoreResourceBoundary? restoreResources = null,
+        SettingsService? settingsService = null,
+        IAppReadinessProbe? appReadinessProbe = null,
+        AppReadinessPolicy? appReadinessPolicy = null,
+        IEnumerable<IAppReadinessStrategy>? appReadinessStrategies = null,
+        IPackagedAppResolver? packagedAppResolver = null,
+        IWindowPlacementProbe? placementProbe = null,
+        WindowPlacementVerificationPolicy? placementPolicy = null,
+        IEnumerable<IWindowPlacementVerificationStrategy>? placementStrategies = null)
         : this(
             storageService,
             windowService,
@@ -58,7 +85,15 @@ public class WorkspaceService
             browserSessionConnector,
             restoreProcessLauncher,
             restoreClock,
-            restoreResources)
+            restoreResources,
+            settingsService,
+            appReadinessProbe,
+            appReadinessPolicy,
+            appReadinessStrategies,
+            packagedAppResolver,
+            placementProbe,
+            placementPolicy,
+            placementStrategies)
     {
     }
 
@@ -76,7 +111,15 @@ public class WorkspaceService
         IBrowserSessionConnector? browserSessionConnector = null,
         IRestoreProcessLauncher? restoreProcessLauncher = null,
         IRestoreClock? restoreClock = null,
-        IRestoreResourceBoundary? restoreResources = null)
+        IRestoreResourceBoundary? restoreResources = null,
+        SettingsService? settingsService = null,
+        IAppReadinessProbe? appReadinessProbe = null,
+        AppReadinessPolicy? appReadinessPolicy = null,
+        IEnumerable<IAppReadinessStrategy>? appReadinessStrategies = null,
+        IPackagedAppResolver? packagedAppResolver = null,
+        IWindowPlacementProbe? placementProbe = null,
+        WindowPlacementVerificationPolicy? placementPolicy = null,
+        IEnumerable<IWindowPlacementVerificationStrategy>? placementStrategies = null)
     {
         _storageService   = storageService;
         _windowInventory  = windowInventory;
@@ -84,7 +127,9 @@ public class WorkspaceService
         _monitorInventory = monitorInventory;
         _jumpListService  = jumpListService;
         _webAppService    = webAppService ?? new WebAppService();
+        _packagedAppResolver = packagedAppResolver ?? new PackagedAppResolver();
         _browserSessionConnector = browserSessionConnector;
+        _settingsService = settingsService;
         _restoreResources = restoreResources ?? new FileSystemRestoreResourceBoundary();
         _restoreExecutor = new RestoreExecutor(
             _windowInventory,
@@ -92,7 +137,15 @@ public class WorkspaceService
             restoreProcessLauncher ?? new SystemRestoreProcessLauncher(),
             restoreClock ?? new SystemRestoreClock(),
             _restoreResources,
-            _browserSessionConnector);
+            _browserSessionConnector,
+            appReadinessProbe ?? new SystemAppReadinessProbe(_windowInventory),
+            appReadinessPolicy,
+            appReadinessStrategies,
+            placementProbe ?? (_windowInventory is WindowService
+                ? new SystemWindowPlacementProbe()
+                : new InventoryWindowPlacementProbe(_windowInventory)),
+            placementPolicy,
+            placementStrategies);
     }
 
     // ── Storage proxies ────────────────────────────────────────────
@@ -168,10 +221,22 @@ public class WorkspaceService
         IProgress<SaveProgressReport>? progress = null,
         List<WindowRecord>? selectedWindows = null,
         bool captureBrowserSessions = true,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool searchCommonFolders = true,
+        TimeSpan? commonFolderSearchBudget = null,
+        bool buildFullJumpListCache = true)
     {
         WorkspaceSnapshot snapshot = await Task.Run(
-            () => TakeSnapshot(name, saveFiles, monitorIds, progress, selectedWindows),
+            () => TakeSnapshot(
+                name,
+                saveFiles,
+                monitorIds,
+                progress,
+                selectedWindows,
+                searchCommonFolders,
+                commonFolderSearchBudget,
+                cancellationToken,
+                buildFullJumpListCache),
             cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -207,6 +272,12 @@ public class WorkspaceService
             {
                 try
                 {
+                    progress?.Report(new SaveProgressReport(
+                        snapshot.Entries.Count,
+                        snapshot.Entries.Count,
+                        "Capturing browser session…",
+                        $"{browserTitles.Count} browser window{(browserTitles.Count == 1 ? "" : "s")}",
+                        WorkspaceCaptureProgressStage.CapturingBrowserSession));
                     browserCapture = await _browserSessionConnector.CaptureAsync(
                         name,
                         browserTitles,
@@ -232,6 +303,12 @@ public class WorkspaceService
         }
 
         snapshot.BrowserSessions = browserCapture.Sessions.ToList();
+        progress?.Report(new SaveProgressReport(
+            snapshot.Entries.Count,
+            snapshot.Entries.Count,
+            "Finalizing workspace…",
+            "",
+            WorkspaceCaptureProgressStage.Finalizing));
         return new WorkspaceCaptureResult(snapshot, browserCapture);
     }
 
@@ -296,8 +373,17 @@ public class WorkspaceService
         bool saveFiles = true,
         HashSet<string>? monitorIds = null,
         IProgress<SaveProgressReport>? progress = null,
-        List<WindowRecord>? selectedWindows = null)
+        List<WindowRecord>? selectedWindows = null,
+        bool searchCommonFolders = true,
+        TimeSpan? commonFolderSearchBudget = null,
+        CancellationToken cancellationToken = default,
+        bool buildFullJumpListCache = true)
     {
+        Stopwatch snapshotTimer = Stopwatch.StartNew();
+        var folderSearchBudget = new CommonFolderSearchBudget(
+            saveFiles && searchCommonFolders,
+            commonFolderSearchBudget ?? DefaultCommonFolderSearchBudget,
+            cancellationToken);
         string fingerprint = _monitorInventory.GetCurrentMonitorFingerprint();
 
         // Enumerate monitors first so every WindowRecord is tagged with monitor info
@@ -314,9 +400,14 @@ public class WorkspaceService
             var monitorsToSaveFromSelection = allMonitors.Where(m => usedMonitorIds.Contains(m.MonitorId)).ToList();
 
             var selEntries = new List<WorkspaceEntry>();
-            if (saveFiles)
+            if (saveFiles && buildFullJumpListCache)
             {
-                progress?.Report(new SaveProgressReport(0, windows.Count, "Building file detection cache\u2026", ""));
+                progress?.Report(new SaveProgressReport(
+                    0,
+                    windows.Count,
+                    "Building file detection cache\u2026",
+                    "",
+                    WorkspaceCaptureProgressStage.Preparing));
                 _jumpListService.BuildSnapshotCache();
             }
 
@@ -325,16 +416,27 @@ public class WorkspaceService
             {
                 foreach (var w in windows)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     progress?.Report(new SaveProgressReport(++selProgressIdx, windows.Count, w.ProcessName, w.TitleSnippet));
-                    selEntries.Add(BuildEntryForWindow(w, saveFiles));
+                    selEntries.Add(BuildEntryForWindow(
+                        w,
+                        saveFiles,
+                        folderSearchBudget,
+                        progress,
+                        buildFullJumpListCache));
                 }
             }
             finally
             {
-                if (saveFiles) _jumpListService.ClearSnapshotCache();
+                if (saveFiles && buildFullJumpListCache) _jumpListService.ClearSnapshotCache();
             }
 
-            progress?.Report(new SaveProgressReport(windows.Count, windows.Count, "Assembling workspace snapshot\u2026", ""));
+            progress?.Report(new SaveProgressReport(
+                windows.Count,
+                windows.Count,
+                "Assembling workspace snapshot\u2026",
+                "",
+                WorkspaceCaptureProgressStage.Finalizing));
 
             var selSnapshot = new WorkspaceSnapshot
             {
@@ -352,7 +454,10 @@ public class WorkspaceService
                 LogField.Workspace("workspaceName", name),
                 LogField.Public("entryCount", selEntries.Count),
                 LogField.Public("saveFiles", saveFiles),
-                LogField.Public("captureMode", "selective"));
+                LogField.Public("captureMode", "selective"),
+                LogField.Public("durationMs", snapshotTimer.Elapsed.TotalMilliseconds),
+                LogField.Public("recursiveFileSearch", searchCommonFolders),
+                LogField.Public("fullJumpListIndex", buildFullJumpListCache));
             return selSnapshot;
         }
 
@@ -375,9 +480,14 @@ public class WorkspaceService
         var entries = new List<WorkspaceEntry>();
 
         // Build the jump-list index once (only needed when saving files)
-        if (saveFiles)
+        if (saveFiles && buildFullJumpListCache)
         {
-            progress?.Report(new SaveProgressReport(0, windows.Count, "Building file detection cache\u2026", ""));
+            progress?.Report(new SaveProgressReport(
+                0,
+                windows.Count,
+                "Building file detection cache\u2026",
+                "",
+                WorkspaceCaptureProgressStage.Preparing));
             _jumpListService.BuildSnapshotCache();
         }
 
@@ -386,6 +496,7 @@ public class WorkspaceService
         {
         foreach (var w in windows)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             // Report progress for this window before processing it
             progress?.Report(new SaveProgressReport(++progressIdx, windows.Count, w.ProcessName, w.TitleSnippet));
             // ── Self-exclusion: never save WindowAnchor's own windows ──────
@@ -442,6 +553,7 @@ public class WorkspaceService
 
             if (saveFiles)
             {
+                Stopwatch detectionTimer = Stopwatch.StartNew();
                 AppLogger.Debug(
                     "file_detection.started",
                     "Started file detection for a window",
@@ -471,11 +583,17 @@ public class WorkspaceService
                 // search a larger jump-list pool for the exact same filename.
                 // This handles files that are open but have scrolled past position 10 in the
                 // jump list, making them invisible to T2's default candidate window.
-                if (confidence == 40 && !string.IsNullOrEmpty(filePath) && !Path.IsPathRooted(filePath))
+                if (buildFullJumpListCache &&
+                    confidence == 40 &&
+                    !string.IsNullOrEmpty(filePath) &&
+                    !Path.IsPathRooted(filePath))
                 {
                     try
                     {
-                        var jlPool = _jumpListService.GetRecentFilesForApp(w.ExecutablePath, maxFiles: 50);
+                        var jlPool = GetRecentFilesForCapture(
+                            w.ExecutablePath,
+                            maxFiles: 50,
+                            buildFullJumpListCache);
                         AppLogger.Debug(
                             "file_detection.jump_list_exact_started",
                             "Searching the jump list for an exact filename",
@@ -510,11 +628,16 @@ public class WorkspaceService
                 }
 
                 // ── Tier 2: jump-list lookup ───────────────────────────────
-                if (confidence < 80 && !string.IsNullOrEmpty(w.ExecutablePath))
+                if (buildFullJumpListCache &&
+                    confidence < 80 &&
+                    !string.IsNullOrEmpty(w.ExecutablePath))
                 {
                     try
                     {
-                        var jlFiles = _jumpListService.GetRecentFilesForApp(w.ExecutablePath, maxFiles: 30);
+                        var jlFiles = GetRecentFilesForCapture(
+                            w.ExecutablePath,
+                            maxFiles: 30,
+                            buildFullJumpListCache);
                         AppLogger.Debug(
                             "file_detection.jump_list_loaded",
                             "Loaded jump-list candidates",
@@ -588,29 +711,56 @@ public class WorkspaceService
                 }
 
                 // ── Tier 3: search common user folders for bare filename ───
-                if (confidence < 80 && !string.IsNullOrEmpty(filePath) && !Path.IsPathRooted(filePath))
+                if (confidence < 80 &&
+                    IsPlausibleBareFileName(filePath) &&
+                    folderSearchBudget.CanSearch)
                 {
+                    progress?.Report(new SaveProgressReport(
+                        progressIdx,
+                        windows.Count,
+                        $"Searching files for {w.ProcessName}…",
+                        filePath!,
+                        WorkspaceCaptureProgressStage.SearchingCommonFolders));
                     AppLogger.Debug(
                         "file_detection.folder_search_started",
                         "Searching common folders for a filename",
                         LogField.Path("fileName", filePath));
                     try
                     {
-                        string? found = SearchFileInCommonLocations(filePath);
+                        Stopwatch searchTimer = Stopwatch.StartNew();
+                        string? found = SearchFileInCommonLocations(
+                            filePath!,
+                            folderSearchBudget,
+                            out bool timedOut);
+                        searchTimer.Stop();
                         if (found != null)
                         {
                             filePath = found; confidence = 85; source = "FILE_SEARCH";
                             AppLogger.Debug(
                                 "file_detection.folder_search_match",
                                 "Found a matching file in a common folder",
-                                LogField.Path("filePath", found));
+                                LogField.Path("filePath", found),
+                                LogField.Public("durationMs", searchTimer.Elapsed.TotalMilliseconds));
+                        }
+                        else if (timedOut)
+                        {
+                            AppLogger.Warn(
+                                "file_detection.folder_search_timed_out",
+                                "Common-folder search reached the global capture budget",
+                                LogField.Public("durationMs", searchTimer.Elapsed.TotalMilliseconds),
+                                LogField.Public("budgetMs", folderSearchBudget.Limit.TotalMilliseconds));
                         }
                         else
                         {
                             AppLogger.Debug(
                                 "file_detection.folder_search_no_match",
-                                "Common-folder search found zero or ambiguous matches");
+                                "Common-folder search found zero or ambiguous matches",
+                                LogField.Public("durationMs", searchTimer.Elapsed.TotalMilliseconds));
                         }
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
                     }
                     catch (Exception ex)
                     {
@@ -623,12 +773,14 @@ public class WorkspaceService
                 }
 
                 launchArg = confidence >= 80 ? filePath : null;
+                detectionTimer.Stop();
                 AppLogger.Debug(
                     "file_detection.completed",
                     "Completed file detection for a window",
                     LogField.Public("source", source),
                     LogField.Public("confidence", confidence),
-                    LogField.Path("launchArgument", launchArg));
+                    LogField.Path("launchArgument", launchArg),
+                    LogField.Public("durationMs", detectionTimer.Elapsed.TotalMilliseconds));
 
                 // VS Code / Cursor (Electron-based editors): launch arg must be a folder or
                 // a .code-workspace file, never a bare source file.
@@ -669,11 +821,16 @@ public class WorkspaceService
         }
         finally
         {
-            if (saveFiles)
+            if (saveFiles && buildFullJumpListCache)
                 _jumpListService.ClearSnapshotCache();
         }
 
-        progress?.Report(new SaveProgressReport(windows.Count, windows.Count, "Assembling workspace snapshot\u2026", ""));
+        progress?.Report(new SaveProgressReport(
+            windows.Count,
+            windows.Count,
+            "Assembling workspace snapshot\u2026",
+            "",
+            WorkspaceCaptureProgressStage.Finalizing));
 
         var snapshot = new WorkspaceSnapshot
         {
@@ -692,7 +849,10 @@ public class WorkspaceService
             LogField.Public("entryCount", entries.Count),
             LogField.Public("monitorCount", monitorsToSave.Count),
             LogField.Public("saveFiles", saveFiles),
-            LogField.Public("captureMode", "all_windows"));
+            LogField.Public("captureMode", "all_windows"),
+            LogField.Public("durationMs", snapshotTimer.Elapsed.TotalMilliseconds),
+            LogField.Public("recursiveFileSearch", searchCommonFolders),
+            LogField.Public("fullJumpListIndex", buildFullJumpListCache));
         return snapshot;
     }
 
@@ -821,12 +981,25 @@ public class WorkspaceService
 
     // ── Per-window entry builder (shared by both snapshot paths) ──────────
 
+    private List<string> GetRecentFilesForCapture(
+        string executablePath,
+        int maxFiles,
+        bool buildFullJumpListCache) =>
+        buildFullJumpListCache
+            ? _jumpListService.GetRecentFilesForApp(executablePath, maxFiles)
+            : new List<string>();
+
     /// <summary>
     /// Builds a <see cref="WorkspaceEntry"/> for a single window, running file-detection
     /// tiers when <paramref name="saveFiles"/> is <c>true</c>.  Assumes the jump-list
     /// snapshot cache is already populated.
     /// </summary>
-    private WorkspaceEntry BuildEntryForWindow(WindowRecord w, bool saveFiles)
+    private WorkspaceEntry BuildEntryForWindow(
+        WindowRecord w,
+        bool saveFiles,
+        CommonFolderSearchBudget folderSearchBudget,
+        IProgress<SaveProgressReport>? progress,
+        bool buildFullJumpListCache)
     {
         // Browser web app (PWA) special case — must run before file detection, otherwise a
         // web-app window is treated as a generic browser window.
@@ -865,6 +1038,7 @@ public class WorkspaceService
 
         if (saveFiles)
         {
+            Stopwatch detectionTimer = Stopwatch.StartNew();
             AppLogger.Debug(
                 "file_detection.started",
                 "Started file detection for a window",
@@ -889,11 +1063,17 @@ public class WorkspaceService
                     "Window title did not produce a file match");
 
             // Tier 1.5
-            if (confidence == 40 && !string.IsNullOrEmpty(filePath) && !Path.IsPathRooted(filePath))
+            if (buildFullJumpListCache &&
+                confidence == 40 &&
+                !string.IsNullOrEmpty(filePath) &&
+                !Path.IsPathRooted(filePath))
             {
                 try
                 {
-                    var jlPool = _jumpListService.GetRecentFilesForApp(w.ExecutablePath, maxFiles: 50);
+                    var jlPool = GetRecentFilesForCapture(
+                        w.ExecutablePath,
+                        maxFiles: 50,
+                        buildFullJumpListCache);
                     string? exact = jlPool.FirstOrDefault(p =>
                         Path.GetFileName(p).Equals(filePath, StringComparison.OrdinalIgnoreCase));
                     if (exact != null)
@@ -914,11 +1094,16 @@ public class WorkspaceService
             }
 
             // Tier 2
-            if (confidence < 80 && !string.IsNullOrEmpty(w.ExecutablePath))
+            if (buildFullJumpListCache &&
+                confidence < 80 &&
+                !string.IsNullOrEmpty(w.ExecutablePath))
             {
                 try
                 {
-                    var jlFiles = _jumpListService.GetRecentFilesForApp(w.ExecutablePath, maxFiles: 30);
+                    var jlFiles = GetRecentFilesForCapture(
+                        w.ExecutablePath,
+                        maxFiles: 30,
+                        buildFullJumpListCache);
                     if (jlFiles.Count > 0)
                     {
                         string titleLower = w.TitleSnippet.ToLowerInvariant();
@@ -953,15 +1138,40 @@ public class WorkspaceService
             }
 
             // Tier 3
-            if (confidence < 80 && !string.IsNullOrEmpty(filePath) && !Path.IsPathRooted(filePath))
+            if (confidence < 80 &&
+                IsPlausibleBareFileName(filePath) &&
+                folderSearchBudget.CanSearch)
             {
+                progress?.Report(new SaveProgressReport(
+                    0,
+                    0,
+                    $"Searching files for {w.ProcessName}…",
+                    filePath!,
+                    WorkspaceCaptureProgressStage.SearchingCommonFolders));
                 try
                 {
-                    string? found = SearchFileInCommonLocations(filePath);
+                    Stopwatch searchTimer = Stopwatch.StartNew();
+                    string? found = SearchFileInCommonLocations(
+                        filePath!,
+                        folderSearchBudget,
+                        out bool timedOut);
+                    searchTimer.Stop();
                     if (found != null)
                     {
                         filePath = found; confidence = 85; source = "FILE_SEARCH";
                     }
+                    else if (timedOut)
+                    {
+                        AppLogger.Warn(
+                            "file_detection.folder_search_timed_out",
+                            "Common-folder search reached the global capture budget",
+                            LogField.Public("durationMs", searchTimer.Elapsed.TotalMilliseconds),
+                            LogField.Public("budgetMs", folderSearchBudget.Limit.TotalMilliseconds));
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -985,12 +1195,14 @@ public class WorkspaceService
                     launchArg = Path.GetDirectoryName(launchArg);
             }
 
+            detectionTimer.Stop();
             AppLogger.Debug(
                 "file_detection.completed",
                 "Completed file detection for a window",
                 LogField.Public("source", source),
                 LogField.Public("confidence", confidence),
-                LogField.Path("launchArgument", launchArg));
+                LogField.Path("launchArgument", launchArg),
+                LogField.Public("durationMs", detectionTimer.Elapsed.TotalMilliseconds));
         }
 
         return new WorkspaceEntry
@@ -1083,19 +1295,40 @@ public class WorkspaceService
         return CreateRestorePlan(snapshot, mode, liveWindows);
     }
 
-    /// <summary>Executes exactly the actions in an already-approved plan.</summary>
-    public Task<RestoreExecutionResult> ExecuteRestorePlanAsync(
+    /// <summary>
+    /// Executes exactly the actions in an already-approved plan. This is intentionally internal:
+    /// user-facing restore paths require the source snapshot so they can create a checkpoint.
+    /// </summary>
+    internal Task<RestoreExecutionResult> ExecuteRestorePlanAsync(
         RestorePlan approvedPlan,
-        CancellationToken ct = default) => _restoreExecutor.ExecuteAsync(approvedPlan, ct);
+        CancellationToken ct = default,
+        IProgress<RestoreProgressReport>? progress = null) =>
+        _restoreExecutor.ExecuteAsync(approvedPlan, ct, progress);
 
     /// <summary>Builds and executes a plan while returning structured stale-plan outcomes.</summary>
     public async Task<RestoreExecutionResult> RestoreWorkspaceWithExecutionResultAsync(
         WorkspaceSnapshot snapshot,
         RestoreMode mode,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IProgress<RestoreProgressReport>? progress = null)
     {
         RestorePlan plan = CreateRestorePlan(snapshot, mode);
-        return await ExecuteApprovedRestorePlanAsync(snapshot, plan, ct).ConfigureAwait(false);
+        return await ExecuteApprovedRestorePlanAsync(snapshot, plan, ct, progress).ConfigureAwait(false);
+    }
+
+    /// <summary>Runs an automatic restore with an explicit checkpoint trigger classification.</summary>
+    internal async Task<RestoreExecutionResult> RestoreWorkspaceWithExecutionResultAsync(
+        WorkspaceSnapshot snapshot,
+        RestoreMode mode,
+        WorkspaceCheckpointTrigger checkpointTrigger,
+        CancellationToken ct)
+    {
+        RestorePlan plan = CreateRestorePlan(snapshot, mode);
+        return await ExecuteApprovedRestorePlanTransactionalAsync(
+            snapshot,
+            plan,
+            checkpointTrigger,
+            ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1105,7 +1338,130 @@ public class WorkspaceService
     public async Task<RestoreExecutionResult> ExecuteApprovedRestorePlanAsync(
         WorkspaceSnapshot snapshot,
         RestorePlan approvedPlan,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IProgress<RestoreProgressReport>? progress = null) => await ExecuteApprovedRestorePlanTransactionalAsync(
+            snapshot,
+            approvedPlan,
+            DetermineCheckpointTrigger(approvedPlan),
+            ct,
+            progress).ConfigureAwait(false);
+
+    /// <summary>True when at least one healthy, non-expired checkpoint can be restored.</summary>
+    public bool CanUndoLastRestore => _storageService.Checkpoints.GetLatest() is not null;
+
+    /// <summary>
+    /// Restores the newest healthy checkpoint through the normal planner. The transactional
+    /// execution creates a new safety checkpoint first, making an undo itself undoable.
+    /// </summary>
+    public async Task<RestoreExecutionResult?> UndoLastRestoreAsync(
+        CancellationToken ct = default,
+        IProgress<RestoreProgressReport>? progress = null)
+    {
+        WorkspaceSnapshot? checkpoint = _storageService.Checkpoints.GetLatest();
+        if (checkpoint is null)
+            return null;
+
+        RestorePlan plan = CreateRestorePlan(checkpoint, RestoreMode.Standard);
+        return await ExecuteApprovedRestorePlanTransactionalAsync(
+            checkpoint,
+            plan,
+            WorkspaceCheckpointTrigger.Undo,
+            ct,
+            progress).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Runs an operation behind the single restore transaction gate. The callback is not invoked
+    /// unless the pre-restore snapshot has been committed atomically.
+    /// </summary>
+    internal async Task<CheckpointedOperationResult<T>> ExecuteCheckpointedOperationAsync<T>(
+        WorkspaceSnapshot targetSnapshot,
+        WorkspaceCheckpointTrigger trigger,
+        Func<RestoreCheckpointOutcome, CancellationToken, Task<T>> operation,
+        CancellationToken ct,
+        IProgress<RestoreProgressReport>? progress = null)
+    {
+        ArgumentNullException.ThrowIfNull(targetSnapshot);
+        ArgumentNullException.ThrowIfNull(operation);
+
+        try
+        {
+            await _restoreTransactionGate.WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return new CheckpointedOperationResult<T>(
+                CancelledCheckpoint(trigger),
+                false,
+                default);
+        }
+
+        try
+        {
+            RestoreCheckpointOutcome checkpoint = await CreatePreRestoreCheckpointAsync(
+                targetSnapshot,
+                trigger,
+                ct,
+                progress).ConfigureAwait(false);
+            if (!checkpoint.IsCreated)
+                return new CheckpointedOperationResult<T>(checkpoint, false, default);
+
+            T value = await operation(checkpoint, ct).ConfigureAwait(false);
+            return new CheckpointedOperationResult<T>(checkpoint, true, value);
+        }
+        finally
+        {
+            _restoreTransactionGate.Release();
+        }
+    }
+
+    internal RestoreExecutionResult CreateCheckpointAbortedResult(
+        RestorePlan plan,
+        RestoreCheckpointOutcome checkpoint)
+    {
+        bool cancelled = checkpoint.Status == RestoreCheckpointStatus.Cancelled;
+        RestoreExecutionEntryResult[] entries = plan.Entries.Select(entry =>
+            new RestoreExecutionEntryResult(
+                entry.EntryIndex,
+                entry.EntryId,
+                entry.Outcome == RestorePlanEntryOutcome.Excluded
+                    ? RestoreExecutionEntryStatus.Excluded
+                    : entry.Outcome == RestorePlanEntryOutcome.Blocked
+                        ? RestoreExecutionEntryStatus.Blocked
+                        : cancelled
+                            ? RestoreExecutionEntryStatus.Cancelled
+                            : RestoreExecutionEntryStatus.Failed,
+                null,
+                checkpoint.Explanation)).ToArray();
+        RestoreExecutionActionResult[] actions = plan.Actions.Select((action, index) =>
+            new RestoreExecutionActionResult(
+                index,
+                action.EntryIndex,
+                action.Kind,
+                cancelled
+                    ? RestoreExecutionActionStatus.Cancelled
+                    : RestoreExecutionActionStatus.Skipped,
+                null,
+                action.WindowHandle,
+                checkpoint.Explanation)).ToArray();
+        return new RestoreExecutionResult(
+            plan.WorkspaceId,
+            cancelled ? RestoreExecutionStatus.Cancelled : RestoreExecutionStatus.Rejected,
+            cancelled,
+            entries,
+            actions,
+            new HashSet<long>())
+        {
+            Checkpoint = checkpoint
+        };
+    }
+
+    private async Task<RestoreExecutionResult> ExecuteApprovedRestorePlanTransactionalAsync(
+        WorkspaceSnapshot snapshot,
+        RestorePlan approvedPlan,
+        WorkspaceCheckpointTrigger trigger,
+        CancellationToken ct,
+        IProgress<RestoreProgressReport>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(approvedPlan);
@@ -1119,6 +1475,57 @@ public class WorkspaceService
                 nameof(approvedPlan));
         }
 
+        // A blocked, cancelled, or empty plan cannot mutate the desktop and therefore should not
+        // consume checkpoint history. The executor still owns its structured rejection result.
+        if (!approvedPlan.CanExecute || approvedPlan.Actions.Count == 0)
+            return await ExecuteApprovedRestorePlanCoreAsync(snapshot, approvedPlan, ct, progress)
+                .ConfigureAwait(false);
+
+        CheckpointedOperationResult<RestoreExecutionResult> transaction =
+            await ExecuteCheckpointedOperationAsync(
+                snapshot,
+                trigger,
+                async (checkpoint, token) =>
+                {
+                    RestoreExecutionResult execution = await ExecuteApprovedRestorePlanCoreAsync(
+                        snapshot,
+                        approvedPlan,
+                        token,
+                        progress).ConfigureAwait(false);
+                    return execution with { Checkpoint = checkpoint };
+                },
+                ct,
+                progress).ConfigureAwait(false);
+
+        return transaction.OperationStarted && transaction.Value is not null
+            ? transaction.Value
+            : CreateCheckpointAbortedResult(approvedPlan, transaction.Checkpoint);
+    }
+
+    internal async Task<RestoreExecutionResult> ExecuteApprovedRestorePlanAfterCheckpointAsync(
+        WorkspaceSnapshot snapshot,
+        RestorePlan approvedPlan,
+        RestoreCheckpointOutcome checkpoint,
+        CancellationToken ct,
+        IProgress<RestoreProgressReport>? progress = null)
+    {
+        if (!checkpoint.IsCreated)
+            return CreateCheckpointAbortedResult(approvedPlan, checkpoint);
+        RestoreExecutionResult result = await ExecuteApprovedRestorePlanCoreAsync(
+            snapshot,
+            approvedPlan,
+            ct,
+            progress).ConfigureAwait(false);
+        return result with { Checkpoint = checkpoint };
+    }
+
+    private async Task<RestoreExecutionResult> ExecuteApprovedRestorePlanCoreAsync(
+        WorkspaceSnapshot snapshot,
+        RestorePlan approvedPlan,
+        CancellationToken ct,
+        IProgress<RestoreProgressReport>? progress)
+    {
+        Stopwatch restoreTimer = Stopwatch.StartNew();
         AppLogger.Info(
             "restore.session_started",
             "Started an approved workspace restore session",
@@ -1128,8 +1535,9 @@ public class WorkspaceService
             LogField.Public("mode", approvedPlan.Mode),
             LogField.Public("disabledEntryCount", approvedPlan.DisabledEntryIndexes.Count));
 
-        RestoreExecutionResult result = await ExecuteRestorePlanAsync(approvedPlan, ct).ConfigureAwait(false);
+        RestoreExecutionResult result = await ExecuteRestorePlanAsync(approvedPlan, ct, progress).ConfigureAwait(false);
         ApplyExecutionState(snapshot, result);
+        restoreTimer.Stop();
 
         AppLogger.Info(
             "restore.session_completed",
@@ -1137,9 +1545,149 @@ public class WorkspaceService
             LogField.Identifier("workspaceId", snapshot.WorkspaceId),
             LogField.Public("status", result.Status),
             LogField.Public("stalePlan", result.HasStalePlan),
-            LogField.Public("assignedWindowCount", result.AssignedWindowHandles.Count));
+            LogField.Public("assignedWindowCount", result.AssignedWindowHandles.Count),
+            LogField.Public("durationMs", restoreTimer.Elapsed.TotalMilliseconds));
         return result;
     }
+
+    private async Task<RestoreCheckpointOutcome> CreatePreRestoreCheckpointAsync(
+        WorkspaceSnapshot targetSnapshot,
+        WorkspaceCheckpointTrigger trigger,
+        CancellationToken ct,
+        IProgress<RestoreProgressReport>? progress)
+    {
+        Stopwatch checkpointTimer = Stopwatch.StartNew();
+        try
+        {
+            ct.ThrowIfCancellationRequested();
+            string name = $"Recovery before {trigger}: {targetSnapshot.Name}";
+            progress?.Report(new RestoreProgressReport(
+                RestoreProgressStage.PreparingCheckpoint,
+                "Creating recovery checkpoint",
+                "Capturing the current desktop before making changes.",
+                Elapsed: checkpointTimer.Elapsed));
+            IProgress<SaveProgressReport>? captureProgress = progress is null
+                ? null
+                : new CallbackProgress<SaveProgressReport>(report =>
+                    progress.Report(MapCheckpointProgress(report, checkpointTimer.Elapsed)));
+            WorkspaceCaptureResult capture = await CaptureWorkspaceAsync(
+                name,
+                saveFiles: true,
+                captureBrowserSessions: true,
+                progress: captureProgress,
+                cancellationToken: ct,
+                searchCommonFolders: false,
+                buildFullJumpListCache: false).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+
+            string targetWorkspaceId = Guid.TryParse(targetSnapshot.WorkspaceId, out _)
+                ? targetSnapshot.WorkspaceId
+                : "";
+            progress?.Report(new RestoreProgressReport(
+                RestoreProgressStage.SavingCheckpoint,
+                "Saving recovery checkpoint",
+                "Writing the checkpoint atomically.",
+                capture.Snapshot.Entries.Count,
+                capture.Snapshot.Entries.Count,
+                checkpointTimer.Elapsed));
+            CheckpointSaveReceipt receipt = _storageService.Checkpoints.Save(
+                capture.Snapshot,
+                trigger,
+                targetWorkspaceId);
+            checkpointTimer.Stop();
+            AppLogger.Info(
+                "checkpoint.pre_restore_created",
+                "Created a durable pre-restore checkpoint",
+                LogField.Identifier("checkpointId", receipt.CheckpointId),
+                LogField.Identifier("targetWorkspaceId", targetWorkspaceId),
+                LogField.Public("trigger", trigger),
+                LogField.Public("entryCount", capture.Snapshot.Entries.Count),
+                LogField.Public("durationMs", checkpointTimer.Elapsed.TotalMilliseconds),
+                LogField.Public("recursiveFileSearch", false),
+                LogField.Public("jumpListSearch", false));
+            return new RestoreCheckpointOutcome(
+                RestoreCheckpointStatus.Created,
+                trigger,
+                receipt.CheckpointId,
+                receipt.CreatedAtUtc,
+                "A recovery checkpoint was created before desktop mutation.");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            checkpointTimer.Stop();
+            return CancelledCheckpoint(trigger);
+        }
+        catch (Exception ex)
+        {
+            checkpointTimer.Stop();
+            AppLogger.Error(
+                "checkpoint.pre_restore_failed",
+                "Could not create the required pre-restore checkpoint; desktop mutation was blocked",
+                ex,
+                LogField.Identifier("targetWorkspaceId", targetSnapshot.WorkspaceId),
+                LogField.Public("trigger", trigger),
+                LogField.Public("durationMs", checkpointTimer.Elapsed.TotalMilliseconds),
+                LogField.Public("errorCategory", "checkpoint_creation"));
+            return new RestoreCheckpointOutcome(
+                RestoreCheckpointStatus.Failed,
+                trigger,
+                null,
+                null,
+                "The recovery checkpoint could not be saved, so no restore action was applied.");
+        }
+    }
+
+    private static WorkspaceCheckpointTrigger DetermineCheckpointTrigger(RestorePlan plan)
+    {
+        if (plan.Mode == RestoreModeKind.AlignAndMinimize)
+            return WorkspaceCheckpointTrigger.AlignAndMinimize;
+        if (plan.Mode == RestoreModeKind.Selective)
+            return WorkspaceCheckpointTrigger.SelectiveRestore;
+        if (plan.Actions.Any(action => action.TargetPlacement is { Strategy: not RestorePlacementStrategy.ExactPixels }))
+            return WorkspaceCheckpointTrigger.AdaptiveRestore;
+        return WorkspaceCheckpointTrigger.Restore;
+    }
+
+    private static RestoreProgressReport MapCheckpointProgress(
+        SaveProgressReport report,
+        TimeSpan elapsed)
+    {
+        RestoreProgressStage stage = report.Stage switch
+        {
+            WorkspaceCaptureProgressStage.DetectingResources or
+            WorkspaceCaptureProgressStage.SearchingCommonFolders =>
+                RestoreProgressStage.DetectingResources,
+            WorkspaceCaptureProgressStage.CapturingBrowserSession =>
+                RestoreProgressStage.CapturingBrowserSession,
+            WorkspaceCaptureProgressStage.Finalizing =>
+                RestoreProgressStage.SavingCheckpoint,
+            _ => RestoreProgressStage.PreparingCheckpoint
+        };
+        string message = report.Stage switch
+        {
+            WorkspaceCaptureProgressStage.DetectingResources =>
+                $"Identifying recovery resources for {report.AppName}",
+            WorkspaceCaptureProgressStage.SearchingCommonFolders => report.AppName,
+            WorkspaceCaptureProgressStage.CapturingBrowserSession => report.AppName,
+            WorkspaceCaptureProgressStage.Finalizing => "Finalizing recovery checkpoint",
+            _ => "Preparing recovery checkpoint"
+        };
+        return new RestoreProgressReport(
+            stage,
+            message,
+            report.Detail,
+            report.Current,
+            report.Total,
+            elapsed);
+    }
+
+    private static RestoreCheckpointOutcome CancelledCheckpoint(WorkspaceCheckpointTrigger trigger) =>
+        new(
+            RestoreCheckpointStatus.Cancelled,
+            trigger,
+            null,
+            null,
+            "Checkpoint creation was cancelled before desktop mutation began.");
 
     private async Task RestoreWorkspaceUsingPlanAsync(
         WorkspaceSnapshot snapshot,
@@ -1177,6 +1725,9 @@ public class WorkspaceService
         {
             Windows = identities,
             Resources = ObserveRestoreResources(snapshot),
+            RunningApplications = _windowInventory.GetRunningApplications(),
+            MatchHints = _settingsService?.GetWindowMatchHints(snapshot.WorkspaceId) ??
+                Array.Empty<WindowMatchHint>(),
             BrowserSessionRestore = snapshot.BrowserSessions.Count == 0
                 ? BrowserSessionRestoreAvailability.NotAvailable
                 : _browserSessionConnector is null
@@ -1186,6 +1737,18 @@ public class WorkspaceService
         RestoreMonitorTopology topology = BuildRestoreTopology(snapshot, liveWindows);
         return RestorePlanner.Build(snapshot, inventory, topology, mode);
     }
+
+    /// <summary>Persists a user-confirmed composite identity for a stable workspace entry.</summary>
+    public void RememberWindowMatch(
+        string workspaceId,
+        string entryId,
+        WindowIdentityHint identity) =>
+        (_settingsService ?? throw new InvalidOperationException(
+            "Learned window matching is unavailable without application settings."))
+        .RememberWindowMatch(workspaceId, entryId, identity);
+
+    /// <summary>Clears every persisted learned window match.</summary>
+    public int ClearAllWindowMatches() => _settingsService?.ClearAllWindowMatches() ?? 0;
 
     private IReadOnlyList<RestoreResourceObservation> ObserveRestoreResources(
         WorkspaceSnapshot snapshot)
@@ -1211,6 +1774,18 @@ public class WorkspaceService
                     entryIndex,
                     RestoreResourceKind.Executable,
                     executableTarget));
+            }
+
+            PackagedAppResolution? packaged = _packagedAppResolver.Resolve(
+                entry.ExecutablePath,
+                entry.AppUserModelId);
+            if (packaged is not null)
+            {
+                observations.Add(new RestoreResourceObservation(
+                    entryIndex,
+                    RestoreResourceKind.PackagedApplication,
+                    RestoreResourceAvailability.Available,
+                    packaged.AppUserModelId));
             }
 
             if (!entry.IsWebApp) continue;
@@ -1246,7 +1821,7 @@ public class WorkspaceService
                      .OrderBy(item => item.Index)
                      .ThenBy(item => item.MonitorId, StringComparer.OrdinalIgnoreCase))
         {
-            uint dpi = liveWindows.Values
+            uint dpi = monitor.Dpi > 0 ? monitor.Dpi : liveWindows.Values
                 .Select(item => item.Record)
                 .Where(record => string.Equals(
                     record.MonitorId,
@@ -1268,18 +1843,66 @@ public class WorkspaceService
 
             int width = monitor.WidthPixels > 0 ? monitor.WidthPixels : 1920;
             int height = monitor.HeightPixels > 0 ? monitor.HeightPixels : 1080;
+            int left = monitor.HasValidBounds ? monitor.BoundsLeft : nextLeft;
+            int top = monitor.HasValidBounds ? monitor.BoundsTop : 0;
+            int right = monitor.HasValidBounds ? monitor.BoundsRight : left + width;
+            int bottom = monitor.HasValidBounds ? monitor.BoundsBottom : top + height;
+            int workLeft = monitor.HasValidWorkArea ? monitor.WorkAreaLeft : left;
+            int workTop = monitor.HasValidWorkArea ? monitor.WorkAreaTop : top;
+            int workRight = monitor.HasValidWorkArea ? monitor.WorkAreaRight : right;
+            int workBottom = monitor.HasValidWorkArea ? monitor.WorkAreaBottom : bottom;
             result.Add(new RestoreMonitor(
                 monitor.MonitorId,
                 monitor.Index,
-                nextLeft,
-                0,
-                nextLeft + width,
-                height,
+                left,
+                top,
+                right,
+                bottom,
                 dpi,
-                monitor.IsPrimary));
-            nextLeft += width;
+                monitor.IsPrimary,
+                workLeft,
+                workTop,
+                workRight,
+                workBottom));
+            nextLeft = Math.Max(nextLeft, right);
         }
-        return new RestoreMonitorTopology { Monitors = result };
+        return new RestoreMonitorTopology
+        {
+            Monitors = result,
+            IsExactMatch = MonitorTopologiesMatchExactly(snapshot.Monitors, currentMonitors)
+        };
+    }
+
+    internal static bool MonitorTopologiesMatchExactly(
+        IReadOnlyList<MonitorInfo> saved,
+        IReadOnlyList<MonitorInfo> current)
+    {
+        if (saved.Count == 0 || saved.Count != current.Count)
+            return false;
+
+        MonitorInfo[] savedOrdered = saved.OrderBy(monitor => monitor.Index).ToArray();
+        MonitorInfo[] currentOrdered = current.OrderBy(monitor => monitor.Index).ToArray();
+        for (int index = 0; index < savedOrdered.Length; index++)
+        {
+            MonitorInfo source = savedOrdered[index];
+            MonitorInfo target = currentOrdered[index];
+            if (!source.HasValidBounds || !source.HasValidWorkArea ||
+                !target.HasValidBounds || !target.HasValidWorkArea ||
+                !string.Equals(source.MonitorId, target.MonitorId, StringComparison.OrdinalIgnoreCase) ||
+                source.BoundsLeft != target.BoundsLeft ||
+                source.BoundsTop != target.BoundsTop ||
+                source.BoundsRight != target.BoundsRight ||
+                source.BoundsBottom != target.BoundsBottom ||
+                source.WorkAreaLeft != target.WorkAreaLeft ||
+                source.WorkAreaTop != target.WorkAreaTop ||
+                source.WorkAreaRight != target.WorkAreaRight ||
+                source.WorkAreaBottom != target.WorkAreaBottom ||
+                (source.Dpi > 0 ? source.Dpi : 96) != (target.Dpi > 0 ? target.Dpi : 96))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static void ApplyExecutionState(
@@ -1402,8 +2025,12 @@ public class WorkspaceService
     /// when zero or multiple matches are found (multiple matches are ambiguous — don't guess).
     /// Searched roots: Documents, Desktop, Downloads, OneDrive (if present).
     /// </summary>
-    private static string? SearchFileInCommonLocations(string filename)
+    private static string? SearchFileInCommonLocations(
+        string filename,
+        CommonFolderSearchBudget budget,
+        out bool timedOut)
     {
+        timedOut = false;
         var searchRoots = new List<string>
         {
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
@@ -1423,11 +2050,19 @@ public class WorkspaceService
 
         var matches = new List<string>();
 
-        foreach (var root in searchRoots.Where(Directory.Exists)
-                                        .Distinct(StringComparer.OrdinalIgnoreCase))
+        budget.StartMeasuring();
+        try
         {
-            SearchDirectoryRecursive(root, filename, matches);
-            if (matches.Count > 1) return null;   // ambiguous — don't guess
+            foreach (var root in searchRoots.Where(Directory.Exists)
+                                            .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                SearchDirectoryRecursive(root, filename, matches, budget, ref timedOut);
+                if (matches.Count > 1 || timedOut) return null;   // ambiguous or out of budget
+            }
+        }
+        finally
+        {
+            budget.StopMeasuring();
         }
 
         return matches.Count == 1 ? matches[0] : null;
@@ -1442,8 +2077,19 @@ public class WorkspaceService
     /// searched even when one subtree is online-only or access-denied.
     /// </para>
     /// </summary>
-    private static void SearchDirectoryRecursive(string directory, string filename, List<string> matches)
+    private static void SearchDirectoryRecursive(
+        string directory,
+        string filename,
+        List<string> matches,
+        CommonFolderSearchBudget budget,
+        ref bool timedOut)
     {
+        if (!budget.CanContinue)
+        {
+            timedOut = true;
+            return;
+        }
+
         // Enumerate files in this exact directory (no recursion flag — errors are per-folder)
         try
         {
@@ -1465,9 +2111,78 @@ public class WorkspaceService
 
         foreach (var sub in subDirs)
         {
-            SearchDirectoryRecursive(sub, filename, matches);
-            if (matches.Count > 1) return;
+            SearchDirectoryRecursive(sub, filename, matches, budget, ref timedOut);
+            if (matches.Count > 1 || timedOut) return;
         }
+    }
+
+    private static bool IsPlausibleBareFileName(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || Path.IsPathRooted(value))
+            return false;
+        if (!string.Equals(Path.GetFileName(value), value, StringComparison.Ordinal))
+            return false;
+        if (value.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            return false;
+
+        string extension = Path.GetExtension(value);
+        return extension.Length is >= 2 and <= 20 &&
+               extension.Skip(1).All(character =>
+                   char.IsLetterOrDigit(character) || character is '-' or '_');
+    }
+
+    /// <summary>
+    /// One cumulative budget shared by every Tier-3 search in a capture. The stopwatch runs only
+    /// while traversing folders, so jump-list and window enumeration time do not consume it.
+    /// </summary>
+    private sealed class CommonFolderSearchBudget
+    {
+        private readonly bool _enabled;
+        private readonly CancellationToken _cancellationToken;
+        private readonly Stopwatch _stopwatch = new();
+
+        internal CommonFolderSearchBudget(
+            bool enabled,
+            TimeSpan limit,
+            CancellationToken cancellationToken)
+        {
+            _enabled = enabled;
+            Limit = limit > TimeSpan.Zero ? limit : TimeSpan.Zero;
+            _cancellationToken = cancellationToken;
+        }
+
+        internal TimeSpan Limit { get; }
+
+        internal bool CanSearch => CanContinue;
+
+        internal bool CanContinue
+        {
+            get
+            {
+                _cancellationToken.ThrowIfCancellationRequested();
+                return _enabled && _stopwatch.Elapsed < Limit;
+            }
+        }
+
+        internal void StartMeasuring()
+        {
+            _cancellationToken.ThrowIfCancellationRequested();
+            if (_enabled && !_stopwatch.IsRunning)
+                _stopwatch.Start();
+        }
+
+        internal void StopMeasuring()
+        {
+            if (_stopwatch.IsRunning)
+                _stopwatch.Stop();
+        }
+    }
+
+    private sealed class CallbackProgress<T>(Action<T> callback) : IProgress<T>
+    {
+        private readonly Action<T> _callback = callback ?? throw new ArgumentNullException(nameof(callback));
+
+        public void Report(T value) => _callback(value);
     }
 
     /// <summary>

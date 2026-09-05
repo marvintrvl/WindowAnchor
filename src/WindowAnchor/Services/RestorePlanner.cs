@@ -42,6 +42,7 @@ public static class RestorePlanner
             .ToArray();
         var selectedMonitorSet = selectedMonitorIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var consumedHwnds = new HashSet<IntPtr>();
+        var protectedHwnds = new HashSet<long>();
         var planEntries = new List<RestorePlanEntry>(savedEntries.Length);
         var actions = new List<RestoreAction>();
         var globalWarnings = new List<RestorePlanIssue>();
@@ -80,11 +81,14 @@ public static class RestorePlanner
             }
         }
 
-        HashSet<string> runningExecutables = liveWindows
+        RunningApplicationIdentity[] runningApplications = liveWindows
             .Where(window => !window.IsWebApp && !window.IsDedicatedBrowserWindow)
-            .Select(window => WindowIdentityExtractor.NormalizePath(window.ExecutablePath))
-            .Where(path => path.Length > 0)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .Select(window => new RunningApplicationIdentity(
+                window.ExecutablePath,
+                window.ProcessName,
+                window.AppUserModelId))
+            .Concat(liveInventory.RunningApplications)
+            .ToArray();
         HashSet<string> pendingDocumentExecutables = savedEntries
             .Select((entry, index) => (Entry: entry, Index: index))
             .Where(item => IncludedByMode(item.Entry, mode.Kind, selectedMonitorSet))
@@ -103,9 +107,31 @@ public static class RestorePlanner
         {
             WorkspaceEntry entry = savedEntries[entryIndex];
             SavedWindowIdentity savedIdentity = WindowIdentityExtractor.FromSaved(entry);
+            RestoreResourceObservation? observedPackage = GetResource(
+                resources,
+                entryIndex,
+                RestoreResourceKind.PackagedApplication);
+            if (observedPackage is
+                {
+                    Availability: RestoreResourceAvailability.Available,
+                    ResolvedTarget.Length: > 0
+                })
+            {
+                savedIdentity = savedIdentity with
+                {
+                    AppUserModelId = observedPackage.ResolvedTarget,
+                    PackageFamilyName = WindowIdentityExtractor.PackageFamily(
+                        observedPackage.ResolvedTarget)
+                };
+            }
             var warnings = new List<RestorePlanIssue>();
             var blockingErrors = new List<RestorePlanIssue>();
-            RestoreTargetPlacement placement = BuildPlacement(entry, monitors, warnings);
+            RestoreTargetPlacement placement = BuildPlacement(
+                entry,
+                snapshot.Monitors,
+                monitors,
+                monitorTopology.IsExactMatch,
+                warnings);
 
             if (duplicateEntryIds.Contains(entry.EntryId))
             {
@@ -150,18 +176,47 @@ public static class RestorePlanner
                 continue;
             }
 
-            IReadOnlyList<WindowMatchCandidate> matchedCandidates = WindowMatcher.FindCandidates(
+            WindowMatchHint? learnedHint = liveInventory.MatchHints.FirstOrDefault(hint =>
+                hint.WorkspaceId.Equals(snapshot.WorkspaceId, StringComparison.OrdinalIgnoreCase) &&
+                hint.EntryId.Equals(entry.EntryId, StringComparison.OrdinalIgnoreCase));
+            WindowMatchResolution matchResolution = WindowMatcher.Resolve(
                 savedIdentity,
-                liveWindows.Where(window => !consumedHwnds.Contains(window.Hwnd)));
-            RestorePlanCandidate[] candidates = matchedCandidates
-                .Select(ToPlanCandidate)
-                .ToArray();
-            WindowMatchCandidate? selectedMatch = matchedCandidates
-                .FirstOrDefault(candidate => candidate.IsEligible);
+                liveWindows.Where(window => !consumedHwnds.Contains(window.Hwnd)),
+                learnedHint?.Identity);
+            RestorePlanCandidate[] candidates = ToPlanCandidates(matchResolution.Candidates);
+            WindowMatchCandidate? selectedMatch = matchResolution.SelectedCandidate;
             RestorePlanCandidate? selected = selectedMatch is null
                 ? null
-                : ToPlanCandidate(selectedMatch);
+                : candidates.Single(candidate => candidate.WindowHandle == selectedMatch.Hwnd.ToInt64());
             var entryActions = new List<RestoreAction>();
+
+            if (matchResolution.IsAmbiguous)
+            {
+                RestorePlanCandidate[] ambiguousCandidates = candidates
+                    .Where(candidate => candidate.IsWithinAmbiguityMargin)
+                    .ToArray();
+                foreach (RestorePlanCandidate candidate in ambiguousCandidates)
+                    protectedHwnds.Add(candidate.WindowHandle);
+                warnings.Add(Warning(
+                    RestorePlanIssueCode.AmbiguousMatch,
+                    matchResolution.Explanation +
+                    " Choose a candidate in Restore Preview or skip this entry."));
+                planEntries.Add(CreateEntry(
+                    entryIndex,
+                    entry,
+                    RestorePlanEntryOutcome.Blocked,
+                    "No live window was assigned because multiple candidates are too close.",
+                    savedIdentity,
+                    candidates,
+                    selected: null,
+                    placement,
+                    RestoreLaunchRequirement.None(
+                        "Launch is suppressed until the ambiguity is explicitly resolved."),
+                    Array.Empty<RestoreAction>(),
+                    warnings,
+                    blockingErrors));
+                continue;
+            }
 
             if (selectedMatch is not null)
             {
@@ -176,12 +231,6 @@ public static class RestorePlanner
                     placement,
                     "Assign the selected live window and apply the target placement."));
 
-                if (selectedMatch.IsTopScoreTie)
-                {
-                    warnings.Add(Warning(
-                        RestorePlanIssueCode.AmbiguousMatch,
-                        "Multiple live windows share the highest score; deterministic HWND ordering selected one candidate."));
-                }
             }
 
             bool correctResourceMatched = selectedMatch?.Evidence.Any(evidence =>
@@ -195,7 +244,7 @@ public static class RestorePlanner
                 selectedMatch is not null,
                 correctResourceMatched,
                 browserSessionScheduled,
-                runningExecutables,
+                runningApplications,
                 pendingDocumentExecutables,
                 resources,
                 placement);
@@ -233,7 +282,7 @@ public static class RestorePlanner
             else if (selectedMatch is not null)
             {
                 outcome = RestorePlanEntryOutcome.Matched;
-                explanation = "A live window was selected deterministically from scored identity evidence.";
+                explanation = matchResolution.Explanation;
             }
             else if (launch.AwaitingBrowserSession)
             {
@@ -243,6 +292,11 @@ public static class RestorePlanner
             else if (launch.AwaitingRunningApplication)
             {
                 outcome = RestorePlanEntryOutcome.AwaitingRunningApplication;
+                explanation = launch.Requirement.Explanation;
+            }
+            else if (launch.NoRestorableWindow)
+            {
+                outcome = RestorePlanEntryOutcome.Excluded;
                 explanation = launch.Requirement.Explanation;
             }
             else
@@ -290,6 +344,7 @@ public static class RestorePlanner
             Mode = mode.Kind,
             SelectedMonitorIds = selectedMonitorIds,
             BrowserSessions = snapshot.BrowserSessions.Select(ToRestoreBrowserSession).ToArray(),
+            ProtectedWindowHandles = protectedHwnds,
             WasCancelled = mode.CancellationRequested,
             Entries = planEntries.ToArray(),
             Actions = actions.ToArray(),
@@ -342,6 +397,9 @@ public static class RestorePlanner
                     LaunchRequirement = RestoreLaunchRequirement.None(
                         "No launch is approved for a disabled entry."),
                     Actions = Array.Empty<RestoreAction>(),
+                    Warnings = entry.Warnings
+                        .Where(issue => issue.Code != RestorePlanIssueCode.AmbiguousMatch)
+                        .ToArray(),
                     BlockingErrors = Array.Empty<RestorePlanIssue>()
                 };
             }
@@ -394,6 +452,116 @@ public static class RestorePlanner
         };
     }
 
+    /// <summary>
+    /// Returns a new plan with one ambiguous entry assigned to the candidate explicitly selected
+    /// by the user. No matching or external observation is repeated.
+    /// </summary>
+    public static RestorePlan ResolveAmbiguousMatch(
+        RestorePlan preview,
+        int entryIndex,
+        long windowHandle)
+    {
+        ArgumentNullException.ThrowIfNull(preview);
+        RestorePlanEntry entry = preview.Entries.SingleOrDefault(item =>
+                item.EntryIndex == entryIndex)
+            ?? throw new ArgumentOutOfRangeException(nameof(entryIndex));
+        bool isUnresolvedAmbiguity = entry.SelectedMatch is null && entry.Warnings.Any(issue =>
+            issue.Code == RestorePlanIssueCode.AmbiguousMatch);
+        bool isUserResolvedAmbiguity = entry.SelectedMatch?.IsUserSelected == true;
+        if (!isUnresolvedAmbiguity && !isUserResolvedAmbiguity)
+        {
+            throw new InvalidOperationException(
+                "Only an ambiguous entry or a prior user-selected match can accept a candidate selection.");
+        }
+        RestorePlanCandidate candidate = entry.Candidates.SingleOrDefault(item =>
+                item.WindowHandle == windowHandle && item.IsEligible)
+            ?? throw new ArgumentException(
+                "The requested window is not an eligible candidate for this entry.",
+                nameof(windowHandle));
+        bool ownedByAnotherEntry = preview.Entries.Any(item =>
+            item.EntryIndex != entryIndex &&
+            item.SelectedMatch?.WindowHandle == windowHandle &&
+            !preview.DisabledEntryIndexes.Contains(item.EntryIndex));
+        if (ownedByAnotherEntry)
+        {
+            throw new InvalidOperationException(
+                "The selected window is already assigned to another workspace entry.");
+        }
+
+        WindowMatchEvidence selectionEvidence = new(
+            WindowMatchEvidenceKind.UserSelectedCandidate,
+            true,
+            0,
+            "The user explicitly selected this candidate in Restore Preview.");
+        RestorePlanCandidate selected = candidate with
+        {
+            Confidence = candidate.Confidence == WindowMatchConfidence.Exact
+                ? WindowMatchConfidence.Exact
+                : WindowMatchConfidence.Strong,
+            Evidence = candidate.Evidence.Append(selectionEvidence).ToArray(),
+            IsUserSelected = true
+        };
+        RestoreAction placementAction = new(
+            entryIndex,
+            RestoreActionKind.RestoreExistingWindow,
+            selected.WindowHandle,
+            "",
+            "",
+            false,
+            entry.TargetPlacement,
+            "Assign the candidate explicitly selected in Restore Preview and apply its target placement.");
+        RestorePlanEntry resolvedEntry = entry with
+        {
+            Outcome = RestorePlanEntryOutcome.Matched,
+            Explanation = "The user resolved the ambiguous match by selecting a specific live window.",
+            SelectedMatch = selected,
+            LaunchRequirement = RestoreLaunchRequirement.None(
+                "The selected live window is the user-confirmed target for this entry."),
+            Actions = [placementAction],
+            Warnings = entry.Warnings
+                .Where(issue => issue.Code != RestorePlanIssueCode.AmbiguousMatch)
+                .ToArray()
+        };
+        RestorePlanEntry[] entries = preview.Entries
+            .Select(item => item.EntryIndex == entryIndex ? resolvedEntry : item)
+            .ToArray();
+        var actions = preview.Actions
+            .Where(action => action.EntryIndex != entryIndex)
+            .ToList();
+        int terminalMinimize = actions.FindIndex(action =>
+            action.Kind == RestoreActionKind.MinimizeOtherWindows);
+        if (terminalMinimize >= 0)
+            actions.Insert(terminalMinimize, placementAction);
+        else
+            actions.Add(placementAction);
+
+        var currentEntryHandles = entry.Candidates
+            .Where(item => item.IsWithinAmbiguityMargin)
+            .Select(item => item.WindowHandle)
+            .ToHashSet();
+        HashSet<long> protectedHandles = preview.ProtectedWindowHandles
+            .Where(handle => !currentEntryHandles.Contains(handle))
+            .Concat(entries
+                .Where(item => item.EntryIndex != entryIndex &&
+                    item.Warnings.Any(issue => issue.Code == RestorePlanIssueCode.AmbiguousMatch))
+                .SelectMany(item => item.Candidates)
+                .Where(item => item.IsWithinAmbiguityMargin)
+                .Select(item => item.WindowHandle))
+            .ToHashSet();
+        RestorePlanIssue[] entryWarnings = entries.SelectMany(item => item.Warnings).ToArray();
+        List<RestorePlanIssue> globalWarnings = preview.Warnings.ToList();
+        foreach (RestorePlanIssue warning in preview.Entries.SelectMany(item => item.Warnings))
+            globalWarnings.Remove(warning);
+
+        return preview with
+        {
+            Entries = entries,
+            Actions = actions.ToArray(),
+            Warnings = globalWarnings.Concat(entryWarnings).ToArray(),
+            ProtectedWindowHandles = protectedHandles
+        };
+    }
+
     private static RestorePlanEntry CreateEntry(
         int entryIndex,
         WorkspaceEntry entry,
@@ -426,7 +594,7 @@ public static class RestorePlanner
         bool hasSelectedMatch,
         bool correctResourceMatched,
         bool browserSessionScheduled,
-        IReadOnlySet<string> runningExecutables,
+        IReadOnlyList<RunningApplicationIdentity> runningApplications,
         IReadOnlySet<string> pendingDocumentExecutables,
         IReadOnlyDictionary<(int EntryIndex, RestoreResourceKind Kind), RestoreResourceObservation> resources,
         RestoreTargetPlacement placement)
@@ -439,6 +607,7 @@ public static class RestorePlanner
             return new LaunchDecision(
                 RestoreLaunchRequirement.None("The selected live window already satisfies this entry."),
                 Array.Empty<RestoreAction>(),
+                false,
                 false,
                 false,
                 warnings,
@@ -473,6 +642,7 @@ public static class RestorePlanner
                 [fallbackAction, awaitAction],
                 AwaitingBrowserSession: true,
                 AwaitingRunningApplication: false,
+                NoRestorableWindow: false,
                 warnings,
                 errors);
         }
@@ -673,6 +843,7 @@ public static class RestorePlanner
                 Array.Empty<RestoreAction>(),
                 false,
                 false,
+                false,
                 warnings,
                 errors);
         }
@@ -686,15 +857,13 @@ public static class RestorePlanner
             return Blocked(errors, warnings, "No executable launch target is available.");
         }
 
-        if (runningExecutables.Contains(normalizedExecutable))
+        if (IsApplicationRunning(entry, runningApplications))
         {
             warnings.Add(Warning(
-                RestorePlanIssueCode.RunningApplicationHasNoMatchingWindow,
-                "The application is running, but no eligible live window matches this entry."));
-            return AwaitRunningApplication(
-                entryIndex,
-                placement,
-                "Do not launch a duplicate process while the saved application is already running.",
+                RestorePlanIssueCode.RunningApplicationHasNoRestorableWindow,
+                "The application process is running, but it exposes no unassigned user-facing task window for this entry."));
+            return NoRestorableWindow(
+                "Skip this entry instead of relaunching or waiting for a background-only, tray-only, or already-assigned process.",
                 warnings,
                 errors);
         }
@@ -709,14 +878,33 @@ public static class RestorePlanner
                 errors);
         }
 
-        if (IsStoreApp(entry))
+        RestoreResourceObservation? packagedIdentity = GetResource(
+            resources,
+            entryIndex,
+            RestoreResourceKind.PackagedApplication);
+        string packagedAumid = FirstNonEmpty(
+            packagedIdentity?.ResolvedTarget,
+            IsStoreApp(entry) ? entry.AppUserModelId : "");
+        if (packagedIdentity?.Availability == RestoreResourceAvailability.Available ||
+            packagedAumid.Length > 0)
         {
+            RestoreResourceObservation? versionedExecutable = GetResource(
+                resources,
+                entryIndex,
+                RestoreResourceKind.Executable);
+            if (versionedExecutable?.Availability is RestoreResourceAvailability.Missing or
+                RestoreResourceAvailability.Stale)
+            {
+                warnings.Add(Warning(
+                    RestorePlanIssueCode.StaleResource,
+                    "The versioned package executable changed; the stable package identity will be used."));
+            }
             return Launch(
                 entryIndex,
                 RestoreLaunchKind.PackagedApplication,
                 RestoreActionKind.ActivatePackagedApplication,
                 "explorer.exe",
-                $"shell:AppsFolder\\{entry.AppUserModelId}",
+                $"shell:AppsFolder\\{packagedAumid}",
                 useShellExecute: true,
                 RestoreResourceAvailability.Available,
                 "Activate the packaged application through its AppUserModelID.",
@@ -794,6 +982,7 @@ public static class RestorePlanner
             [action],
             false,
             false,
+            false,
             warnings.ToArray(),
             errors.ToArray());
     }
@@ -816,6 +1005,19 @@ public static class RestorePlanner
                  explanation)],
             AwaitingBrowserSession: false,
             AwaitingRunningApplication: true,
+            NoRestorableWindow: false,
+            warnings.ToArray(),
+            errors.ToArray());
+
+    private static LaunchDecision NoRestorableWindow(
+        string explanation,
+        IReadOnlyList<RestorePlanIssue> warnings,
+        IReadOnlyList<RestorePlanIssue> errors) => new(
+            RestoreLaunchRequirement.None(explanation),
+            Array.Empty<RestoreAction>(),
+            AwaitingBrowserSession: false,
+            AwaitingRunningApplication: false,
+            NoRestorableWindow: true,
             warnings.ToArray(),
             errors.ToArray());
 
@@ -825,6 +1027,7 @@ public static class RestorePlanner
         string explanation) => new(
             RestoreLaunchRequirement.None(explanation),
             Array.Empty<RestoreAction>(),
+            false,
             false,
             false,
             warnings.ToArray(),
@@ -865,7 +1068,9 @@ public static class RestorePlanner
 
     private static RestoreTargetPlacement BuildPlacement(
         WorkspaceEntry entry,
+        IReadOnlyList<MonitorInfo> savedMonitors,
         IReadOnlyList<RestoreMonitor> monitors,
+        bool topologyIsExact,
         ICollection<RestorePlanIssue> warnings)
     {
         WindowRecord position = entry.Position ?? new WindowRecord();
@@ -905,11 +1110,67 @@ public static class RestorePlanner
 
         uint savedDpi = position.SavedDpi > 0 ? position.SavedDpi : 96;
         uint targetDpi = target is { Dpi: > 0 } ? target.Dpi : savedDpi;
-        double scale = (double)targetDpi / savedDpi;
-        int left = Scale(position.NormalLeft, scale);
-        int top = Scale(position.NormalTop, scale);
-        int right = Scale(position.NormalRight, scale);
-        int bottom = Scale(position.NormalBottom, scale);
+        bool dpiChanged = savedDpi != targetDpi;
+        var rectangle = new PlacementRectangle(
+            position.NormalLeft,
+            position.NormalTop,
+            position.NormalRight,
+            position.NormalBottom);
+        RestorePlacementStrategy strategy = RestorePlacementStrategy.Unavailable;
+        WindowLayoutKind semanticKind = position.NormalizedLayout?.Kind ?? WindowLayoutKind.Custom;
+        bool wasClamped = false;
+
+        bool useExactPixels = target is not null &&
+            topologyIsExact &&
+            mapping == RestoreMonitorMappingKind.ExactStableId;
+        if (useExactPixels)
+        {
+            strategy = RestorePlacementStrategy.ExactPixels;
+        }
+        else if (target is not null)
+        {
+            MonitorInfo? sourceMonitor = savedMonitors.FirstOrDefault(monitor =>
+                savedMonitorId.Length > 0 &&
+                string.Equals(monitor.MonitorId, savedMonitorId, StringComparison.OrdinalIgnoreCase))
+                ?? savedMonitors.FirstOrDefault(monitor => monitor.Index == savedMonitorIndex);
+            NormalizedWindowLayout? layout = WindowLayoutGeometry.IsValid(position.NormalizedLayout)
+                ? position.NormalizedLayout
+                : sourceMonitor is not null
+                    ? WindowLayoutGeometry.Capture(position, sourceMonitor)
+                    : null;
+
+            if (WindowLayoutGeometry.IsValid(layout))
+            {
+                rectangle = AdaptNormalized(layout!, target);
+                semanticKind = layout!.Kind;
+                strategy = layout!.Kind == WindowLayoutKind.Custom
+                    ? RestorePlacementStrategy.Normalized
+                    : RestorePlacementStrategy.Semantic;
+            }
+            else
+            {
+                double scale = (double)targetDpi / savedDpi;
+                rectangle = new PlacementRectangle(
+                    Scale(position.NormalLeft, scale),
+                    Scale(position.NormalTop, scale),
+                    Scale(position.NormalRight, scale),
+                    Scale(position.NormalBottom, scale));
+                strategy = RestorePlacementStrategy.LegacyDpiScaledAndClamped;
+            }
+
+            rectangle = ClampToWorkArea(rectangle, target, out wasClamped);
+            if (wasClamped)
+            {
+                warnings.Add(Warning(
+                    RestorePlanIssueCode.PlacementClamped,
+                    "The adapted placement was clamped to the visible monitor work area."));
+            }
+        }
+
+        int left = rectangle.Left;
+        int top = rectangle.Top;
+        int right = rectangle.Right;
+        int bottom = rectangle.Bottom;
         if (right <= left || bottom <= top)
         {
             warnings.Add(Warning(
@@ -928,10 +1189,72 @@ public static class RestorePlanner
             position.ShowCmd,
             savedDpi,
             targetDpi,
-            savedDpi != targetDpi);
+            dpiChanged,
+            strategy,
+            semanticKind,
+            wasClamped);
     }
 
-    private static int Scale(int coordinate, double scale) => (int)(coordinate * scale);
+    private static PlacementRectangle AdaptNormalized(
+        NormalizedWindowLayout layout,
+        RestoreMonitor target)
+    {
+        (double x, double y, double width, double height) = layout.Kind switch
+        {
+            WindowLayoutKind.Full => (0, 0, 1, 1),
+            WindowLayoutKind.LeftHalf => (0, 0, .5, 1),
+            WindowLayoutKind.RightHalf => (.5, 0, .5, 1),
+            WindowLayoutKind.TopHalf => (0, 0, 1, .5),
+            WindowLayoutKind.BottomHalf => (0, .5, 1, .5),
+            WindowLayoutKind.LeftThird => (0, 0, 1d / 3d, 1),
+            WindowLayoutKind.CenterThird => (1d / 3d, 0, 1d / 3d, 1),
+            WindowLayoutKind.RightThird => (2d / 3d, 0, 1d / 3d, 1),
+            WindowLayoutKind.Centered => (
+                .5 - layout.Width / 2,
+                .5 - layout.Height / 2,
+                layout.Width,
+                layout.Height),
+            _ => (layout.X, layout.Y, layout.Width, layout.Height)
+        };
+
+        int workWidth = Math.Max(1, target.WorkAreaWidth);
+        int workHeight = Math.Max(1, target.WorkAreaHeight);
+        int left = target.EffectiveWorkAreaLeft + Scale(workWidth, x);
+        int top = target.EffectiveWorkAreaTop + Scale(workHeight, y);
+        int windowWidth = Math.Max(1, Scale(workWidth, width));
+        int windowHeight = Math.Max(1, Scale(workHeight, height));
+        return new PlacementRectangle(left, top, left + windowWidth, top + windowHeight);
+    }
+
+    private static PlacementRectangle ClampToWorkArea(
+        PlacementRectangle rectangle,
+        RestoreMonitor target,
+        out bool wasClamped)
+    {
+        int workLeft = target.EffectiveWorkAreaLeft;
+        int workTop = target.EffectiveWorkAreaTop;
+        int workRight = target.EffectiveWorkAreaRight;
+        int workBottom = target.EffectiveWorkAreaBottom;
+        int workWidth = Math.Max(1, workRight - workLeft);
+        int workHeight = Math.Max(1, workBottom - workTop);
+
+        int width = rectangle.Right - rectangle.Left;
+        int height = rectangle.Bottom - rectangle.Top;
+        if (width <= 0) width = Math.Min(800, workWidth);
+        if (height <= 0) height = Math.Min(600, workHeight);
+        width = Math.Clamp(width, 1, workWidth);
+        height = Math.Clamp(height, 1, workHeight);
+        int left = Math.Clamp(rectangle.Left, workLeft, workRight - width);
+        int top = Math.Clamp(rectangle.Top, workTop, workBottom - height);
+        var clamped = new PlacementRectangle(left, top, left + width, top + height);
+        wasClamped = clamped != rectangle;
+        return clamped;
+    }
+
+    private static int Scale(int value, double scale) =>
+        (int)Math.Round(value * scale, MidpointRounding.AwayFromZero);
+
+    private readonly record struct PlacementRectangle(int Left, int Top, int Right, int Bottom);
 
     private static bool IncludedByMode(
         WorkspaceEntry entry,
@@ -940,15 +1263,29 @@ public static class RestorePlanner
         mode != RestoreModeKind.Selective ||
         selectedMonitorIds.Contains(FirstNonEmpty(entry.MonitorId, entry.Position?.MonitorId));
 
-    private static RestorePlanCandidate ToPlanCandidate(WindowMatchCandidate candidate) => new(
-        candidate.Hwnd.ToInt64(),
-        candidate.ProcessId,
-        candidate.IsEligible,
-        candidate.Score,
-        candidate.Confidence,
-        candidate.Evidence.ToArray(),
-        candidate.TitleSimilarityScore,
-        candidate.IsTopScoreTie);
+    private static RestorePlanCandidate[] ToPlanCandidates(
+        IReadOnlyList<WindowMatchCandidate> candidates) => candidates
+        .Select(candidate => new RestorePlanCandidate(
+            candidate.Hwnd.ToInt64(),
+            candidate.ProcessId,
+            candidate.IsEligible,
+            candidate.Score,
+            candidate.Confidence,
+            candidate.Evidence.ToArray(),
+            candidate.TitleSimilarityScore,
+            candidate.IsTopScoreTie,
+            candidate.Title,
+            candidate.ProcessName,
+            candidate.WindowClassName,
+            candidate.MonitorId,
+            candidate.Bounds,
+            candidate.IdentityHint,
+            candidate.IsWithinAmbiguityMargin,
+            candidate.IsLearnedHintMatch,
+            IsUserSelected: false,
+            CanRememberChoice: candidate.IsEligible && candidates.Count(other =>
+                WindowMatcher.MatchesHint(candidate.IdentityHint, other.IdentityHint)) == 1))
+        .ToArray();
 
     private static RestoreBrowserSession ToRestoreBrowserSession(BrowserSession session) => new(
         session.Browser,
@@ -1002,6 +1339,41 @@ public static class RestorePlanner
     private static bool IsBrowserProcess(string? processName) =>
         processName?.ToLowerInvariant() is "chrome" or "msedge" or "opera" or "brave";
 
+    private static string NormalizeProcessName(string? processName)
+    {
+        string value = (processName ?? "").Trim();
+        return value.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            ? value[..^4]
+            : value;
+    }
+
+    private static bool IsApplicationRunning(
+        WorkspaceEntry entry,
+        IEnumerable<RunningApplicationIdentity> runningApplications)
+    {
+        string expectedPath = WindowIdentityExtractor.NormalizePath(entry.ExecutablePath);
+        string expectedProcess = NormalizeProcessName(entry.ProcessName);
+        string expectedAumid = entry.AppUserModelId?.Trim() ?? "";
+        return runningApplications.Any(application =>
+        {
+            string observedPath = WindowIdentityExtractor.NormalizePath(application.ExecutablePath);
+            string observedProcess = NormalizeProcessName(application.ProcessName);
+            string observedAumid = application.AppUserModelId?.Trim() ?? "";
+            if (expectedAumid.Length > 0 && observedAumid.Length > 0 &&
+                string.Equals(expectedAumid, observedAumid, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+            if (expectedPath.Length > 0 && observedPath.Length > 0)
+                return string.Equals(expectedPath, observedPath, StringComparison.OrdinalIgnoreCase);
+
+            // Process names are deliberately a fallback only when one side lacks a usable path;
+            // equal filenames from two different installations are not sufficient identity.
+            return expectedProcess.Length > 0 && observedProcess.Length > 0 &&
+                   string.Equals(expectedProcess, observedProcess, StringComparison.OrdinalIgnoreCase);
+        });
+    }
+
     private static RestorePlanIssue Warning(RestorePlanIssueCode code, string explanation) =>
         new(code, RestorePlanIssueSeverity.Warning, explanation);
 
@@ -1013,6 +1385,7 @@ public static class RestorePlanner
         IReadOnlyList<RestoreAction> Actions,
         bool AwaitingBrowserSession,
         bool AwaitingRunningApplication,
+        bool NoRestorableWindow,
         IReadOnlyList<RestorePlanIssue> Warnings,
         IReadOnlyList<RestorePlanIssue> BlockingErrors);
 }

@@ -159,7 +159,33 @@ public class WindowIdentityTests
     }
 
     [Fact]
-    public void Equal_scores_are_reported_as_ties_but_assignment_remains_deterministic()
+    public void Shared_packaged_identity_can_match_a_hosted_window_across_process_boundaries()
+    {
+        const string aumid = "Contoso.Suite_123abc!Dashboard";
+        var entry = Entry(
+            @"C:\Program Files\WindowsApps\Contoso.Suite_1\Host.exe",
+            "Dashboard",
+            "HostWindow");
+        entry.AppUserModelId = aumid;
+        LiveWindowIdentity hosted = Live(
+            36,
+            @"C:\Program Files\WindowsApps\Contoso.Runtime_1\Renderer.exe",
+            "Dashboard",
+            "HostedSurface",
+            aumid: aumid);
+
+        WindowMatchCandidate candidate = Assert.Single(WindowMatcher.FindCandidates(
+            WindowIdentityExtractor.FromSaved(entry),
+            [hosted]));
+
+        Assert.True(candidate.IsEligible);
+        Assert.Equal(WindowMatchConfidence.Exact, candidate.Confidence);
+        Assert.Contains(candidate.Evidence,
+            evidence => evidence.Kind == WindowMatchEvidenceKind.AppUserModelIdExact);
+    }
+
+    [Fact]
+    public void Equal_scores_are_ambiguous_and_never_auto_assigned()
     {
         const string exe = @"C:\Apps\editor.exe";
         var entry = Entry(exe, "same title", "EditorWindow");
@@ -174,10 +200,54 @@ public class WindowIdentityTests
                 window.Value.Record)));
 
         Assert.Equal(2, candidates.Count(candidate => candidate.IsTopScoreTie));
-        WindowRestoreMatch selected = Assert.Single(WindowRestorePlanner.PlanMatches(
-            [entry], live, new HashSet<int>()));
-        Assert.Equal(new IntPtr(401), selected.Hwnd);
-        Assert.True(selected.Candidate!.IsTopScoreTie);
+        Assert.Equal(new IntPtr(401), candidates[0].Hwnd);
+        WindowMatchResolution resolution = WindowMatcher.ResolveCandidates(candidates);
+        Assert.Equal(WindowMatchConfidence.Ambiguous, resolution.Confidence);
+        Assert.Null(resolution.SelectedCandidate);
+        Assert.Empty(WindowRestorePlanner.PlanMatches([entry], live, new HashSet<int>()));
+    }
+
+    [Fact]
+    public void Close_title_scores_use_margin_and_low_similarity_is_ineligible()
+    {
+        const string exe = @"C:\Apps\editor.exe";
+        var entry = Entry(exe, "Alpha report", "EditorWindow");
+        SavedWindowIdentity saved = WindowIdentityExtractor.FromSaved(entry);
+        LiveWindowIdentity north = Live(61, exe, "Alpha report north", "EditorWindow");
+        LiveWindowIdentity south = Live(62, exe, "Alpha report south", "EditorWindow");
+        LiveWindowIdentity unrelated = Live(63, exe, "Completely unrelated dashboard", "EditorWindow");
+
+        WindowMatchResolution resolution = WindowMatcher.Resolve(saved, [north, south, unrelated]);
+
+        Assert.Equal(WindowMatchConfidence.Ambiguous, resolution.Confidence);
+        Assert.Null(resolution.SelectedCandidate);
+        Assert.Equal([61L, 62L], resolution.Candidates
+            .Where(candidate => candidate.IsWithinAmbiguityMargin)
+            .Select(candidate => candidate.Hwnd.ToInt64()));
+        WindowMatchCandidate rejected = resolution.Candidates.Single(candidate =>
+            candidate.Hwnd == new IntPtr(63));
+        Assert.False(rejected.IsEligible);
+        Assert.Equal(WindowMatchConfidence.Ineligible, rejected.Confidence);
+    }
+
+    [Fact]
+    public void Learned_composite_hint_breaks_future_tie_with_explained_evidence()
+    {
+        const string exe = @"C:\Apps\editor.exe";
+        var entry = Entry(exe, "Alpha report", "EditorWindow");
+        SavedWindowIdentity saved = WindowIdentityExtractor.FromSaved(entry);
+        LiveWindowIdentity north = Live(71, exe, "Alpha report north", "EditorWindow");
+        LiveWindowIdentity south = Live(72, exe, "Alpha report south", "EditorWindow");
+        WindowIdentityHint learned = WindowIdentityExtractor.ToHint(north);
+
+        WindowMatchResolution resolution = WindowMatcher.Resolve(saved, [south, north], learned);
+
+        WindowMatchCandidate selected = Assert.IsType<WindowMatchCandidate>(resolution.SelectedCandidate);
+        Assert.Equal(new IntPtr(71), selected.Hwnd);
+        Assert.Equal(WindowMatchConfidence.Strong, resolution.Confidence);
+        Assert.True(selected.IsLearnedHintMatch);
+        Assert.Contains(selected.Evidence, evidence =>
+            evidence.Kind == WindowMatchEvidenceKind.LearnedIdentityHint && evidence.Matched);
     }
 
     [Fact]
@@ -201,7 +271,7 @@ public class WindowIdentityTests
             [live]));
 
         Assert.True(candidate.IsEligible);
-        Assert.Equal(WindowMatchConfidence.Weak, candidate.Confidence);
+        Assert.Equal(WindowMatchConfidence.Probable, candidate.Confidence);
         Assert.Contains(candidate.Evidence,
             evidence => evidence.Kind == WindowMatchEvidenceKind.GeometrySimilarity);
     }

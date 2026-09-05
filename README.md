@@ -14,16 +14,49 @@
     - **Tier 1**: Recovers open files via window title parsing.
     - **Tier 2**: Uses Windows Jump-List integration to accurately identify and relaunch specific documents in supported apps (Office, VS Code, etc.).
 - **Selective Restore**: Choose exactly which monitors to restore via a picker dialog.
-- **Restore Plan Preview**: Review exact, adapted, ambiguous, missing, launch, move, skip, and minimize outcomes before a manual restore; disable individual entries before approval.
+- **Explainable Match Resolution**: Close candidates are never guessed by HWND order. Restore
+  Preview shows titles, app/class, monitor, bounds, confidence, score, and evidence so you can pick
+  the correct window, optionally remember that composite identity, or skip the entry.
+- **Application Readiness**: Launched apps are positioned only after their safely matched window is
+  responsive and its identity and bounds are stable. Polling is cancellable, bounded per entry,
+  and extensible through app-specific strategies.
+- **Verified Window Placement**: After positioning, WindowAnchor re-reads normal bounds and state
+  with DPI-aware tolerance. Apps that reject or override placement receive bounded same-HWND
+  retries, with `Applied`, `Rejected`, `MovedByApp`, and `WindowGone` outcomes in the result.
+- **Transactional Restore & Undo**: Before any approved restore, adaptive placement, automatic
+  display restore, align/minimize, or workspace switch can mutate the desktop, WindowAnchor saves
+  a durable recovery checkpoint. “Undo Last Restore” reuses the normal planner and creates its own
+  safety checkpoint first, so an undo can itself be undone.
+- **Update-Safe Store App Launching**: Versioned `WindowsApps` paths are rebound to the currently
+  installed package and launched through their stable AppUserModelID, so Store/MSIX updates do not
+  turn an otherwise valid workspace entry into a missing resource.
+- **Adaptive Semantic Layouts**: Saves exact pixels together with monitor work areas, DPI,
+  normalized geometry, anchors, and recognizable full/half/third/centered layouts. Changed or
+  missing monitors use the semantic representation and are clamped fully onto a visible work area.
 - **Default Workspace & Startup Restore**: Set a default workspace to auto-restore on launch, restore the last-used one, or choose from a picker dialog.
 - **Global Keyboard Shortcuts**: Customisable hotkeys for quick save, restore, workspace switching (Ctrl+Alt+1/2/3), switch workspace (Ctrl+Alt+Shift+1/2/3) and settings.
 - **Workspace Ordering**: Reorder workspaces with Move Up/Down — the first three map to the hotkey slots.
 - **Monitor Renaming**: Assign custom names to monitors (e.g. “Left”, “Ultrawide”) — aliases replace hardware names throughout all dialogs.
-- **Switch Workspace**: Instantly switch contexts by closing all open windows and restoring a different workspace — via context menu, tray, or hotkey.
+- **Reviewed Workspace Switching**: Preview confidence, ambiguity, and monitor adaptation first.
+  Approved destination windows stay open; only unrelated windows receive normal close requests,
+  with bounded single-flight waiting and no force-close behavior. Expected closure of an
+  unselected candidate does not invalidate the already-reviewed plan.
+- **Native Task-Window Filtering**: Workspace windows are selected from OS capabilities rather
+  than application names: DWM-cloaked, tool-only, non-activatable, and owned/transient surfaces
+  are not saved as independent tasks. `WS_EX_APPWINDOW` remains an
+  explicit opt-in. Existing background/tray processes with no eligible task window are explained
+  and skipped instead of being relaunched and awaited for 45 seconds.
+- **Safe Multiplicity and Hosted Identity**: Distinct captured windows remain distinct; one HWND
+  can satisfy only one entry, and an unavailable duplicate is reported rather than silently
+  collapsed. Cross-process hosted windows match only through shared Windows identity such as an
+  exact AppUserModelID within the same package family—not a process-name or title exception.
 - **Browser Session Restore**: The optional Chromium connector captures and restores supported tabs,
   groups, pinned/active state, and browser-window geometry; ordinary browser launch remains the
   graceful fallback when the connector is unavailable.
 - **Save Progress Transparency**: A dedicated progress window tracks the discovery of file paths and jump-lists during the save process.
+- **Restore Progress Transparency**: Restore, switch, and undo show the active checkpoint,
+  resource detection, browser, launch, readiness, close-wait, and placement-verification stage,
+  including item counts, elapsed/limit timing, and safe cancellation.
 - **Zero Dependencies**: Available as a high-performance, single-file standalone executable.
 - **Fluent UI**: Fully integrated with the Windows 11 design language and system tray.
 
@@ -40,8 +73,8 @@ WindowAnchor operates silently in your system tray, watching your display config
 
 ## Settings at a Glance
 
-Configure Windows startup behavior, notifications, browser integration, and automatic workspace
-restore from one place.
+Configure Windows startup behavior, notifications, browser integration, automatic workspace
+restore, and clear remembered window choices from one place.
 
 ![System, browser integration, and startup settings](docs/screenshots/settings_system_browser_startup.png)
 
@@ -78,14 +111,26 @@ This manual workflow is fully supported for local testing while the extension is
 
 1. **Monitor fingerprint** — WindowAnchor computes a stable SHA-256 hash of your connected monitors. This is used to automatically match workspaces when you reconnect monitors.
 
-2. **Window snapshot** — Enumerates visible windows, recording position, DPI, and process info. File detection parses window titles and queries Windows jump-lists to relaunch files.
+2. **Window snapshot** — Enumerates visible windows, recording exact normal bounds, monitor/work-area
+   geometry, DPI, normalized anchors, semantic layout, and process info. File detection parses
+   window titles and queries Windows jump-lists to relaunch files.
 
-3. **Plan and approve** — Manual tray and Settings restores show an immutable preview. You can
-   disable entries, use Tab to navigate, Enter to approve, and Escape to cancel. The approved plan
-   is checked for stale windows, browser capability, and launch resources before any action starts.
+3. **Plan and approve** — Manual tray and Settings restores and workspace switches show an immutable preview. You can
+   resolve ambiguous candidates, optionally remember the choice, disable entries, use Tab to
+   navigate, Enter to approve, and Escape to cancel. The approved plan is checked for stale
+   windows, browser capability, and launch resources before any action starts.
 
-4. **Execute and report** — The executor launches only approved targets, reconciles appearing
-   windows, applies final DPI-aware positions/states, and returns structured per-item outcomes.
+4. **Checkpoint** — A fast metadata-only desktop capture is atomically committed before the first
+   move, minimize, close, browser restore, or process launch. It retains title, Explorer-folder,
+   PWA, and browser metadata, but deliberately skips Jump List parsing and recursive user-folder scans.
+   If this durability gate fails, the operation is rejected without changing the desktop.
+
+5. **Execute and report** — The executor launches only approved targets, polls process/window
+   readiness against a 45-second real wall-clock limit instead of sleeping for fixed intervals,
+   and starts a wait only when a successful launch/browser action is related to that entry. It applies final DPI-aware positions/states as
+   each entry becomes ready, then verifies the observed placement and performs at most two
+   same-HWND corrections. Structured per-item outcomes include readiness, verification, retry
+   count, tolerance, and final failure state.
 
 ## Docs & Architecture
 
@@ -115,12 +160,15 @@ published release includes `SHA256SUMS.txt` for its executable and browser conne
 
 ##  Roadmap
 
-### v1.5.0 (Current Release) — *Restore Planning and Safety* ✅
-- **Plan Before Restore**: Manual tray and Settings restores show every planned entry outcome and action before execution.
-- **Per-Entry Approval**: Disable entries without recomputing or mutating the original preview.
-- **Stale-Plan Protection**: Changed HWNDs, candidate inventories, browser capability, and launch resources stop execution with a clear warning.
-- **Stable Data Foundation**: Versioned schemas, stable IDs, atomic typed stores, and privacy-safe structured diagnostics.
-- **Deterministic Matching**: Shared identity evidence protects PWA, dedicated-browser, document, packaged-app, and duplicate-window behavior.
+### v1.5.1 (Current Release) — *Restore Reliability and Recovery* ✅
+- **Explainable Matching**: Confidence classes, ambiguity choices, and optional stable learned hints replace destructive guessing.
+- **Responsive Restore**: Correlated readiness signals replace fixed sleeps, expose progress, and keep every wait cancellable and bounded.
+- **Adaptive Layouts**: Semantic, normalized, DPI-aware placement keeps windows visible when monitors, work areas, or orientation change.
+- **Verified Placement**: WindowAnchor checks final bounds/state and performs bounded same-HWND corrections when an app rejects a move.
+- **Transactional Safety**: A durable checkpoint precedes every approved mutation, and Undo Last Restore uses the same safe planner.
+- **Generalized Window Policy**: Native styles, ownership, DWM cloaking, and AppUserModelID determine task windows without product-specific blacklists.
+- **Safer Switching**: Destination windows are preserved, unrelated close requests are tracked precisely, and superseded switches are cancelled.
+- **Faster Diagnosis**: A live progress window identifies checkpoint, resource, browser, launch, readiness, close, and verification work.
 
 ### v1.3 — *UX Improvements* ✅
 - **Monitor Renaming**: Personalise monitor names ("Generic PnP" → "Left Monitor") in Settings → Monitors.
@@ -131,16 +179,18 @@ published release includes `SHA256SUMS.txt` for its executable and browser conne
 ### v1.2 — *Stability & Control* ✅
 - Selective Window Save, Default Workspace, Keyboard Shortcuts, Workspace Ordering, Browser Session Restore.
 
-### v1.6 (Next Release) — *Restore Intelligence*
-- **Confidence and Ambiguity Resolution**: Explain close matches and let users choose without destructive guessing.
-- **Application Readiness**: Replace compatibility delays with cancellable per-entry readiness signals.
+### v1.6 (Next Release) — *Policy and Diagnostics*
+- **Explicit Restore Policies**: Persist intentional move, launch, browser, minimize, and exclusion behavior per entry.
 - **Restore Reports**: Present structured action and entry outcomes after execution.
 - **Topology Stabilization**: Avoid restoring against transient monitor states while docking.
+- **First-Run Onboarding**: Explain tray operation, capture, preview, recovery, browser setup, and privacy controls.
+- **Workspace Diff**: Compare saved intent with the current desktop without changing either.
+- **Adapter Architecture**: Add reusable application-specific identity and launch strategies behind the shared safety boundaries.
 
 ### v1.6+ — *Recovery and Adaptation*
-- **Semantic Layouts**: Adapt saved intent across monitor sizes, orientations, and DPI.
 - **Workspace Health and Diff**: Inspect missing resources and current-vs-saved differences without mutation.
-- **Checkpoints and Quick Captures**: Add recovery retention and temporary workspace saves on top of the isolated stores.
+- **Recovery Timeline and Quick Captures**: Add checkpoint browsing plus temporary workspace saves
+  on top of the transactional checkpoint store.
 
 ### v2.0 & Beyond
 - **Portability**: Logical path aliases, workspace import/export, and cross-device monitor identity.

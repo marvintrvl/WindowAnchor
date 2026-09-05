@@ -102,7 +102,14 @@ public partial class App : System.Windows.Application
         var jumpListService   = new JumpListService();
         var webAppService     = new WebAppService();
         var browserSessionBridge = new BrowserSessionBridge();
-        var workspaceService  = new WorkspaceService(storageService, windowService, _monitorService, jumpListService, webAppService, browserSessionBridge);
+        var workspaceService  = new WorkspaceService(
+            storageService,
+            windowService,
+            _monitorService,
+            jumpListService,
+            webAppService,
+            browserSessionBridge,
+            settingsService: _settingsService);
 
         _workspaceService = workspaceService;
         _coordinator      = new LayoutCoordinator(_monitorService, windowService, workspaceService);
@@ -124,15 +131,14 @@ public partial class App : System.Windows.Application
 
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
 
-        // ── Startup workspace restore (deferred so the tray icon settles) ──
+        // ── Startup workspace restore (deferred to the dispatcher idle queue) ──
         var startupBehavior = _settingsService.Settings.StartupBehavior;
         if (startupBehavior != StartupBehavior.None)
         {
             _ = Dispatcher.InvokeAsync(async () =>
             {
-                await Task.Delay(2000);
                 await HandleStartupRestoreAsync(startupBehavior);
-            }, DispatcherPriority.Background);
+            }, DispatcherPriority.ApplicationIdle);
         }
     }
 
@@ -283,6 +289,39 @@ public partial class App : System.Windows.Application
     private void OnTrayMenuOpened(object sender, RoutedEventArgs e)
     {
         PopulateWorkspacesMenu();
+        if (_trayIcon?.ContextMenu is { } trayMenu)
+        {
+            foreach (object item in trayMenu.Items)
+            {
+                if (item is System.Windows.Controls.MenuItem menuItem &&
+                    menuItem.Name == "UndoLastRestoreMenuItem")
+                {
+                    menuItem.IsEnabled = _coordinator?.CanUndoLastRestore == true;
+                    break;
+                }
+            }
+        }
+    }
+
+    private async void OnUndoLastRestoreClick(object sender, RoutedEventArgs e)
+    {
+        if (_coordinator is null) return;
+        try
+        {
+            await UI.RestorePlanPreviewWorkflow.RunUndoAsync(_coordinator);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error(
+                "restore.undo_failed",
+                "Undo Last Restore failed",
+                ex,
+                LogField.Public("errorCategory", "restore_undo"));
+            ShowBalloon(
+                "Undo Failed",
+                "The previous desktop state could not be restored.",
+                H.NotifyIcon.Core.NotificationIcon.Warning);
+        }
     }
 
     private void PopulateWorkspacesMenu()
@@ -374,7 +413,8 @@ public partial class App : System.Windows.Application
 
     private void OnSwitchWorkspaceClick(WindowAnchor.Models.WorkspaceSnapshot snapshot)
     {
-        _coordinator?.SwitchWorkspaceAsync(snapshot);
+        if (_coordinator is not null)
+            _ = UI.RestorePlanPreviewWorkflow.RunSwitchAsync(_coordinator, snapshot);
     }
 
     private void OnAlignWorkspaceClick(WindowAnchor.Models.WorkspaceSnapshot snapshot)
@@ -442,7 +482,10 @@ public partial class App : System.Windows.Application
         var ws = _workspaceService?.GetAllWorkspaces()
             .FirstOrDefault(w => w.WorkspaceId.Equals(workspaceId, StringComparison.OrdinalIgnoreCase));
         if (ws != null)
-            _ = _coordinator!.RestoreWorkspaceAsync(ws);
+            _ = UI.RestorePlanPreviewWorkflow.RunDirectAsync(
+                _coordinator!,
+                ws,
+                RestoreMode.Standard);
     }
 
     private void SwitchDefaultWorkspace()
@@ -453,21 +496,24 @@ public partial class App : System.Windows.Application
         var ws = _workspaceService?.GetAllWorkspaces()
             .FirstOrDefault(w => w.WorkspaceId.Equals(workspaceId, StringComparison.OrdinalIgnoreCase));
         if (ws != null)
-            _ = _coordinator!.SwitchWorkspaceAsync(ws);
+            _ = UI.RestorePlanPreviewWorkflow.RunSwitchAsync(_coordinator!, ws);
     }
 
     private void RestoreWorkspaceByIndex(int index)
     {
         var workspaces = GetOrderedWorkspaces();
         if (index < workspaces.Count)
-            _ = _coordinator!.RestoreWorkspaceAsync(workspaces[index]);
+            _ = UI.RestorePlanPreviewWorkflow.RunDirectAsync(
+                _coordinator!,
+                workspaces[index],
+                RestoreMode.Standard);
     }
 
     private void SwitchWorkspaceByIndex(int index)
     {
         var workspaces = GetOrderedWorkspaces();
         if (index < workspaces.Count)
-            _ = _coordinator!.SwitchWorkspaceAsync(workspaces[index]);
+            _ = UI.RestorePlanPreviewWorkflow.RunSwitchAsync(_coordinator!, workspaces[index]);
     }
 
     /// <summary>

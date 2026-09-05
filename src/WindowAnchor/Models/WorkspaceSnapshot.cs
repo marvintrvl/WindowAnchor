@@ -12,7 +12,7 @@ namespace WindowAnchor.Models;
 public class WorkspaceSnapshot
 {
     /// <summary>Current persisted workspace schema version.</summary>
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 4;
 
     /// <summary>Schema version used to serialize this workspace document.</summary>
     [System.Text.Json.Serialization.JsonInclude]
@@ -48,6 +48,15 @@ public class WorkspaceSnapshot
 
     /// <summary>Browser tab sessions captured by the optional WindowAnchor extension.</summary>
     public List<BrowserSession> BrowserSessions { get; set; } = new();
+
+    /// <summary>
+    /// Recovery-only metadata. Named workspaces and temporary captures leave this null.
+    /// Checkpoints retain the complete workspace payload while declaring their bounded lifetime
+    /// and the operation that produced them.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(
+        Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public WorkspaceCheckpointMetadata? Checkpoint { get; set; }
 
     // ── Convenience helpers ──────────────────────────────────────────────────
 

@@ -14,7 +14,7 @@ namespace WindowAnchor.Services;
 /// Applies named selection policies to raw window observations, enriches capture/match records,
 /// and performs live window mutations via P/Invoke.
 /// </summary>
-public class WindowService : IWindowInventory, IWindowMutation
+public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitchWindowController
 {
     private readonly SettingsService? _settingsService;
     private readonly IRawWindowInventory _rawInventory;
@@ -71,6 +71,7 @@ public class WindowService : IWindowInventory, IWindowMutation
                         record.MonitorId    = mon.MonitorId;
                         record.MonitorIndex = mon.Index;
                         record.MonitorName  = mon.FriendlyName;
+                        record.NormalizedLayout = WindowLayoutGeometry.Capture(record, mon);
                     }
                 }
                 records.Add(record);
@@ -268,8 +269,10 @@ public class WindowService : IWindowInventory, IWindowMutation
             Bottom = record.NormalBottom
         };
 
-        var targetRect = ScaleCoordsForDpi(savedRect, savedDpi, currentDpi);
-        if (savedDpi != currentDpi)
+        var targetRect = record.CoordinatesAreFinal
+            ? savedRect
+            : ScaleCoordsForDpi(savedRect, savedDpi, currentDpi);
+        if (!record.CoordinatesAreFinal && savedDpi != currentDpi)
         {
             AppLogger.Info(
                 "window.dpi_coordinates_scaled",
@@ -347,6 +350,51 @@ public class WindowService : IWindowInventory, IWindowMutation
     }
 
     /// <inheritdoc />
+    public IReadOnlyList<RunningApplicationIdentity> GetRunningApplications()
+    {
+        var applications = new Dictionary<string, RunningApplicationIdentity>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (Process process in Process.GetProcesses())
+        {
+            using (process)
+            {
+                string processName;
+                try { processName = process.ProcessName; }
+                catch { continue; }
+
+                string executablePath = "";
+                try { executablePath = process.MainModule?.FileName ?? ""; }
+                catch
+                {
+                    // Elevated, protected, and short-lived processes are expected here. The
+                    // process name still provides a conservative fallback identity.
+                }
+
+                string appUserModelId = executablePath.Contains(
+                    @"\WindowsApps\",
+                    StringComparison.OrdinalIgnoreCase)
+                    ? WebAppService.GetProcessAppUserModelId((uint)process.Id)
+                    : "";
+
+                string normalizedPath = WindowIdentityExtractor.NormalizePath(executablePath);
+                string key = appUserModelId.Length > 0
+                    ? $"aumid:{appUserModelId}"
+                    : normalizedPath.Length > 0
+                        ? $"path:{normalizedPath}"
+                        : $"name:{NormalizeProcessName(processName)}";
+                applications.TryAdd(
+                    key,
+                    new RunningApplicationIdentity(executablePath, processName, appUserModelId));
+            }
+        }
+
+        return applications.Values
+            .OrderBy(application => application.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(application => application.ExecutablePath, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    /// <inheritdoc />
     public bool IsWindowAlive(IntPtr hWnd) => _rawInventory.IsWindowAlive(hWnd);
 
     /// <summary>
@@ -399,14 +447,26 @@ public class WindowService : IWindowInventory, IWindowMutation
     /// Returns the number of windows that were sent a close message.
     /// </summary>
     public int CloseAllUserWindows(WindowCandidatePolicy policy)
+        => RequestCloseUserWindowsExcept(policy, new HashSet<IntPtr>()).Count;
+
+    /// <summary>
+    /// Posts WM_CLOSE to policy-selected user windows except approved target-workspace handles,
+    /// and returns the exact stable set that the switch close phase must wait for.
+    /// </summary>
+    public IReadOnlySet<IntPtr> RequestCloseUserWindowsExcept(
+        WindowCandidatePolicy policy,
+        IReadOnlySet<IntPtr> keep)
     {
         RequirePolicy(policy, WindowCandidatePolicy.SwitchCloseCandidate);
-        int closed = 0;
+        ArgumentNullException.ThrowIfNull(keep);
+        var requested = new HashSet<IntPtr>();
         var ownPid = (uint)Process.GetCurrentProcess().Id;
 
         foreach (var observed in _rawInventory.EnumerateWindows())
         {
             if (!WindowPolicyEvaluator.Includes(observed, policy, ownPid))
+                continue;
+            if (keep.Contains(observed.Hwnd))
                 continue;
 
             NativeMethodsWindow.PostMessage(
@@ -414,14 +474,15 @@ public class WindowService : IWindowInventory, IWindowMutation
                 NativeMethodsWindow.WM_CLOSE,
                 IntPtr.Zero,
                 IntPtr.Zero);
-            closed++;
+            requested.Add(observed.Hwnd);
         }
 
         AppLogger.Info(
             "window.close_requests_sent",
             "Sent close requests to user windows",
-            LogField.Public("windowCount", closed));
-        return closed;
+            LogField.Public("windowCount", requested.Count),
+            LogField.Public("preservedWindowCount", keep.Count));
+        return requested;
     }
 
     /// <summary>
@@ -475,5 +536,13 @@ public class WindowService : IWindowInventory, IWindowMutation
             throw new ArgumentException(
                 $"{expected} is required for this operation; received {actual}.",
                 nameof(actual));
+    }
+
+    private static string NormalizeProcessName(string? processName)
+    {
+        string value = (processName ?? "").Trim();
+        return value.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            ? value[..^4]
+            : value;
     }
 }

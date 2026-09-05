@@ -50,6 +50,11 @@ public static class NativeMethodsWindow
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool IsWindow(IntPtr hWnd);
 
+    /// <summary>Returns whether Windows considers the target window unresponsive.</summary>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsHungAppWindow(IntPtr hWnd);
+
     [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
 
@@ -83,6 +88,40 @@ public static class NativeMethodsWindow
     public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
 
     public const uint GW_OWNER = 4;
+
+    // -- Task-window identity -------------------------------------------------
+
+    public const int GWL_EXSTYLE = -20;
+    public const long WS_EX_TOOLWINDOW = 0x00000080L;
+    public const long WS_EX_APPWINDOW = 0x00040000L;
+    public const long WS_EX_NOACTIVATE = 0x08000000L;
+    public const uint GA_ROOTOWNER = 3;
+    public const int DWMWA_CLOAKED = 14;
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)]
+    private static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
+    private static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
+
+    /// <summary>Architecture-safe wrapper for reading a native window attribute.</summary>
+    public static IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex) =>
+        IntPtr.Size == 8
+            ? GetWindowLongPtr64(hWnd, nIndex)
+            : new IntPtr(GetWindowLong32(hWnd, nIndex));
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetLastActivePopup(IntPtr hWnd);
+
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmGetWindowAttribute(
+        IntPtr hWnd,
+        int dwAttribute,
+        out uint pvAttribute,
+        int cbAttribute);
 
     // ── DPI ───────────────────────────────────────────────────────────────────
 

@@ -10,7 +10,12 @@ dotnet test WindowAnchor.sln --configuration Release
 
 The suite covers persistence migrations and atomicity, window policies and identity matching,
 pure restore planning, approval projection, stale-plan detection, execution boundaries, and the
-manual preview model. These tests do not move or launch real desktop windows.
+manual preview model. It also simulates package updates and post-restore placement acceptance,
+DPI noise, app-driven movement, closed HWNDs, bounded retries, checkpoint retention/expiry,
+corruption isolation, persistence failure, switch-before-close ordering, undo-of-undo safety,
+native task-window style/cloaking policy, background-only running processes, session-wide HWND
+multiplicity, and readiness waits correlated to their own successful launch activity.
+These tests do not move or launch real desktop windows.
 
 ## Complete Fresh Build (Debug)
 
@@ -65,7 +70,7 @@ Remove-Item -Recurse -Force src\WindowAnchor\bin, src\WindowAnchor\obj -ErrorAct
 ## Release assets
 
 ```powershell
-$tag = "v1.5.0"
+$tag = "v1.5.1"
 Copy-Item src/WindowAnchor/bin/Release/net8.0-windows/win-x64/publish/WindowAnchor.exe "WindowAnchor-$tag.exe"
 Compress-Archive browser-extension/* "WindowAnchor-Browser-Connector-$tag.zip"
 Get-FileHash -Algorithm SHA256 "WindowAnchor-$tag.exe", "WindowAnchor-Browser-Connector-$tag.zip"

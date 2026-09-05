@@ -117,6 +117,10 @@
                                                       SubmenuCloseDelay="250"
                                                       Template="{StaticResource TraySubmenuHeaderTemplate}"/>
                         <Separator/>
+                        <MenuItem Header="Undo Last Restore"
+                                  x:Name="UndoLastRestoreMenuItem"
+                                  Click="OnUndoLastRestoreClick"/>
+                        <Separator/>
                         <MenuItem Header="Settings..." Click="OnOpenSettingsClick"/>
                         <Separator/>
                         <MenuItem Header="Exit" Click="OnExitClick"/>

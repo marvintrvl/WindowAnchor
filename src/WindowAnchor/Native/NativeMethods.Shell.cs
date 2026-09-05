@@ -178,4 +178,30 @@ public static class NativeMethodsShell
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     public static extern int GetApplicationUserModelId(
         IntPtr hProcess, ref uint applicationUserModelIdLength, [Out] char[]? applicationUserModelId);
+
+    /// <summary>Converts a package full name into its version-independent family name.</summary>
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    public static extern int PackageFamilyNameFromFullName(
+        string packageFullName,
+        ref uint packageFamilyNameLength,
+        StringBuilder? packageFamilyName);
+
+    /// <summary>Gets registered package full names for one family in the current user context.</summary>
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetPackagesByPackageFamily(
+        string packageFamilyName,
+        ref uint count,
+        IntPtr packageFullNames,
+        ref uint bufferLength,
+        IntPtr buffer);
+
+    /// <summary>Gets the installation path for a staged package full name.</summary>
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetStagedPackagePathByFullName(
+        string packageFullName,
+        ref uint pathLength,
+        StringBuilder? path);
+
+    public const int ERROR_SUCCESS = 0;
+    public const int ERROR_INSUFFICIENT_BUFFER = 122;
 }

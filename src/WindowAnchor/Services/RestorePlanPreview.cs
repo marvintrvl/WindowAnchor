@@ -39,6 +39,18 @@ public sealed record RestorePlanPreviewAction(
     bool IsBlocking,
     int? EntryIndex);
 
+/// <summary>Distinguishing, explained metadata for one selectable live-window candidate.</summary>
+public sealed record RestorePlanPreviewCandidate(
+    long WindowHandle,
+    string DisplayTitle,
+    string IdentityLabel,
+    string ConfidenceLabel,
+    string ScoreLabel,
+    IReadOnlyList<string> Reasons,
+    bool IsLearnedHintMatch,
+    bool CanRememberChoice,
+    bool IsSelected);
+
 /// <summary>Display projection of one saved entry and all of its approved actions.</summary>
 public sealed record RestorePlanPreviewEntry(
     int EntryIndex,
@@ -54,7 +66,8 @@ public sealed record RestorePlanPreviewEntry(
     string AccessibilityLabel,
     IReadOnlyList<RestorePlanPreviewAction> Actions,
     IReadOnlyList<string> Warnings,
-    IReadOnlyList<string> BlockingErrors);
+    IReadOnlyList<string> BlockingErrors,
+    IReadOnlyList<RestorePlanPreviewCandidate> Candidates);
 
 /// <summary>
 /// Read-only UI projection of the exact plan that will be approved. It never observes windows or
@@ -137,12 +150,35 @@ public static class RestorePlanPreviewBuilder
             target += $" · {entry.TargetPlacement.TargetMonitorId}";
         if (entry.TargetPlacement.MonitorMapping != RestoreMonitorMappingKind.ExactStableId)
             target += $" · {MappingLabel(entry.TargetPlacement.MonitorMapping)}";
+        if (entry.TargetPlacement.Strategy != RestorePlacementStrategy.ExactPixels)
+            target += $" · {PlacementLabel(entry.TargetPlacement)}";
         if (entry.TargetPlacement.WasDpiScaled)
             target += $" · DPI {entry.TargetPlacement.SavedDpi}→{entry.TargetPlacement.TargetDpi}";
 
         bool enabled = entry.Outcome is not (RestorePlanEntryOutcome.Excluded or
             RestorePlanEntryOutcome.Cancelled);
         string outcomeLabel = OutcomeLabel(outcome);
+        RestorePlanPreviewCandidate[] candidates = entry.Candidates
+            .Where(candidate => candidate.IsEligible &&
+                (outcome == RestorePreviewOutcomeKind.Ambiguous
+                    ? candidate.IsWithinAmbiguityMargin
+                    : entry.SelectedMatch?.WindowHandle == candidate.WindowHandle))
+            .Select(candidate => new RestorePlanPreviewCandidate(
+                candidate.WindowHandle,
+                FirstNonEmpty(candidate.Title, candidate.ProcessName, "Untitled window"),
+                CandidateIdentityLabel(candidate),
+                ConfidenceLabel(candidate.Confidence),
+                $"Score {candidate.Score:0}",
+                candidate.Evidence
+                    .Where(evidence => evidence.Matched)
+                    .OrderByDescending(evidence => evidence.ScoreContribution)
+                    .Select(evidence => evidence.Explanation)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray(),
+                candidate.IsLearnedHintMatch,
+                candidate.CanRememberChoice,
+                entry.SelectedMatch?.WindowHandle == candidate.WindowHandle))
+            .ToArray();
         return new RestorePlanPreviewEntry(
             entry.EntryIndex,
             entry.EntryId,
@@ -157,7 +193,8 @@ public static class RestorePlanPreviewBuilder
             $"{displayName}. {outcomeLabel}. {target}. {entry.Explanation}",
             actions,
             entry.Warnings.Select(issue => issue.Explanation).ToArray(),
-            entry.BlockingErrors.Select(issue => issue.Explanation).ToArray());
+            entry.BlockingErrors.Select(issue => issue.Explanation).ToArray(),
+            candidates);
     }
 
     private static RestorePreviewOutcomeKind Classify(RestorePlanEntry entry)
@@ -175,7 +212,8 @@ public static class RestorePlanPreviewBuilder
         if (entry.Warnings.Any(issue => issue.Code == RestorePlanIssueCode.AmbiguousMatch))
             return RestorePreviewOutcomeKind.Ambiguous;
         if (entry.TargetPlacement.MonitorMapping != RestoreMonitorMappingKind.ExactStableId ||
-            entry.TargetPlacement.WasDpiScaled)
+            entry.TargetPlacement.WasDpiScaled ||
+            entry.TargetPlacement.Strategy != RestorePlacementStrategy.ExactPixels)
             return RestorePreviewOutcomeKind.Adapted;
         if (entry.SelectedMatch?.Confidence == WindowMatchConfidence.Exact)
             return RestorePreviewOutcomeKind.Exact;
@@ -229,12 +267,46 @@ public static class RestorePlanPreviewBuilder
         _ => outcome.ToString()
     };
 
+    private static string ConfidenceLabel(WindowMatchConfidence confidence) => confidence switch
+    {
+        WindowMatchConfidence.Exact => "Exact evidence",
+        WindowMatchConfidence.Strong => "Strong evidence",
+        WindowMatchConfidence.Probable => "Probable evidence",
+        WindowMatchConfidence.Ambiguous => "Ambiguous",
+        WindowMatchConfidence.Missing => "Missing",
+        _ => "Ineligible"
+    };
+
+    private static string CandidateIdentityLabel(RestorePlanCandidate candidate)
+    {
+        string process = FirstNonEmpty(candidate.ProcessName, "Unknown application");
+        string className = string.IsNullOrWhiteSpace(candidate.WindowClassName)
+            ? "unknown class"
+            : candidate.WindowClassName;
+        string monitor = string.IsNullOrWhiteSpace(candidate.MonitorId)
+            ? "unknown monitor"
+            : candidate.MonitorId;
+        string bounds = candidate.Bounds.IsValid
+            ? $"{candidate.Bounds.Width}×{candidate.Bounds.Height} at {candidate.Bounds.Left},{candidate.Bounds.Top}"
+            : "bounds unavailable";
+        return $"{process} · {className} · {monitor} · {bounds}";
+    }
+
     private static string MappingLabel(RestoreMonitorMappingKind mapping) => mapping switch
     {
         RestoreMonitorMappingKind.SavedIndexFallback => "mapped by saved monitor number",
         RestoreMonitorMappingKind.PrimaryFallback => "mapped to primary monitor",
         RestoreMonitorMappingKind.Unavailable => "monitor unavailable",
         _ => "exact monitor"
+    };
+
+    private static string PlacementLabel(RestoreTargetPlacement placement) => placement.Strategy switch
+    {
+        RestorePlacementStrategy.Semantic => $"{placement.SemanticKind} layout",
+        RestorePlacementStrategy.Normalized => "normalized layout",
+        RestorePlacementStrategy.LegacyDpiScaledAndClamped => "legacy layout kept visible",
+        RestorePlacementStrategy.Unavailable => "saved coordinates retained",
+        _ => "exact pixels"
     };
 
     private static string FirstNonEmpty(params string?[] values) =>

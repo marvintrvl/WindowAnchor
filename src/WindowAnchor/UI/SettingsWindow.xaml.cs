@@ -201,6 +201,7 @@ public partial class SettingsWindow : FluentWindow
             _suppressToggle = false;
 
             InitialiseBrowserIntegrationUI();
+            RefreshLearnedMatchSummary();
 
             // Populate startup behavior controls
             InitialiseStartupBehaviorUI();
@@ -249,6 +250,31 @@ public partial class SettingsWindow : FluentWindow
             "Remove Browser Connection", System.Windows.MessageBoxButton.OKCancel, System.Windows.MessageBoxImage.Question);
         if (result == System.Windows.MessageBoxResult.OK)
             BrowserIntegrationService.RemoveNativeHostRegistrations();
+    }
+
+    private void RefreshLearnedMatchSummary()
+    {
+        int count = _settingsService.Settings.WindowMatchHints?.Count ?? 0;
+        LearnedMatchCountText.Text = count == 0
+            ? "No remembered choices. Ambiguous matches will always ask before assignment."
+            : $"{count} remembered choice{(count == 1 ? "" : "s")}. " +
+              "Hints use stable workspace/entry IDs and composite app identity; HWND/PID are never saved.";
+    }
+
+    private void OnClearRememberedMatches(object sender, RoutedEventArgs e)
+    {
+        int count = _settingsService.Settings.WindowMatchHints?.Count ?? 0;
+        if (count == 0) return;
+        System.Windows.MessageBoxResult result = System.Windows.MessageBox.Show(
+            this,
+            $"Clear {count} remembered window choice{(count == 1 ? "" : "s")}? " +
+            "Future ambiguous restores will ask again.",
+            "Clear Remembered Window Choices",
+            System.Windows.MessageBoxButton.OKCancel,
+            System.Windows.MessageBoxImage.Question);
+        if (result != System.Windows.MessageBoxResult.OK) return;
+        _settingsService.ClearAllWindowMatches();
+        RefreshLearnedMatchSummary();
     }
 
     // ── Startup-behavior UI ──────────────────────────────────────────────────
@@ -924,15 +950,15 @@ public partial class SettingsWindow : FluentWindow
     {
         var result = System.Windows.MessageBox.Show(
             $"Switch to \u201c{row.Name}\u201d?\n\n" +
-            "All open windows will be asked to close. Apps with unsaved work will " +
-            "prompt you to save before closing.\n\n" +
-            "The workspace will be restored once every window has closed.",
+            "You will review destination matches and monitor adaptation first. " +
+            "Only unrelated windows will then be asked to close; apps with unsaved work " +
+            "can prompt you to save.\n\nThe approved workspace plan runs after those windows close.",
             "Switch Workspace",
             System.Windows.MessageBoxButton.OKCancel,
             System.Windows.MessageBoxImage.Question);
         if (result != System.Windows.MessageBoxResult.OK) return;
 
-        _ = _coordinator.SwitchWorkspaceAsync(row.Source);
+        _ = RestorePlanPreviewWorkflow.RunSwitchAsync(_coordinator, row.Source, this);
     }
 
     private void DoViewWindows(WorkspaceRow row)

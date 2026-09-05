@@ -85,9 +85,11 @@ High-value areas where contributions are especially welcome:
 
 | Area | Notes |
 |---|---|
-| **Restore readiness** | Replace compatibility delays with observable app/window readiness |
-| **Ambiguity UX** | Let users resolve equally plausible window matches explicitly |
+| **Restore policy** | Add explicit per-entry move, launch, browser, minimize, and exclusion intent |
+| **Display topology** | Debounce transient monitor states before automatic restore |
 | **Restore diagnostics** | Expand per-item reports and deterministic simulation fixtures |
-| **Portable layouts** | Semantic layouts, aliases, import/export, and device adaptation |
+| **Recovery UX** | Build checkpoint history, temporary captures, and guided recovery flows |
+| **App adapters** | Add specialized strategies without bypassing shared safety boundaries |
+| **Portability** | Add path aliases, import/export, sync, and cross-device monitor identity |
 
 See [build.md](build.md) for the canonical build, test, and release commands.

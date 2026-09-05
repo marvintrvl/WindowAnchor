@@ -27,6 +27,13 @@ public interface IWindowInventory
         WindowCandidatePolicy policy);
 
     /// <summary>
+    /// Returns process identities independently of whether those processes currently expose an
+    /// eligible user-facing window. Implementations may omit inaccessible processes.
+    /// </summary>
+    IReadOnlyList<RunningApplicationIdentity> GetRunningApplications() =>
+        Array.Empty<RunningApplicationIdentity>();
+
+    /// <summary>
     /// Returns whether an HWND still exists, including when it is absent from the filtered
     /// user-window inventory because it became temporarily hidden or otherwise ineligible.
     /// </summary>

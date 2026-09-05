@@ -37,7 +37,7 @@ public class RestorePlannerTests
     }
 
     [Fact]
-    public void Ambiguous_duplicate_windows_have_deterministic_consumed_assignments_and_json()
+    public void Ambiguous_duplicate_windows_have_no_assignment_or_actions_and_stable_json()
     {
         WorkspaceEntry first = Entry(@"C:\Apps\editor.exe", "Untitled", "primary");
         WorkspaceEntry second = Entry(@"C:\Apps\editor.exe", "Untitled", "primary");
@@ -57,16 +57,196 @@ public class RestorePlannerTests
             topology,
             RestoreMode.Standard);
 
-        Assert.Equal(10, forward.Entries[0].SelectedMatch?.WindowHandle);
-        Assert.Equal(20, forward.Entries[1].SelectedMatch?.WindowHandle);
-        Assert.True(forward.Entries[0].SelectedMatch?.IsTopScoreTie);
-        Assert.Contains(
-            forward.Entries[0].Warnings,
-            warning => warning.Code == RestorePlanIssueCode.AmbiguousMatch);
-        Assert.Equal(
-            [RestoreActionKind.RestoreExistingWindow, RestoreActionKind.RestoreExistingWindow],
-            forward.Actions.Select(action => action.Kind));
+        Assert.All(forward.Entries, entry =>
+        {
+            Assert.Null(entry.SelectedMatch);
+            Assert.Equal(RestorePlanEntryOutcome.Blocked, entry.Outcome);
+            Assert.Empty(entry.Actions);
+            Assert.Contains(entry.Warnings,
+                warning => warning.Code == RestorePlanIssueCode.AmbiguousMatch);
+            Assert.Equal([10L, 20L], entry.Candidates
+                .Where(candidate => candidate.IsWithinAmbiguityMargin)
+                .Select(candidate => candidate.WindowHandle));
+        });
+        Assert.Empty(forward.Actions);
+        Assert.Equal([10L, 20L], forward.ProtectedWindowHandles.Order());
         Assert.Equal(forward.ToRedactedJson(), reverse.ToRedactedJson());
+    }
+
+    [Fact]
+    public void User_selection_derives_assignment_without_mutating_preview_or_reusing_hwnd()
+    {
+        WorkspaceEntry first = Entry(@"C:\Apps\editor.exe", "Alpha report", "primary");
+        WorkspaceEntry second = Entry(@"C:\Apps\editor.exe", "Alpha report", "primary");
+        var snapshot = Snapshot(first, second);
+        LiveWindowIdentity north = Live(10, first.ExecutablePath, "Alpha report north", "EditorWindow");
+        LiveWindowIdentity south = Live(20, first.ExecutablePath, "Alpha report south", "EditorWindow");
+        RestorePlan preview = Build(snapshot, [south, north]);
+
+        RestorePlan resolved = RestorePlanner.ResolveAmbiguousMatch(preview, 0, 10);
+
+        Assert.Null(preview.Entries[0].SelectedMatch);
+        RestorePlanEntry selectedEntry = resolved.Entries[0];
+        Assert.Equal(10, selectedEntry.SelectedMatch?.WindowHandle);
+        Assert.True(selectedEntry.SelectedMatch?.IsUserSelected);
+        Assert.Equal(RestorePlanEntryOutcome.Matched, selectedEntry.Outcome);
+        Assert.Equal(RestoreActionKind.RestoreExistingWindow, Assert.Single(selectedEntry.Actions).Kind);
+        Assert.DoesNotContain(selectedEntry.Warnings,
+            warning => warning.Code == RestorePlanIssueCode.AmbiguousMatch);
+        RestorePlan changedSelection = RestorePlanner.ResolveAmbiguousMatch(resolved, 0, 20);
+        Assert.Equal(20, changedSelection.Entries[0].SelectedMatch?.WindowHandle);
+        Assert.True(changedSelection.Entries[0].SelectedMatch?.IsUserSelected);
+        Assert.Equal(
+            20,
+            Assert.Single(changedSelection.Entries[0].Actions,
+                action => action.Kind == RestoreActionKind.RestoreExistingWindow).WindowHandle);
+        Assert.DoesNotContain(
+            changedSelection.Actions,
+            action => action.EntryIndex == 0 && action.WindowHandle == 10);
+        Assert.Throws<InvalidOperationException>(() =>
+            RestorePlanner.ResolveAmbiguousMatch(resolved, 1, 10));
+    }
+
+    [Fact]
+    public void Running_process_without_an_eligible_task_window_is_excluded_without_wait_actions()
+    {
+        WorkspaceEntry entry = Entry(@"C:\Apps\background-helper.exe", "Helper", "primary");
+
+        RestorePlan plan = Build(
+            Snapshot(entry),
+            runningApplications:
+            [
+                new RunningApplicationIdentity(entry.ExecutablePath, entry.ProcessName)
+            ]);
+
+        RestorePlanEntry excluded = Assert.Single(plan.Entries);
+        Assert.Equal(RestorePlanEntryOutcome.Excluded, excluded.Outcome);
+        Assert.Empty(excluded.Actions);
+        Assert.Contains(excluded.Warnings,
+            warning => warning.Code == RestorePlanIssueCode.RunningApplicationHasNoRestorableWindow);
+    }
+
+    [Fact]
+    public void Same_process_name_at_a_different_known_path_does_not_suppress_launch()
+    {
+        WorkspaceEntry entry = Entry(@"C:\Apps\One\editor.exe", "Editor", "primary");
+
+        RestorePlan plan = Build(
+            Snapshot(entry),
+            runningApplications:
+            [
+                new RunningApplicationIdentity(@"D:\Apps\Two\editor.exe", "editor")
+            ]);
+
+        RestorePlanEntry planned = Assert.Single(plan.Entries);
+        Assert.Equal(RestorePlanEntryOutcome.LaunchRequired, planned.Outcome);
+        Assert.Contains(planned.Actions,
+            action => action.Kind == RestoreActionKind.LaunchApplication);
+    }
+
+    [Fact]
+    public void Stable_packaged_identity_detects_a_running_updated_executable()
+    {
+        const string aumid = "Contoso.Suite_abc!App";
+        WorkspaceEntry entry = Entry(
+            @"C:\Program Files\WindowsApps\Contoso.Suite_1\Host.exe",
+            "Suite",
+            "primary");
+        entry.AppUserModelId = aumid;
+
+        RestorePlan plan = Build(
+            Snapshot(entry),
+            runningApplications:
+            [
+                new RunningApplicationIdentity(
+                    @"C:\Program Files\WindowsApps\Contoso.Suite_2\Host.exe",
+                    "Host",
+                    aumid)
+            ]);
+
+        RestorePlanEntry planned = Assert.Single(plan.Entries);
+        Assert.Equal(RestorePlanEntryOutcome.Excluded, planned.Outcome);
+        Assert.Empty(planned.Actions);
+    }
+
+    [Fact]
+    public void Duplicate_entries_preserve_multiplicity_but_do_not_reuse_one_live_hwnd()
+    {
+        WorkspaceEntry first = Entry(@"C:\Apps\editor.exe", "Notes", "primary");
+        WorkspaceEntry duplicate = Entry(@"C:\Apps\editor.exe", "Notes", "primary");
+        LiveWindowIdentity live = Live(33, first.ExecutablePath, "Notes", "EditorWindow");
+
+        RestorePlan plan = Build(Snapshot(first, duplicate), [live]);
+
+        Assert.Equal(RestorePlanEntryOutcome.Matched, plan.Entries[0].Outcome);
+        Assert.Equal(RestorePlanEntryOutcome.Excluded, plan.Entries[1].Outcome);
+        Assert.Empty(plan.Entries[1].Actions);
+        Assert.Contains(plan.Entries[1].Warnings,
+            warning => warning.Code == RestorePlanIssueCode.RunningApplicationHasNoRestorableWindow);
+    }
+
+    [Fact]
+    public void Cross_process_title_match_is_rejected_without_shared_platform_identity()
+    {
+        WorkspaceEntry entry = Entry(
+            @"C:\Program Files\WindowsApps\Contoso.Host_2.0_x64__abc\Host.exe",
+            "Dashboard",
+            "primary");
+        entry.ProcessName = "Host";
+        entry.WindowClassName = "WinUIDesktopWin32WindowClass";
+        var live = Live(
+            34,
+            @"C:\Runtime\renderer-helper.exe",
+            "Dashboard",
+            "RuntimeSurface");
+        RestorePlan plan = RestorePlanner.Build(
+            Snapshot(entry),
+            new RestoreLiveInventory
+            {
+                Windows = [live],
+                Resources =
+                [
+                    new RestoreResourceObservation(
+                        0,
+                        RestoreResourceKind.PackagedApplication,
+                        RestoreResourceAvailability.Available,
+                        "Contoso.Host_abc!App")
+                ]
+            },
+            Topology(Monitor("primary", 0, 96, primary: true)),
+            RestoreMode.Standard);
+
+        RestorePlanEntry planned = Assert.Single(plan.Entries);
+        Assert.Null(planned.SelectedMatch);
+        Assert.DoesNotContain(planned.Candidates, candidate => candidate.IsEligible);
+    }
+
+    [Fact]
+    public void Learned_hint_selects_previous_choice_without_runtime_ids()
+    {
+        WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Alpha report", "primary");
+        var snapshot = Snapshot(entry);
+        LiveWindowIdentity north = Live(31, entry.ExecutablePath, "Alpha report north", "EditorWindow");
+        LiveWindowIdentity south = Live(32, entry.ExecutablePath, "Alpha report south", "EditorWindow");
+        var hint = new WindowMatchHint
+        {
+            WorkspaceId = snapshot.WorkspaceId,
+            EntryId = entry.EntryId,
+            Identity = WindowIdentityExtractor.ToHint(north)
+        };
+
+        RestorePlan plan = RestorePlanner.Build(
+            snapshot,
+            new RestoreLiveInventory { Windows = [south, north], MatchHints = [hint] },
+            Topology(Monitor("primary", 0, 96, primary: true)),
+            RestoreMode.Standard);
+
+        RestorePlanCandidate selected = Assert.IsType<RestorePlanCandidate>(
+            Assert.Single(plan.Entries).SelectedMatch);
+        Assert.Equal(31, selected.WindowHandle);
+        Assert.True(selected.IsLearnedHintMatch);
+        Assert.DoesNotContain(selected.IdentityHint!.GetType().GetProperties(), property =>
+            property.Name is "Hwnd" or "WindowHandle" or "Pid" or "ProcessId");
     }
 
     [Fact]
@@ -192,6 +372,53 @@ public class RestorePlannerTests
         Assert.Equal("explorer.exe", action.Target);
         Assert.Equal($"shell:AppsFolder\\{entry.AppUserModelId}", action.Arguments);
         Assert.True(action.UseShellExecute);
+    }
+
+    [Fact]
+    public void Stale_versioned_package_path_uses_resolved_stable_identity_instead_of_blocking()
+    {
+        WorkspaceEntry entry = Entry(
+            @"C:\Program Files\WindowsApps\Contoso.Suite_1.0_x64__abc\Host.exe",
+            "Contoso Suite",
+            "primary");
+        entry.ProcessName = "Host";
+        const string aumid = "Contoso.Suite_abc!App";
+
+        RestorePlan plan = RestorePlanner.Build(
+            Snapshot(entry),
+            new RestoreLiveInventory
+            {
+                Resources =
+                [
+                    new(0, RestoreResourceKind.Executable, RestoreResourceAvailability.Missing),
+                    new(0, RestoreResourceKind.PackagedApplication,
+                        RestoreResourceAvailability.Available, aumid)
+                ]
+            },
+            Topology(Monitor("primary", 0, 96, primary: true)),
+            RestoreMode.Standard);
+
+        RestorePlanEntry result = Assert.Single(plan.Entries);
+        Assert.Equal(RestorePlanEntryOutcome.LaunchRequired, result.Outcome);
+        Assert.Empty(result.BlockingErrors);
+        Assert.Contains(result.Warnings, warning => warning.Code == RestorePlanIssueCode.StaleResource);
+        RestoreAction action = Assert.Single(result.Actions,
+            action => action.Kind == RestoreActionKind.ActivatePackagedApplication);
+        Assert.Equal("explorer.exe", action.Target);
+        Assert.Equal($"shell:AppsFolder\\{aumid}", action.Arguments);
+    }
+
+    [Fact]
+    public void WindowsApps_path_parser_preserves_package_full_name_and_relative_executable()
+    {
+        bool parsed = PackagedAppResolver.TrySplitPackagePath(
+            @"C:\Program Files\WindowsApps\Contoso.App_2.1.0.0_x64__abc\bin\App.exe",
+            out string fullName,
+            out string relativeExecutable);
+
+        Assert.True(parsed);
+        Assert.Equal("Contoso.App_2.1.0.0_x64__abc", fullName);
+        Assert.Equal(@"bin\App.exe", relativeExecutable);
     }
 
     [Fact]
@@ -387,10 +614,15 @@ public class RestorePlannerTests
 
     private static RestorePlan Build(
         WorkspaceSnapshot snapshot,
-        IReadOnlyList<LiveWindowIdentity>? windows = null) =>
+        IReadOnlyList<LiveWindowIdentity>? windows = null,
+        IReadOnlyList<RunningApplicationIdentity>? runningApplications = null) =>
         RestorePlanner.Build(
             snapshot,
-            new RestoreLiveInventory { Windows = windows ?? Array.Empty<LiveWindowIdentity>() },
+            new RestoreLiveInventory
+            {
+                Windows = windows ?? Array.Empty<LiveWindowIdentity>(),
+                RunningApplications = runningApplications ?? Array.Empty<RunningApplicationIdentity>()
+            },
             Topology(Monitor("primary", 0, 96, primary: true)),
             RestoreMode.Standard);
 

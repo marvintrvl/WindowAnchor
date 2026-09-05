@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using WindowAnchor.Models;
 
 namespace WindowAnchor.Services;
 
@@ -56,7 +57,8 @@ public enum RestoreResourceKind
 {
     Executable,
     LaunchTarget,
-    WebAppShortcut
+    WebAppShortcut,
+    PackagedApplication
 }
 
 /// <summary>
@@ -67,6 +69,15 @@ public sealed record RestoreResourceObservation(
     RestoreResourceKind Kind,
     RestoreResourceAvailability Availability,
     string ResolvedTarget = "");
+
+/// <summary>
+/// Process identity observed independently of top-level window eligibility. This lets the pure
+/// planner distinguish an app that has not started from a background-only or tray-only process.
+/// </summary>
+public sealed record RunningApplicationIdentity(
+    string ExecutablePath,
+    string ProcessName,
+    string AppUserModelId = "");
 
 /// <summary>Availability of the optional browser-session restore boundary.</summary>
 public enum BrowserSessionRestoreAvailability
@@ -88,8 +99,14 @@ public sealed record RestoreLiveInventory
     public IReadOnlyList<RestoreResourceObservation> Resources { get; init; } =
         Array.Empty<RestoreResourceObservation>();
 
+    public IReadOnlyList<RunningApplicationIdentity> RunningApplications { get; init; } =
+        Array.Empty<RunningApplicationIdentity>();
+
     public BrowserSessionRestoreAvailability BrowserSessionRestore { get; init; } =
         BrowserSessionRestoreAvailability.NotAvailable;
+
+    public IReadOnlyList<WindowMatchHint> MatchHints { get; init; } =
+        Array.Empty<WindowMatchHint>();
 }
 
 /// <summary>Current monitor facts required to compute a target placement without native calls.</summary>
@@ -101,16 +118,32 @@ public sealed record RestoreMonitor(
     int Right,
     int Bottom,
     uint Dpi = 96,
-    bool IsPrimary = false)
+    bool IsPrimary = false,
+    int? WorkAreaLeft = null,
+    int? WorkAreaTop = null,
+    int? WorkAreaRight = null,
+    int? WorkAreaBottom = null)
 {
     public int Width => Right - Left;
     public int Height => Bottom - Top;
+    public int EffectiveWorkAreaLeft => WorkAreaLeft ?? Left;
+    public int EffectiveWorkAreaTop => WorkAreaTop ?? Top;
+    public int EffectiveWorkAreaRight => WorkAreaRight ?? Right;
+    public int EffectiveWorkAreaBottom => WorkAreaBottom ?? Bottom;
+    public int WorkAreaWidth => EffectiveWorkAreaRight - EffectiveWorkAreaLeft;
+    public int WorkAreaHeight => EffectiveWorkAreaBottom - EffectiveWorkAreaTop;
 }
 
 /// <summary>Already-observed current monitor topology supplied to the pure planner.</summary>
 public sealed record RestoreMonitorTopology
 {
     public IReadOnlyList<RestoreMonitor> Monitors { get; init; } = Array.Empty<RestoreMonitor>();
+
+    /// <summary>
+    /// True only when stable IDs, virtual bounds, work areas, and DPI match the saved topology.
+    /// Exact pixels are used only in this case; all other topologies use adaptation.
+    /// </summary>
+    public bool IsExactMatch { get; init; }
 }
 
 /// <summary>Immutable browser-tab payload carried by an approved restore plan.</summary>
@@ -151,6 +184,16 @@ public enum RestoreMonitorMappingKind
     PrimaryFallback
 }
 
+/// <summary>Geometry strategy selected by the pure planner.</summary>
+public enum RestorePlacementStrategy
+{
+    ExactPixels,
+    Semantic,
+    Normalized,
+    LegacyDpiScaledAndClamped,
+    Unavailable
+}
+
 /// <summary>DPI-aware placement calculated for a saved entry.</summary>
 public sealed record RestoreTargetPlacement(
     string TargetMonitorId,
@@ -163,7 +206,10 @@ public sealed record RestoreTargetPlacement(
     int ShowCmd,
     uint SavedDpi,
     uint TargetDpi,
-    bool WasDpiScaled);
+    bool WasDpiScaled,
+    RestorePlacementStrategy Strategy = RestorePlacementStrategy.ExactPixels,
+    WindowLayoutKind SemanticKind = WindowLayoutKind.Custom,
+    bool WasClamped = false);
 
 /// <summary>Machine-readable plan issue codes suitable for UI and automation.</summary>
 public enum RestorePlanIssueCode
@@ -174,6 +220,7 @@ public enum RestorePlanIssueCode
     MonitorTopologyUnavailable,
     SavedMonitorUnavailable,
     InvalidSavedPlacement,
+    PlacementClamped,
     BrowserSessionUnavailable,
     ResourceAvailabilityUnknown,
     MissingResource,
@@ -181,7 +228,7 @@ public enum RestorePlanIssueCode
     MissingExecutable,
     MissingWebAppLaunchTarget,
     MissingBrowserUrl,
-    RunningApplicationHasNoMatchingWindow
+    RunningApplicationHasNoRestorableWindow
 }
 
 /// <summary>Severity of an explained restore-plan issue.</summary>
@@ -206,7 +253,17 @@ public sealed record RestorePlanCandidate(
     WindowMatchConfidence Confidence,
     IReadOnlyList<WindowMatchEvidence> Evidence,
     double? TitleSimilarityScore,
-    bool IsTopScoreTie);
+    bool IsTopScoreTie,
+    string Title = "",
+    string ProcessName = "",
+    string WindowClassName = "",
+    string MonitorId = "",
+    WindowIdentityBounds Bounds = default,
+    WindowIdentityHint? IdentityHint = null,
+    bool IsWithinAmbiguityMargin = false,
+    bool IsLearnedHintMatch = false,
+    bool IsUserSelected = false,
+    bool CanRememberChoice = false);
 
 /// <summary>Kind of launch the executor would need to perform.</summary>
 public enum RestoreLaunchKind
@@ -314,7 +371,7 @@ public sealed record RestorePlanEntry(
 /// </summary>
 public sealed record RestorePlan
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
     public string WorkspaceId { get; init; } = "";
@@ -365,9 +422,32 @@ public sealed record RestorePlan
     {
         EntryId = RedactIdentifier(entry.EntryId),
         SavedIdentity = RedactIdentity(entry.SavedIdentity),
+        Candidates = entry.Candidates.Select(RedactCandidate).ToArray(),
+        SelectedMatch = entry.SelectedMatch is null ? null : RedactCandidate(entry.SelectedMatch),
         TargetPlacement = RedactPlacement(entry.TargetPlacement),
         LaunchRequirement = RedactLaunch(entry.LaunchRequirement),
         Actions = entry.Actions.Select(RedactAction).ToArray()
+    };
+
+    private static RestorePlanCandidate RedactCandidate(RestorePlanCandidate candidate) => candidate with
+    {
+        Title = LogRedactor.RedactValue(
+            candidate.Title,
+            LogSensitivity.Title,
+            LogRedactionMode.Redacted),
+        MonitorId = RedactIdentifier(candidate.MonitorId),
+        IdentityHint = candidate.IdentityHint is null
+            ? null
+            : candidate.IdentityHint with
+            {
+                ExecutablePath = RedactPath(candidate.IdentityHint.ExecutablePath),
+                AppUserModelId = RedactIdentifier(candidate.IdentityHint.AppUserModelId),
+                PackageFamilyName = RedactIdentifier(candidate.IdentityHint.PackageFamilyName),
+                FolderPath = RedactPath(candidate.IdentityHint.FolderPath),
+                BrowserSiteHost = RedactIdentifier(candidate.IdentityHint.BrowserSiteHost),
+                PwaIdentity = RedactIdentifier(candidate.IdentityHint.PwaIdentity),
+                TitleTokens = Array.Empty<string>()
+            }
     };
 
     private static SavedWindowIdentity RedactIdentity(SavedWindowIdentity identity) => identity with

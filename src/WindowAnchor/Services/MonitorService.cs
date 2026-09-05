@@ -95,6 +95,7 @@ public class MonitorService : IMonitorInventory
     {
         // Step 1: enumerate GDI monitors → geometry + device name ("\\\\.\\DISPLAY1")
         var gdiMap   = new Dictionary<string, NativeMethodsWindow.MonitorInfoEx>(StringComparer.OrdinalIgnoreCase);
+        var gdiDpiMap = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
         var gdiOrder = new List<string>();
 
         NativeMethodsWindow.MonitorEnumProc monitorCallback =
@@ -107,6 +108,15 @@ public class MonitorService : IMonitorInventory
                 if (NativeMethodsWindow.GetMonitorInfo(hMon, ref mi))
                 {
                     gdiMap[mi.szDevice] = mi;
+                    uint dpi = 96;
+                    try
+                    {
+                        if (NativeMethodsWindow.GetDpiForMonitor(hMon, 0, out uint dpiX, out _) == 0 && dpiX > 0)
+                            dpi = dpiX;
+                    }
+                    catch (DllNotFoundException) { }
+                    catch (EntryPointNotFoundException) { }
+                    gdiDpiMap[mi.szDevice] = dpi;
                     gdiOrder.Add(mi.szDevice);
                 }
                 return true;
@@ -118,14 +128,14 @@ public class MonitorService : IMonitorInventory
         int err = NativeMethodsDisplay.GetDisplayConfigBufferSizes(
             NativeMethodsDisplay.QueryDeviceConfigFlags.QdcOnlyActivePaths,
             out pathCount, out modeCount);
-        if (err != 0) return BuildFallbackMonitors(gdiMap, gdiOrder);
+        if (err != 0) return BuildFallbackMonitors(gdiMap, gdiDpiMap, gdiOrder);
 
         var paths = new NativeMethodsDisplay.DisplayConfigPathInfo[pathCount];
         var modes = new NativeMethodsDisplay.DisplayConfigModeInfo[modeCount];
         err = NativeMethodsDisplay.QueryDisplayConfig(
             NativeMethodsDisplay.QueryDeviceConfigFlags.QdcOnlyActivePaths,
             ref pathCount, paths, ref modeCount, modes, IntPtr.Zero);
-        if (err != 0) return BuildFallbackMonitors(gdiMap, gdiOrder);
+        if (err != 0) return BuildFallbackMonitors(gdiMap, gdiDpiMap, gdiOrder);
 
         var result = new List<MonitorInfo>();
 
@@ -177,11 +187,20 @@ public class MonitorService : IMonitorInventory
                 Index        = gdiOrder.IndexOf(gdiDevice),   // temporary; re-assigned after sort
                 WidthPixels  = w,
                 HeightPixels = h,
+                BoundsLeft = gdi.rcMonitor.Left,
+                BoundsTop = gdi.rcMonitor.Top,
+                BoundsRight = gdi.rcMonitor.Right,
+                BoundsBottom = gdi.rcMonitor.Bottom,
+                WorkAreaLeft = gdi.rcWork.Left,
+                WorkAreaTop = gdi.rcWork.Top,
+                WorkAreaRight = gdi.rcWork.Right,
+                WorkAreaBottom = gdi.rcWork.Bottom,
+                Dpi = gdiDpiMap.TryGetValue(gdiDevice, out uint dpi) ? dpi : 96,
                 IsPrimary    = isPrimary,
             });
         }
 
-        if (result.Count == 0) return BuildFallbackMonitors(gdiMap, gdiOrder);
+        if (result.Count == 0) return BuildFallbackMonitors(gdiMap, gdiDpiMap, gdiOrder);
 
         // Sort: primary first, then left edge ascending
         result = result
@@ -243,6 +262,7 @@ public class MonitorService : IMonitorInventory
 
     private static List<MonitorInfo> BuildFallbackMonitors(
         Dictionary<string, NativeMethodsWindow.MonitorInfoEx> gdiMap,
+        Dictionary<string, uint> gdiDpiMap,
         List<string> order)
     {
         return order
@@ -259,6 +279,15 @@ public class MonitorService : IMonitorInventory
                     Index        = idx,
                     WidthPixels  = g.rcMonitor.Right  - g.rcMonitor.Left,
                     HeightPixels = g.rcMonitor.Bottom - g.rcMonitor.Top,
+                    BoundsLeft = g.rcMonitor.Left,
+                    BoundsTop = g.rcMonitor.Top,
+                    BoundsRight = g.rcMonitor.Right,
+                    BoundsBottom = g.rcMonitor.Bottom,
+                    WorkAreaLeft = g.rcWork.Left,
+                    WorkAreaTop = g.rcWork.Top,
+                    WorkAreaRight = g.rcWork.Right,
+                    WorkAreaBottom = g.rcWork.Bottom,
+                    Dpi = gdiDpiMap.TryGetValue(dev, out uint dpi) ? dpi : 96,
                     IsPrimary    = (g.dwFlags & NativeMethodsWindow.MONITORINFOF_PRIMARY) != 0,
                 };
             })

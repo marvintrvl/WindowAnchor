@@ -88,7 +88,8 @@ internal static class WorkspaceSchemaMigrator
 
         var migrations = new Dictionary<int, Action<JsonObject>>
         {
-            [LegacyWorkspaceVersion] = node => MigrateV2ToV3(node, sourceIdentity)
+            [LegacyWorkspaceVersion] = node => MigrateV2ToV3(node, sourceIdentity),
+            [3] = _ => { }
         };
         bool migrated = JsonMigrationPipeline.Apply(
             root,
@@ -116,6 +117,24 @@ internal static class WorkspaceSchemaMigrator
             throw new InvalidDataException("WorkspaceId must be a GUID.");
         if (snapshot.Entries == null)
             throw new InvalidDataException("Workspace entries cannot be null.");
+        if (snapshot.Checkpoint is { } checkpoint)
+        {
+            if (checkpoint.SchemaVersion != WorkspaceCheckpointMetadata.CurrentSchemaVersion)
+                throw new InvalidDataException(
+                    $"Checkpoint metadata schema version must be {WorkspaceCheckpointMetadata.CurrentSchemaVersion}.");
+            if (!Guid.TryParse(checkpoint.CheckpointId, out _) ||
+                !checkpoint.CheckpointId.Equals(snapshot.WorkspaceId, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException("CheckpointId must match the containing workspace ID.");
+            }
+            if (!string.IsNullOrWhiteSpace(checkpoint.TargetWorkspaceId) &&
+                !Guid.TryParse(checkpoint.TargetWorkspaceId, out _))
+            {
+                throw new InvalidDataException("Checkpoint target workspace ID must be a GUID when set.");
+            }
+            if (checkpoint.CreatedAtUtc == default || checkpoint.ExpiresAtUtc <= checkpoint.CreatedAtUtc)
+                throw new InvalidDataException("Checkpoint retention timestamps are invalid.");
+        }
 
         var entryIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in snapshot.Entries)
@@ -124,6 +143,11 @@ internal static class WorkspaceSchemaMigrator
                 throw new InvalidDataException("Every EntryId must be a GUID.");
             if (!entryIds.Add(entry.EntryId))
                 throw new InvalidDataException($"Duplicate EntryId '{entry.EntryId}'.");
+            if (entry.Position?.NormalizedLayout is { } layout &&
+                !WindowLayoutGeometry.IsValid(layout))
+            {
+                throw new InvalidDataException("Normalized window geometry must contain finite positive dimensions.");
+            }
         }
     }
 
@@ -270,7 +294,8 @@ internal static class SettingsSchemaMigrator
 
         var migrations = new Dictionary<int, Action<JsonObject>>
         {
-            [LegacySettingsVersion] = node => MigrateV1ToV2(node, workspaces)
+            [LegacySettingsVersion] = node => MigrateV1ToV2(node, workspaces),
+            [2] = _ => { }
         };
         bool migrated = JsonMigrationPipeline.Apply(
             root,
@@ -302,6 +327,29 @@ internal static class SettingsSchemaMigrator
                 throw new InvalidDataException("Every WorkspaceOrderIds value must be a GUID.");
             if (!seen.Add(id))
                 throw new InvalidDataException($"Duplicate workspace order ID '{id}'.");
+        }
+
+        var hintKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (WindowMatchHint hint in settings.WindowMatchHints ?? [])
+        {
+            if (!Guid.TryParse(hint.WorkspaceId, out _) || !Guid.TryParse(hint.EntryId, out _))
+                throw new InvalidDataException(
+                    "Every learned window-match hint must use stable workspace and entry GUIDs.");
+            if (!hintKeys.Add($"{hint.WorkspaceId}:{hint.EntryId}"))
+                throw new InvalidDataException(
+                    "Only one learned window-match hint may exist for each workspace entry.");
+            if (hint.Identity is null)
+                throw new InvalidDataException("A learned window-match hint requires identity data.");
+            bool strongIdentity = !string.IsNullOrWhiteSpace(hint.Identity.AppUserModelId) ||
+                !string.IsNullOrWhiteSpace(hint.Identity.PwaIdentity) ||
+                !string.IsNullOrWhiteSpace(hint.Identity.PackageFamilyName) ||
+                !string.IsNullOrWhiteSpace(hint.Identity.BrowserSiteHost) ||
+                !string.IsNullOrWhiteSpace(hint.Identity.FolderPath);
+            bool executableAndClass = !string.IsNullOrWhiteSpace(hint.Identity.ExecutablePath) &&
+                !string.IsNullOrWhiteSpace(hint.Identity.WindowClassName);
+            if (!strongIdentity && !executableAndClass)
+                throw new InvalidDataException(
+                    "A learned window-match hint requires an application identity anchor; title tokens alone are invalid.");
         }
     }
 
