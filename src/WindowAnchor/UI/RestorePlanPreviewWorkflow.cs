@@ -11,26 +11,16 @@ namespace WindowAnchor.UI;
 /// <summary>Shared manual preview/approval workflow used by tray and settings commands.</summary>
 internal static class RestorePlanPreviewWorkflow
 {
-    internal static async Task RunDirectAsync(
+    internal static Task<RestoreExecutionResult?> RunWorkspaceDefaultAsync(
         LayoutCoordinator coordinator,
         WorkspaceSnapshot snapshot,
-        RestoreMode mode,
         Window? owner = null,
         CancellationToken cancellationToken = default)
     {
-        await RunWithProgressAsync(
-            snapshot.Name,
-            isSwitch: false,
-            owner,
-            cancellationToken,
-            async (token, progress) =>
-            {
-                if (mode.Kind == RestoreModeKind.AlignAndMinimize)
-                    await coordinator.AlignAndMinimizeOthersAsync(snapshot, token, progress);
-                else
-                    await coordinator.RestoreWorkspaceAsync(snapshot, token, progress);
-                return true;
-            });
+        RestoreMode mode = RestoreMode.FromWorkspace(snapshot);
+        return mode.Kind == RestoreModeKind.ExactSwitch
+            ? RunSwitchAsync(coordinator, snapshot, owner, cancellationToken)
+            : RunAsync(coordinator, snapshot, mode, owner, cancellationToken);
     }
 
     internal static Task<RestoreExecutionResult?> RunUndoAsync(
@@ -55,12 +45,20 @@ internal static class RestorePlanPreviewWorkflow
 
         try
         {
-            RestorePlan preview = coordinator.CreateRestorePlan(snapshot, RestoreMode.Standard);
-            var dialog = new RestorePlanPreviewDialog(preview, isWorkspaceSwitch: true);
-            if (owner is not null)
-                dialog.Owner = owner;
-            if (dialog.ShowDialog() != true || dialog.ApprovedPlan is null)
-                return null;
+            RestorePlan preview = coordinator.CreateRestorePlan(snapshot, RestoreMode.ExactSwitch);
+            RestorePlan approvedPlan = preview;
+            System.Collections.Generic.IReadOnlyList<WindowMatchHint> approvedHints =
+                Array.Empty<WindowMatchHint>();
+            if (RestorePreviewPolicy.ShouldShow(preview, coordinator.RestorePreviewEnabled))
+            {
+                var dialog = new RestorePlanPreviewDialog(preview, isWorkspaceSwitch: true);
+                if (owner is not null)
+                    dialog.Owner = owner;
+                if (dialog.ShowDialog() != true || dialog.ApprovedPlan is null)
+                    return null;
+                approvedPlan = dialog.ApprovedPlan;
+                approvedHints = dialog.ApprovedMatchHints;
+            }
 
             RestoreExecutionResult? result = await RunWithProgressAsync(
                 snapshot.Name,
@@ -69,11 +67,11 @@ internal static class RestorePlanPreviewWorkflow
                 cancellationToken,
                 (token, progress) => coordinator.SwitchWorkspaceAsync(
                     snapshot,
-                    dialog.ApprovedPlan,
+                    approvedPlan,
                     token,
                     progress));
             if (result?.Status == RestoreExecutionStatus.Completed)
-                RememberApprovedMatches(coordinator, dialog.ApprovedMatchHints);
+                RememberApprovedMatches(coordinator, approvedHints);
             if (result?.HasStalePlan == true)
             {
                 ShowMessage(
@@ -131,11 +129,23 @@ internal static class RestorePlanPreviewWorkflow
         try
         {
             RestorePlan preview = coordinator.CreateRestorePlan(snapshot, mode);
-            var dialog = new RestorePlanPreviewDialog(preview);
-            if (owner is not null)
-                dialog.Owner = owner;
-            if (dialog.ShowDialog() != true || dialog.ApprovedPlan is null)
-                return null;
+            RestorePlan approvedPlan = preview;
+            System.Collections.Generic.IReadOnlyList<WindowMatchHint> approvedHints =
+                Array.Empty<WindowMatchHint>();
+            bool previewOnly = mode.Kind == RestoreModeKind.PreviewOnly;
+            if (previewOnly || RestorePreviewPolicy.ShouldShow(preview, coordinator.RestorePreviewEnabled))
+            {
+                var dialog = new RestorePlanPreviewDialog(preview);
+                if (owner is not null)
+                    dialog.Owner = owner;
+                bool approved = dialog.ShowDialog() == true && dialog.ApprovedPlan is not null;
+                if (previewOnly)
+                    return null;
+                if (!approved)
+                    return null;
+                approvedPlan = dialog.ApprovedPlan!;
+                approvedHints = dialog.ApprovedMatchHints;
+            }
 
             RestoreExecutionResult result = await RunWithProgressAsync(
                 snapshot.Name,
@@ -144,11 +154,11 @@ internal static class RestorePlanPreviewWorkflow
                 cancellationToken,
                 (token, progress) => coordinator.RestoreApprovedPlanAsync(
                     snapshot,
-                    dialog.ApprovedPlan,
+                    approvedPlan,
                     token,
                     progress));
             if (result.Status == RestoreExecutionStatus.Completed)
-                RememberApprovedMatches(coordinator, dialog.ApprovedMatchHints);
+                RememberApprovedMatches(coordinator, approvedHints);
             if (result.HasStalePlan)
             {
                 string reasons = string.Join(

@@ -13,22 +13,24 @@ namespace WindowAnchor.Services;
 /// <summary>Implements the Chromium native-messaging host and local app bridge.</summary>
 public static class NativeMessagingHost
 {
-    private const int MaxMessageBytes = 1024 * 1024;
-    private static readonly object OutputLock = new();
     private static readonly ConcurrentDictionary<string, TaskCompletionSource<JsonDocument>> Pending = new();
 
     public static void Run()
     {
-        _ = Task.Run(PipeServerLoop);
+#pragma warning disable CA2000 // Chromium owns these process-lifetime standard streams.
+        Stream input = Console.OpenStandardInput();
+        Stream output = Console.OpenStandardOutput();
+#pragma warning restore CA2000
+        _ = Task.Run(() => PipeServerLoop(output));
         while (true)
         {
-            JsonDocument? request = ReadMessage(Console.OpenStandardInput());
+            using JsonDocument? request = NativeMessagingFraming.ReadMessage(input);
             if (request == null) return;
-            HandleBrowserMessage(request);
+            HandleBrowserMessage(request, output);
         }
     }
 
-    private static void HandleBrowserMessage(JsonDocument document)
+    private static void HandleBrowserMessage(JsonDocument document, Stream output)
     {
         var root = document.RootElement;
         string type = root.TryGetProperty("type", out var typeElement) ? typeElement.GetString() ?? "" : "";
@@ -41,10 +43,16 @@ public static class NativeMessagingHost
         }
 
         if (type == "ping")
-            WriteMessage(new { type = "response", requestId, ok = true, protocolVersion = 1 });
+            WriteMessage(output, new
+            {
+                type = "response",
+                requestId,
+                ok = true,
+                protocolVersion = BrowserSessionBridge.ProtocolVersion
+            });
     }
 
-    private static async Task PipeServerLoop()
+    private static async Task PipeServerLoop(Stream output)
     {
         while (true)
         {
@@ -54,8 +62,22 @@ public static class NativeMessagingHost
                     BrowserSessionBridge.PipeName, PipeDirection.InOut, 1,
                     PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
                 await server.WaitForConnectionAsync().ConfigureAwait(false);
-                using var reader = new StreamReader(server);
-                using var writer = new StreamWriter(server) { AutoFlush = true };
+#pragma warning disable CA2000 // Both wrappers are disposed by using declarations; the pipe owns the stream.
+                using var reader = new StreamReader(
+                    server,
+                    Encoding.UTF8,
+                    detectEncodingFromByteOrderMarks: false,
+                    bufferSize: 1024,
+                    leaveOpen: true);
+                using var writer = new StreamWriter(
+                    server,
+                    new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+                    bufferSize: 1024,
+                    leaveOpen: true)
+                {
+                    AutoFlush = true
+                };
+#pragma warning restore CA2000
                 string? line = await reader.ReadLineAsync().ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
@@ -63,7 +85,7 @@ public static class NativeMessagingHost
                 string requestId = request.RootElement.GetProperty("requestId").GetString() ?? Guid.NewGuid().ToString("N");
                 var waiter = new TaskCompletionSource<JsonDocument>(TaskCreationOptions.RunContinuationsAsynchronously);
                 Pending[requestId] = waiter;
-                WriteMessage(request.RootElement.GetRawText());
+                WriteMessage(output, request.RootElement.GetRawText());
 
                 using var timeout = new CancellationTokenSource(5000);
                 try
@@ -88,42 +110,9 @@ public static class NativeMessagingHost
         }
     }
 
-    private static JsonDocument? ReadMessage(Stream input)
-    {
-        Span<byte> header = stackalloc byte[4];
-        if (ReadExactly(input, header) != 4) return null;
-        int length = BitConverter.ToInt32(header);
-        if (length < 0 || length > MaxMessageBytes) return null;
-        byte[] payload = new byte[length];
-        if (ReadExactly(input, payload) != length) return null;
-        return JsonDocument.Parse(payload);
-    }
+    private static void WriteMessage(Stream output, object message)
+        => WriteMessage(output, JsonSerializer.Serialize(message));
 
-    private static int ReadExactly(Stream input, Span<byte> buffer)
-    {
-        int total = 0;
-        while (total < buffer.Length)
-        {
-            int read = input.Read(buffer[total..]);
-            if (read == 0) break;
-            total += read;
-        }
-        return total;
-    }
-
-    private static void WriteMessage(object message)
-        => WriteMessage(JsonSerializer.Serialize(message));
-
-    private static void WriteMessage(string json)
-    {
-        byte[] payload = Encoding.UTF8.GetBytes(json);
-        if (payload.Length > MaxMessageBytes) return;
-        lock (OutputLock)
-        {
-            Stream output = Console.OpenStandardOutput();
-            output.Write(BitConverter.GetBytes(payload.Length));
-            output.Write(payload);
-            output.Flush();
-        }
-    }
+    private static void WriteMessage(Stream output, string json)
+        => NativeMessagingFraming.TryWriteMessage(output, json);
 }

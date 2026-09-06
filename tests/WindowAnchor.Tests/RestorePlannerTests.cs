@@ -331,6 +331,42 @@ public class RestorePlannerTests
     }
 
     [Fact]
+    public void Dedicated_browser_without_a_match_plans_an_explicit_new_window_launch()
+    {
+        const string browser = @"C:\Apps\brave.exe";
+        WorkspaceEntry entry = Entry(browser, "Charts", "primary");
+        entry.ProcessName = "brave";
+        entry.IsDedicatedBrowserWindow = true;
+        entry.BrowserUrl = "https://charts.example.test/workspace/one";
+
+        RestorePlan plan = RestorePlanner.Build(
+            Snapshot(entry),
+            new RestoreLiveInventory
+            {
+                Resources =
+                [
+                    new RestoreResourceObservation(
+                        0,
+                        RestoreResourceKind.Executable,
+                        RestoreResourceAvailability.Available,
+                        browser)
+                ]
+            },
+            Topology(Monitor("primary", 0, 96, primary: true)),
+            RestoreMode.Standard);
+
+        RestorePlanEntry result = Assert.Single(plan.Entries);
+        Assert.Equal(RestorePlanEntryOutcome.LaunchRequired, result.Outcome);
+        RestoreAction launch = Assert.Single(
+            result.Actions,
+            action => action.Kind == RestoreActionKind.LaunchDedicatedBrowser);
+        Assert.Equal(browser, launch.Target);
+        Assert.Equal($"--new-window \"{entry.BrowserUrl}\"", launch.Arguments);
+        Assert.False(launch.UseShellExecute);
+        Assert.Contains(result.Actions, action => action.Kind == RestoreActionKind.AwaitWindowAppearance);
+    }
+
+    [Fact]
     public void Document_plan_uses_filename_evidence_without_reopening_correct_document()
     {
         WorkspaceEntry entry = Entry(@"C:\Apps\writer.exe", "Thesis - Writer", "primary");
@@ -406,6 +442,43 @@ public class RestorePlannerTests
             action => action.Kind == RestoreActionKind.ActivatePackagedApplication);
         Assert.Equal("explorer.exe", action.Target);
         Assert.Equal($"shell:AppsFolder\\{aumid}", action.Arguments);
+    }
+
+    [Fact]
+    public void Resolved_squirrel_path_matches_an_already_running_updated_window()
+    {
+        const string savedExecutable =
+            @"C:\Users\Person\AppData\Local\ChatCanary\app-1.0.1133\ChatCanary.exe";
+        const string currentExecutable =
+            @"C:\Users\Person\AppData\Local\ChatCanary\app-1.0.1148\ChatCanary.exe";
+        WorkspaceEntry entry = Entry(savedExecutable, "Friends", "primary");
+
+        RestorePlan plan = RestorePlanner.Build(
+            Snapshot(entry),
+            new RestoreLiveInventory
+            {
+                Windows = [Live(44, currentExecutable, "Friends", "EditorWindow")],
+                Resources =
+                [
+                    new RestoreResourceObservation(
+                        0,
+                        RestoreResourceKind.Executable,
+                        RestoreResourceAvailability.Available,
+                        currentExecutable)
+                ]
+            },
+            Topology(Monitor("primary", 0, 96, primary: true)),
+            RestoreMode.Standard);
+
+        RestorePlanEntry result = Assert.Single(plan.Entries);
+        Assert.Equal(RestorePlanEntryOutcome.Matched, result.Outcome);
+        Assert.Equal(44, result.SelectedMatch?.WindowHandle);
+        Assert.Contains(
+            result.Warnings,
+            warning => warning.Code == RestorePlanIssueCode.UpdatedExecutablePath);
+        Assert.DoesNotContain(
+            result.Actions,
+            action => action.Kind == RestoreActionKind.LaunchApplication);
     }
 
     [Fact]

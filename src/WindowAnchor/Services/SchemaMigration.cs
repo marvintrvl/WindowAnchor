@@ -89,7 +89,8 @@ internal static class WorkspaceSchemaMigrator
         var migrations = new Dictionary<int, Action<JsonObject>>
         {
             [LegacyWorkspaceVersion] = node => MigrateV2ToV3(node, sourceIdentity),
-            [3] = _ => { }
+            [3] = _ => { },
+            [4] = MigrateV4ToV5
         };
         bool migrated = JsonMigrationPipeline.Apply(
             root,
@@ -117,6 +118,12 @@ internal static class WorkspaceSchemaMigrator
             throw new InvalidDataException("WorkspaceId must be a GUID.");
         if (snapshot.Entries == null)
             throw new InvalidDataException("Workspace entries cannot be null.");
+        if (!Enum.IsDefined(snapshot.DefaultRestoreMode) ||
+            snapshot.DefaultRestoreMode is RestoreModeKind.Selective or
+                RestoreModeKind.AlignAndMinimize)
+        {
+            throw new InvalidDataException("DefaultRestoreMode must be a persistent workspace restore mode.");
+        }
         if (snapshot.Checkpoint is { } checkpoint)
         {
             if (checkpoint.SchemaVersion != WorkspaceCheckpointMetadata.CurrentSchemaVersion)
@@ -143,6 +150,8 @@ internal static class WorkspaceSchemaMigrator
                 throw new InvalidDataException("Every EntryId must be a GUID.");
             if (!entryIds.Add(entry.EntryId))
                 throw new InvalidDataException($"Duplicate EntryId '{entry.EntryId}'.");
+            if (!Enum.IsDefined(entry.RestorePolicy))
+                throw new InvalidDataException("Every entry RestorePolicy must be valid.");
             if (entry.Position?.NormalizedLayout is { } layout &&
                 !WindowLayoutGeometry.IsValid(layout))
             {
@@ -228,6 +237,19 @@ internal static class WorkspaceSchemaMigrator
         }
     }
 
+    private static void MigrateV4ToV5(JsonObject root)
+    {
+        root["defaultRestoreMode"] = (int)RestoreModeKind.Resume;
+        if (root["entries"] is not JsonArray entries)
+            return;
+
+        foreach (JsonNode? node in entries)
+        {
+            if (node is JsonObject entry)
+                entry["restorePolicy"] = (int)EntryRestorePolicy.WorkspaceDefault;
+        }
+    }
+
     private static void ValidatePersistedIdentities(JsonObject root)
     {
         if (!Guid.TryParse(GetString(root, "workspaceId"), out _))
@@ -295,7 +317,9 @@ internal static class SettingsSchemaMigrator
         var migrations = new Dictionary<int, Action<JsonObject>>
         {
             [LegacySettingsVersion] = node => MigrateV1ToV2(node, workspaces),
-            [2] = _ => { }
+            [2] = _ => { },
+            [3] = MigrateV3ToV4,
+            [4] = MigrateV4ToV5
         };
         bool migrated = JsonMigrationPipeline.Apply(
             root,
@@ -382,6 +406,21 @@ internal static class SettingsSchemaMigrator
 
         root.Remove("defaultWorkspaceName");
         root.Remove("workspaceOrder");
+    }
+
+    private static void MigrateV3ToV4(JsonObject root)
+    {
+        // Preserve the v1.5.1 behavior for existing installations. Users can opt out explicitly
+        // after reading the safety/latency trade-off in Settings.
+        root["showRestorePreview"] = true;
+        root["createRestoreCheckpoints"] = true;
+    }
+
+    private static void MigrateV4ToV5(JsonObject root)
+    {
+        // A settings document proves that WindowAnchor has already run. Do not present an
+        // upgrade as a first launch; the same guide remains available from Help & Guide.
+        root["onboardingCompleted"] = true;
     }
 
     private static WorkspaceSnapshot? ResolveByName(

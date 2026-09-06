@@ -262,6 +262,7 @@ public sealed class NamedWorkspaceRepository : WorkspaceRepository
                 // must not be shadowed by a newly saved current-version document.
                 var existing = Read(path);
                 snapshot.WorkspaceId = existing.Value.WorkspaceId;
+                PreserveRestoreConfiguration(existing.Value, snapshot);
                 legacyOrExistingPath = path;
                 canonicalPath = GetCanonicalPath(snapshot.WorkspaceId);
                 break;
@@ -280,6 +281,70 @@ public sealed class NamedWorkspaceRepository : WorkspaceRepository
         {
             File.Delete(legacyOrExistingPath);
         }
+    }
+
+    /// <summary>
+    /// A normal recapture creates a fresh object before the repository discovers that its display
+    /// name already belongs to an existing workspace. Carry user-authored restore configuration
+    /// across that replacement, but only map entry settings when both snapshots contain one unique
+    /// logical entry with the same stable identity evidence.
+    /// </summary>
+    private static void PreserveRestoreConfiguration(
+        WorkspaceSnapshot existing,
+        WorkspaceSnapshot replacement)
+    {
+        replacement.DefaultRestoreMode = existing.DefaultRestoreMode;
+
+        Dictionary<string, WorkspaceEntry> existingByIdentity = UniqueEntriesByIdentity(
+            existing.Entries);
+        Dictionary<string, WorkspaceEntry> replacementByIdentity = UniqueEntriesByIdentity(
+            replacement.Entries);
+        foreach ((string identity, WorkspaceEntry replacementEntry) in replacementByIdentity)
+        {
+            if (!existingByIdentity.TryGetValue(identity, out WorkspaceEntry? existingEntry))
+                continue;
+
+            replacementEntry.EntryId = existingEntry.EntryId;
+            if (replacementEntry.RestorePolicy == EntryRestorePolicy.WorkspaceDefault)
+                replacementEntry.RestorePolicy = existingEntry.RestorePolicy;
+        }
+    }
+
+    private static Dictionary<string, WorkspaceEntry> UniqueEntriesByIdentity(
+        IEnumerable<WorkspaceEntry> entries) => entries
+        .Select(entry => (Entry: entry, Identity: RestoreConfigurationIdentity(entry)))
+        .Where(item => item.Identity.Length > 0)
+        .GroupBy(item => item.Identity, StringComparer.OrdinalIgnoreCase)
+        .Where(group => group.Count() == 1)
+        .ToDictionary(
+            group => group.Key,
+            group => group.Single().Entry,
+            StringComparer.OrdinalIgnoreCase);
+
+    private static string RestoreConfigurationIdentity(WorkspaceEntry entry)
+    {
+        string process = ProcessIdentityNormalizer.Normalize(entry.ProcessName);
+        string windowClass = (entry.WindowClassName ?? "").Trim().ToLowerInvariant();
+        string title = string.Join(
+            " ",
+            WindowIdentityExtractor.NormalizeTitleTokens(entry.Position?.TitleSnippet)
+                .OrderBy(token => token, StringComparer.Ordinal));
+
+        if (!string.IsNullOrWhiteSpace(entry.AppUserModelId))
+            return $"aumid|{entry.AppUserModelId.Trim()}|{title}";
+        if (entry.IsDedicatedBrowserWindow && !string.IsNullOrWhiteSpace(entry.BrowserUrl))
+            return $"browser|{process}|{entry.BrowserUrl.Trim()}|{title}";
+
+        string resource = WindowIdentityExtractor.NormalizePath(
+            entry.FilePath ?? entry.LaunchArg ?? entry.Position?.FolderPath);
+        if (resource.Length > 0)
+            return $"resource|{process}|{resource}|{windowClass}";
+
+        string executableName = Path.GetFileName(
+            WindowIdentityExtractor.NormalizePath(entry.ExecutablePath));
+        if (process.Length == 0 && executableName.Length == 0 && windowClass.Length == 0)
+            return "";
+        return $"window|{process}|{executableName}|{windowClass}|{title}";
     }
 
     /// <summary>Atomically changes display-name metadata without changing storage identity.</summary>

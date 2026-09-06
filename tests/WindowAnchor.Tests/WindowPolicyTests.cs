@@ -185,7 +185,6 @@ public class WindowPolicyTests
         var risks = service.InspectUserWindows(WindowCandidatePolicy.SwitchRiskCandidate);
 
         Assert.Equal(ownedDialog, Assert.Single(risks));
-        Assert.Equal(1, service.CountUserWindows(WindowCandidatePolicy.SwitchRiskCandidate));
         Assert.Throws<ArgumentException>(() =>
             service.InspectUserWindows(WindowCandidatePolicy.CaptureCandidate));
         Assert.Throws<ArgumentException>(() =>

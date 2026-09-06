@@ -8,7 +8,10 @@ public static class WindowLayoutGeometry
 {
     private const double DetectionTolerance = 0.035;
 
-    public static NormalizedWindowLayout? Capture(WindowRecord window, MonitorInfo monitor)
+    public static NormalizedWindowLayout? Capture(
+        WindowRecord window,
+        MonitorInfo monitor,
+        WindowBounds? visibleBounds = null)
     {
         ArgumentNullException.ThrowIfNull(window);
         ArgumentNullException.ThrowIfNull(monitor);
@@ -18,13 +21,17 @@ public static class WindowLayoutGeometry
             : (monitor.BoundsLeft, monitor.BoundsTop, monitor.BoundsRight, monitor.BoundsBottom);
         int workWidth = right - left;
         int workHeight = bottom - top;
-        int windowWidth = window.NormalRight - window.NormalLeft;
-        int windowHeight = window.NormalBottom - window.NormalTop;
+        int windowLeft = visibleBounds?.Left ?? window.NormalLeft;
+        int windowTop = visibleBounds?.Top ?? window.NormalTop;
+        int windowRight = visibleBounds?.Right ?? window.NormalRight;
+        int windowBottom = visibleBounds?.Bottom ?? window.NormalBottom;
+        int windowWidth = windowRight - windowLeft;
+        int windowHeight = windowBottom - windowTop;
         if (workWidth <= 0 || workHeight <= 0 || windowWidth <= 0 || windowHeight <= 0)
             return null;
 
-        double x = Round((double)(window.NormalLeft - left) / workWidth);
-        double y = Round((double)(window.NormalTop - top) / workHeight);
+        double x = Round((double)(windowLeft - left) / workWidth);
+        double y = Round((double)(windowTop - top) / workHeight);
         double width = Round((double)windowWidth / workWidth);
         double height = Round((double)windowHeight / workHeight);
 

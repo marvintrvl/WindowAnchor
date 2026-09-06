@@ -6,7 +6,7 @@ namespace WindowAnchor.Tests;
 public class WorkspaceServiceTests
 {
     [Fact]
-    public void Take_snapshot_maps_fake_window_inventory_without_persisting_it()
+    public async Task Capture_maps_fake_window_inventory_without_persisting_it()
     {
         using var directory = new TestDirectory();
         var primary = Monitor("primary", index: 0, primary: true);
@@ -27,10 +27,12 @@ public class WorkspaceServiceTests
         var mutation = new RecordingWindowMutation();
         var service = CreateService(directory, windows, mutation, monitors);
 
-        var snapshot = service.TakeSnapshot(
+        WorkspaceCaptureResult capture = await service.CaptureWorkspaceAsync(
             "Portrait only",
             saveFiles: false,
-            monitorIds: new HashSet<string> { "portrait" });
+            monitorIds: new HashSet<string> { "portrait" },
+            captureBrowserSessions: false);
+        WorkspaceSnapshot snapshot = capture.Snapshot;
 
         Assert.Equal("fake1234", snapshot.MonitorFingerprint);
         Assert.Same(monitors.Monitors, windows.SuppliedMonitors);
@@ -47,7 +49,7 @@ public class WorkspaceServiceTests
     }
 
     [Fact]
-    public void Take_snapshot_preserves_distinct_window_multiplicity()
+    public async Task Capture_preserves_distinct_window_multiplicity()
     {
         using var directory = new TestDirectory();
         WindowRecord first = Record("explorer.exe", "Downloads - File Explorer", "primary", 96);
@@ -65,7 +67,11 @@ public class WorkspaceServiceTests
             new RecordingWindowMutation(),
             new FakeMonitorInventory { Monitors = [Monitor("primary", 0, true)] });
 
-        WorkspaceSnapshot snapshot = service.TakeSnapshot("Explorer", saveFiles: false);
+        WorkspaceCaptureResult capture = await service.CaptureWorkspaceAsync(
+            "Explorer",
+            saveFiles: false,
+            captureBrowserSessions: false);
+        WorkspaceSnapshot snapshot = capture.Snapshot;
 
         Assert.Equal(2, snapshot.Entries.Count);
         Assert.All(snapshot.Entries, entry => Assert.Equal(first.FolderPath, entry.Position.FolderPath));
@@ -359,7 +365,10 @@ public class WorkspaceServiceTests
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
-        await service.RestoreWorkspaceAsync(new WorkspaceSnapshot { Entries = [entry] }, cancellation.Token);
+        _ = await service.RestoreWorkspaceWithExecutionResultAsync(
+            new WorkspaceSnapshot { Entries = [entry] },
+            RestoreMode.Standard,
+            cancellation.Token);
 
         // Planning is read-only. The cancelled transaction never captures a checkpoint and never
         // enters executor revalidation or native mutation.
@@ -414,11 +423,11 @@ public class WorkspaceServiceTests
         var mutation = new RecordingWindowMutation();
         var service = CreateService(directory, windows, mutation, new FakeMonitorInventory());
 
-        RestoreSessionResult result = await service.RestoreWorkspaceWithResultAsync(
+        RestoreExecutionResult result = await service.RestoreWorkspaceWithExecutionResultAsync(
             snapshot,
-            minimizeOthers: true);
+            RestoreMode.AlignAndMinimize);
 
-        Assert.Equal(new IntPtr(91), Assert.Single(result.AssignedHwnds));
+        Assert.Equal(91, Assert.Single(result.AssignedWindowHandles));
         Assert.Equal(new IntPtr(91), Assert.Single(Assert.Single(mutation.MinimizeCalls)));
         Assert.Equal(
             WindowCandidatePolicy.MinimizeCandidate,
@@ -426,7 +435,7 @@ public class WorkspaceServiceTests
         Assert.Single(mutation.Restores);
         Assert.Contains(
             result.Actions,
-            action => action.Kind == RestoreSessionActionKind.MinimizeOtherWindows);
+            action => action.Kind == RestoreActionKind.MinimizeOtherWindows);
     }
 
     [Fact]
@@ -440,7 +449,9 @@ public class WorkspaceServiceTests
             new FakeMonitorInventory());
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.RestoreWorkspaceAsync(new WorkspaceSnapshot()));
+            service.RestoreWorkspaceWithExecutionResultAsync(
+                new WorkspaceSnapshot(),
+                RestoreMode.Standard));
 
         Assert.Equal("Injected native inventory failure", error.Message);
     }
@@ -475,7 +486,9 @@ public class WorkspaceServiceTests
             storage);
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.RestoreWorkspaceAsync(new WorkspaceSnapshot { Entries = [entry] }));
+            service.RestoreWorkspaceWithExecutionResultAsync(
+                new WorkspaceSnapshot { Entries = [entry] },
+                RestoreMode.Standard));
 
         Assert.Equal("Injected mutation failure", error.Message);
         Assert.Single(storage.Checkpoints.Load().Workspaces);
@@ -607,6 +620,77 @@ public class WorkspaceServiceTests
                       report.Message.Contains("Code", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(progress.Reports,
             report => report.Stage == RestoreProgressStage.SavingCheckpoint);
+    }
+
+    [Fact]
+    public async Task Disabled_restore_checkpoints_skip_capture_but_keep_restore_execution()
+    {
+        using var directory = new TestDirectory();
+        const string exe = @"C:\Apps\editor.exe";
+        WindowRecord live = Record(exe, "notes", "primary", 96);
+        live.ClassName = "EditorWindow";
+        var snapshot = new WorkspaceSnapshot
+        {
+            Name = "Target",
+            Monitors = [Monitor("primary", 0, true)],
+            Entries =
+            [
+                new WorkspaceEntry
+                {
+                    ExecutablePath = exe,
+                    ProcessName = "editor",
+                    WindowClassName = "EditorWindow",
+                    MonitorId = "primary",
+                    Position = live
+                }
+            ]
+        };
+        int captures = 0;
+        var windows = new FakeWindowInventory
+        {
+            Snapshot = [live],
+            Live = new Dictionary<IntPtr, (uint Pid, WindowRecord Record)>
+            {
+                [new IntPtr(305)] = (3005, live)
+            },
+            OnSnapshotWindows = () => captures++
+        };
+        var mutation = new RecordingWindowMutation();
+        var storage = new StorageService(directory.Path);
+        var settings = new SettingsService(
+            Path.Combine(directory.Path, "settings.json"),
+            storage);
+        settings.Settings.CreateRestoreCheckpoints = false;
+        var service = CreateService(
+            directory,
+            windows,
+            mutation,
+            new FakeMonitorInventory { Monitors = [Monitor("primary", 0, true)] },
+            storage,
+            settings: settings,
+            restoreClock: new FakeRestoreClock(),
+            placementProbe: new FakeWindowPlacementProbe
+            {
+                DefaultObservation = new WindowPlacementObservation(
+                    true,
+                    true,
+                    live.NormalLeft,
+                    live.NormalTop,
+                    live.NormalRight,
+                    live.NormalBottom,
+                    live.ShowCmd,
+                    live.SavedDpi)
+            });
+
+        RestoreExecutionResult result = await service.RestoreWorkspaceWithExecutionResultAsync(
+            snapshot,
+            RestoreMode.Standard);
+
+        Assert.Equal(RestoreExecutionStatus.Completed, result.Status);
+        Assert.Equal(RestoreCheckpointStatus.Disabled, result.Checkpoint?.Status);
+        Assert.Equal(0, captures);
+        Assert.NotEmpty(mutation.Restores);
+        Assert.Empty(storage.Checkpoints.Load().Workspaces);
     }
 
     [Fact]
@@ -779,36 +863,6 @@ public class WorkspaceServiceTests
         Assert.Empty(mutation.Restores);
         Assert.Equal(2, windows.LiveInventoryCalls);
         Assert.False(snapshot.Entries[0].WasRestored);
-    }
-
-    [Fact]
-    public void Launch_planning_characterizes_dedicated_store_and_missing_document_entries()
-    {
-        using var directory = new TestDirectory();
-        var service = CreateService(
-            directory,
-            new FakeWindowInventory(),
-            new RecordingWindowMutation(),
-            new FakeMonitorInventory());
-        var fixture = TestDirectory.LoadFixture("current.workspace.json");
-
-        var dedicated = fixture.Entries.Single(entry => entry.IsDedicatedBrowserWindow);
-        var dedicatedStart = service.BuildProcessStartInfo(dedicated);
-        Assert.Equal(dedicated.ExecutablePath, dedicatedStart.FileName);
-        Assert.Equal($"--new-window \"{dedicated.BrowserUrl}\"", dedicatedStart.Arguments);
-        Assert.False(dedicatedStart.UseShellExecute);
-
-        var store = fixture.Entries.Single(entry => entry.ProcessName == "Notepad");
-        var storeStart = service.BuildProcessStartInfo(store);
-        Assert.Equal("explorer.exe", storeStart.FileName);
-        Assert.Equal($"shell:AppsFolder\\{store.AppUserModelId}", storeStart.Arguments);
-        Assert.True(storeStart.UseShellExecute);
-
-        var missing = fixture.Entries.Single(entry => entry.LaunchArg == @"Z:\missing\gone.txt");
-        Assert.False(File.Exists(missing.LaunchArg));
-        var missingStart = service.BuildProcessStartInfo(missing);
-        Assert.Equal(missing.LaunchArg, missingStart.FileName);
-        Assert.True(missingStart.UseShellExecute);
     }
 
     [Fact]

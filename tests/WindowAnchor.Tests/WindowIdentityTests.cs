@@ -204,7 +204,6 @@ public class WindowIdentityTests
         WindowMatchResolution resolution = WindowMatcher.ResolveCandidates(candidates);
         Assert.Equal(WindowMatchConfidence.Ambiguous, resolution.Confidence);
         Assert.Null(resolution.SelectedCandidate);
-        Assert.Empty(WindowRestorePlanner.PlanMatches([entry], live, new HashSet<int>()));
     }
 
     [Fact]

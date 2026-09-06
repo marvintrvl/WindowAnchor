@@ -14,7 +14,10 @@ manual preview model. It also simulates package updates and post-restore placeme
 DPI noise, app-driven movement, closed HWNDs, bounded retries, checkpoint retention/expiry,
 corruption isolation, persistence failure, switch-before-close ordering, undo-of-undo safety,
 native task-window style/cloaking policy, background-only running processes, session-wide HWND
-multiplicity, and readiness waits correlated to their own successful launch activity.
+multiplicity, constrained Squirrel version-path rebinding, optional preview/checkpoint policy,
+visible-frame edge alignment, explicit restore-mode behavior, per-entry policy overrides,
+fresh-window correlation, preview-only non-mutation, and readiness waits correlated to their own
+successful launch activity.
 These tests do not move or launch real desktop windows.
 
 ## Complete Fresh Build (Debug)
@@ -70,7 +73,7 @@ Remove-Item -Recurse -Force src\WindowAnchor\bin, src\WindowAnchor\obj -ErrorAct
 ## Release assets
 
 ```powershell
-$tag = "v1.5.1"
+$tag = "v1.5.2"
 Copy-Item src/WindowAnchor/bin/Release/net8.0-windows/win-x64/publish/WindowAnchor.exe "WindowAnchor-$tag.exe"
 Compress-Archive browser-extension/* "WindowAnchor-Browser-Connector-$tag.zip"
 Get-FileHash -Algorithm SHA256 "WindowAnchor-$tag.exe", "WindowAnchor-Browser-Connector-$tag.zip"

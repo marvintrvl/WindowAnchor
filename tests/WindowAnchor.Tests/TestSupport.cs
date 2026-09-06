@@ -65,6 +65,7 @@ internal class FakeWindowInventory : IWindowInventory
     internal Func<int, Dictionary<IntPtr, (uint Pid, WindowRecord Record)>>? LiveProvider { get; set; }
     internal Func<IntPtr, bool>? IsAliveProvider { get; set; }
     internal Action? OnSnapshotWindows { get; set; }
+    internal Action? OnGetWindowsWithPids { get; set; }
     internal IReadOnlyList<RunningApplicationIdentity> RunningApplications { get; set; } = [];
 
     public virtual List<WindowRecord> SnapshotWindows(
@@ -80,6 +81,7 @@ internal class FakeWindowInventory : IWindowInventory
     public virtual Dictionary<IntPtr, (uint Pid, WindowRecord Record)> GetWindowsWithPids(
         WindowCandidatePolicy policy)
     {
+        OnGetWindowsWithPids?.Invoke();
         LivePolicies.Add(policy);
         LiveInventoryCalls++;
         return LiveProvider?.Invoke(LiveInventoryCalls) ?? Live;

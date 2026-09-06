@@ -218,6 +218,31 @@ public class WorkspaceSwitchEngineTests
             item.Kind == WorkspaceSwitchProgressKind.WaitingForClose && item.ShouldNotifyUser);
     }
 
+    [Fact]
+    public async Task Disposal_cancels_active_switch_and_concurrent_disposers_wait_for_drain()
+    {
+        var engine = Engine(new FakeSwitchWindows([], []));
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<WorkspaceSwitchResult> execution = engine.ExecuteAsync(
+            new HashSet<IntPtr>(),
+            async token =>
+            {
+                started.SetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                return Completed();
+            });
+        await started.Task;
+
+        Task firstDispose = engine.DisposeAsync().AsTask();
+        Task secondDispose = engine.DisposeAsync().AsTask();
+        await Task.WhenAll(firstDispose, secondDispose);
+
+        Assert.Equal(WorkspaceSwitchStatus.Cancelled, (await execution).Status);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => engine.ExecuteAsync(
+            new HashSet<IntPtr>(),
+            _ => Task.FromResult(Completed())));
+    }
+
     private static WorkspaceSwitchEngine Engine(FakeSwitchWindows windows) => new(
         windows,
         pollInterval: TimeSpan.FromMilliseconds(1),

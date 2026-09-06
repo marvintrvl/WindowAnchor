@@ -6,6 +6,70 @@ namespace WindowAnchor.Tests;
 public class SemanticLayoutTests
 {
     [Fact]
+    public void Capture_can_normalize_visible_frame_instead_of_invisible_resize_border()
+    {
+        MonitorInfo monitor = SavedMonitor(
+            "primary",
+            0,
+            (0, 0, 1920, 1080),
+            (0, 0, 1920, 1040),
+            96,
+            primary: true);
+        var window = new WindowRecord
+        {
+            NormalLeft = -8,
+            NormalTop = -8,
+            NormalRight = 968,
+            NormalBottom = 1048,
+            SavedDpi = 96
+        };
+
+        NormalizedWindowLayout layout = Assert.IsType<NormalizedWindowLayout>(
+            WindowLayoutGeometry.Capture(
+                window,
+                monitor,
+                new WindowBounds(0, 0, 960, 1040)));
+
+        Assert.Equal(WindowLayoutKind.LeftHalf, layout.Kind);
+        Assert.Equal(0, layout.X);
+        Assert.Equal(0, layout.Y);
+    }
+
+    [Fact]
+    public void Visible_target_is_expanded_by_current_invisible_frame_for_window_placement()
+    {
+        var target = new WindowAnchor.Native.NativeMethodsWindow.Rect
+        {
+            Left = 0,
+            Top = 0,
+            Right = 960,
+            Bottom = 1040
+        };
+        var outer = new WindowAnchor.Native.NativeMethodsWindow.Rect
+        {
+            Left = 92,
+            Top = 92,
+            Right = 1108,
+            Bottom = 908
+        };
+        var visible = new WindowAnchor.Native.NativeMethodsWindow.Rect
+        {
+            Left = 100,
+            Top = 100,
+            Right = 1100,
+            Bottom = 900
+        };
+
+        WindowAnchor.Native.NativeMethodsWindow.Rect compensated =
+            WindowService.CompensateForVisibleFrame(target, outer, visible);
+
+        Assert.Equal(-8, compensated.Left);
+        Assert.Equal(-8, compensated.Top);
+        Assert.Equal(968, compensated.Right);
+        Assert.Equal(1048, compensated.Bottom);
+    }
+
+    [Fact]
     public void Capture_derives_left_half_on_negative_origin_portrait_work_area()
     {
         var monitor = SavedMonitor(
@@ -168,10 +232,10 @@ public class SemanticLayoutTests
             120,
             primary: true);
 
-        Assert.True(WorkspaceService.MonitorTopologiesMatchExactly(
+        Assert.True(RestoreObservationBuilder.MonitorTopologiesMatchExactly(
             [first, second],
             [Clone(first), Clone(second)]));
-        Assert.False(WorkspaceService.MonitorTopologiesMatchExactly(
+        Assert.False(RestoreObservationBuilder.MonitorTopologiesMatchExactly(
             [first, second],
             [Clone(first), changedTaskbar]));
     }

@@ -215,14 +215,6 @@ public class StorageService
     public void DeleteWorkspace(WorkspaceSnapshot snapshot) =>
         NamedWorkspaces.Delete(snapshot);
 
-    public void DeleteWorkspace(string name)
-    {
-        WorkspaceSnapshot? workspace = LoadNamedWorkspaces().Workspaces.FirstOrDefault(
-            candidate => candidate.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-        if (workspace != null)
-            NamedWorkspaces.Delete(workspace);
-    }
-
     private sealed class LegacyMonitorProfile
     {
         public string Fingerprint { get; set; } = "";

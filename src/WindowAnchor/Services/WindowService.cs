@@ -1,10 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text.Json;
 using WindowAnchor.Models;
 using WindowAnchor.Native;
 
@@ -71,7 +69,10 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
                         record.MonitorId    = mon.MonitorId;
                         record.MonitorIndex = mon.Index;
                         record.MonitorName  = mon.FriendlyName;
-                        record.NormalizedLayout = WindowLayoutGeometry.Capture(record, mon);
+                        record.NormalizedLayout = WindowLayoutGeometry.Capture(
+                            record,
+                            mon,
+                            record.ShowCmd == 1 ? observed.VisibleBounds : null);
                     }
                 }
                 records.Add(record);
@@ -272,6 +273,16 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
         var targetRect = record.CoordinatesAreFinal
             ? savedRect
             : ScaleCoordsForDpi(savedRect, savedDpi, currentDpi);
+        if (record.CoordinatesRepresentVisibleBounds &&
+            NativeMethodsWindow.GetWindowRect(hWnd, out var currentOuter) &&
+            NativeMethodsWindow.DwmGetWindowAttribute(
+                hWnd,
+                NativeMethodsWindow.DWMWA_EXTENDED_FRAME_BOUNDS,
+                out NativeMethodsWindow.Rect currentVisible,
+                Marshal.SizeOf<NativeMethodsWindow.Rect>()) == 0)
+        {
+            targetRect = CompensateForVisibleFrame(targetRect, currentOuter, currentVisible);
+        }
         if (!record.CoordinatesAreFinal && savedDpi != currentDpi)
         {
             AppLogger.Info(
@@ -349,6 +360,34 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
         return result;
     }
 
+    /// <summary>
+    /// Converts desired visible DWM bounds into the outer bounds expected by WINDOWPLACEMENT.
+    /// Windows 10/11 commonly add invisible resize borders around normal resizable windows.
+    /// </summary>
+    internal static NativeMethodsWindow.Rect CompensateForVisibleFrame(
+        NativeMethodsWindow.Rect desiredVisible,
+        NativeMethodsWindow.Rect currentOuter,
+        NativeMethodsWindow.Rect currentVisible)
+    {
+        if (currentOuter.Right <= currentOuter.Left || currentOuter.Bottom <= currentOuter.Top ||
+            currentVisible.Right <= currentVisible.Left || currentVisible.Bottom <= currentVisible.Top)
+        {
+            return desiredVisible;
+        }
+
+        int leftInset = Math.Max(0, currentVisible.Left - currentOuter.Left);
+        int topInset = Math.Max(0, currentVisible.Top - currentOuter.Top);
+        int rightInset = Math.Max(0, currentOuter.Right - currentVisible.Right);
+        int bottomInset = Math.Max(0, currentOuter.Bottom - currentVisible.Bottom);
+        return new NativeMethodsWindow.Rect
+        {
+            Left = desiredVisible.Left - leftInset,
+            Top = desiredVisible.Top - topInset,
+            Right = desiredVisible.Right + rightInset,
+            Bottom = desiredVisible.Bottom + bottomInset
+        };
+    }
+
     /// <inheritdoc />
     public IReadOnlyList<RunningApplicationIdentity> GetRunningApplications()
     {
@@ -381,7 +420,7 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
                     ? $"aumid:{appUserModelId}"
                     : normalizedPath.Length > 0
                         ? $"path:{normalizedPath}"
-                        : $"name:{NormalizeProcessName(processName)}";
+                        : $"name:{ProcessIdentityNormalizer.Normalize(processName)}";
                 applications.TryAdd(
                     key,
                     new RunningApplicationIdentity(executablePath, processName, appUserModelId));
@@ -403,27 +442,6 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
     /// </summary>
     public void RestoreSingleWindow(IntPtr hWnd, WindowRecord record) => RestoreWindow(hWnd, record);
 
-    /// <summary>
-    /// Phase 3 Verify: Write snapshot to JSON for manual inspection.
-    /// Call this during testing to confirm all visible apps are captured with correct positions.
-    /// </summary>
-    public void WriteDebugSnapshotToFile(string filePath)
-    {
-        var snapshot = SnapshotWindows(WindowCandidatePolicy.CaptureCandidate);
-        var options = new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        };
-        string json = JsonSerializer.Serialize(snapshot, options);
-        File.WriteAllText(filePath, json);
-        AppLogger.Info(
-            "window.debug_snapshot_written",
-            "Wrote a window debug snapshot",
-            LogField.Path("snapshotPath", filePath),
-            LogField.Public("windowCount", snapshot.Count));
-    }
-
     // ── Close all user windows ─────────────────────────────────────────────
 
     /// <summary>
@@ -438,16 +456,6 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
             .Where(window => WindowPolicyEvaluator.Includes(window, policy, ownPid))
             .ToArray();
     }
-
-    /// <summary>
-    /// Gracefully closes all visible top-level user windows by posting WM_CLOSE.
-    /// WindowAnchor's own windows are excluded.  Apps with unsaved work will show
-    /// their own save-confirmation dialogs; the window stays open until the user
-    /// responds (or cancels).
-    /// Returns the number of windows that were sent a close message.
-    /// </summary>
-    public int CloseAllUserWindows(WindowCandidatePolicy policy)
-        => RequestCloseUserWindowsExcept(policy, new HashSet<IntPtr>()).Count;
 
     /// <summary>
     /// Posts WM_CLOSE to policy-selected user windows except approved target-workspace handles,
@@ -518,16 +526,6 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
         return minimized;
     }
 
-    /// <summary>
-    /// Returns the number of visible top-level user windows (excluding
-    /// WindowAnchor's own windows).  Used to poll whether all windows have
-    /// finished closing after <see cref="CloseAllUserWindows"/>.
-    /// </summary>
-    public int CountUserWindows(WindowCandidatePolicy policy)
-    {
-        return InspectUserWindows(policy).Count;
-    }
-
     private static void RequirePolicy(
         WindowCandidatePolicy actual,
         WindowCandidatePolicy expected)
@@ -538,11 +536,4 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
                 nameof(actual));
     }
 
-    private static string NormalizeProcessName(string? processName)
-    {
-        string value = (processName ?? "").Trim();
-        return value.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-            ? value[..^4]
-            : value;
-    }
 }

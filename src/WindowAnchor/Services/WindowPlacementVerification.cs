@@ -28,6 +28,16 @@ public sealed record WindowPlacementObservation(
     int ShowCmd,
     uint Dpi)
 {
+    public int? VisibleLeft { get; init; }
+    public int? VisibleTop { get; init; }
+    public int? VisibleRight { get; init; }
+    public int? VisibleBottom { get; init; }
+
+    public bool HasVisibleBounds =>
+        VisibleLeft.HasValue && VisibleTop.HasValue &&
+        VisibleRight.HasValue && VisibleBottom.HasValue &&
+        VisibleRight.Value > VisibleLeft.Value && VisibleBottom.Value > VisibleTop.Value;
+
     public static WindowPlacementObservation Gone { get; } =
         new(false, false, 0, 0, 0, 0, 0, 96);
 
@@ -103,11 +113,18 @@ public static class WindowPlacementVerifier
                 "The assigned window closed before placement verification completed.");
         }
 
+        bool useVisibleBounds = target.Strategy is
+            RestorePlacementStrategy.Semantic or RestorePlacementStrategy.Normalized &&
+            observation.HasVisibleBounds;
+        int observedLeft = useVisibleBounds ? observation.VisibleLeft!.Value : observation.Left;
+        int observedTop = useVisibleBounds ? observation.VisibleTop!.Value : observation.Top;
+        int observedRight = useVisibleBounds ? observation.VisibleRight!.Value : observation.Right;
+        int observedBottom = useVisibleBounds ? observation.VisibleBottom!.Value : observation.Bottom;
         bool applied = observation.PlacementReadable &&
-            Math.Abs(observation.Left - target.Left) <= tolerance &&
-            Math.Abs(observation.Top - target.Top) <= tolerance &&
-            Math.Abs(observation.Right - target.Right) <= tolerance &&
-            Math.Abs(observation.Bottom - target.Bottom) <= tolerance &&
+            Math.Abs(observedLeft - target.Left) <= tolerance &&
+            Math.Abs(observedTop - target.Top) <= tolerance &&
+            Math.Abs(observedRight - target.Right) <= tolerance &&
+            Math.Abs(observedBottom - target.Bottom) <= tolerance &&
             EquivalentShowState(observation.ShowCmd, target.ShowCmd);
         if (applied)
         {
@@ -165,7 +182,7 @@ public sealed class SystemWindowPlacementProbe : IWindowPlacementProbe
         if (!NativeMethodsWindow.GetWindowPlacement(hwnd, ref placement))
             return WindowPlacementObservation.Unreadable;
 
-        return new WindowPlacementObservation(
+        var observation = new WindowPlacementObservation(
             true,
             true,
             placement.RcNormalPosition.Left,
@@ -174,6 +191,22 @@ public sealed class SystemWindowPlacementProbe : IWindowPlacementProbe
             placement.RcNormalPosition.Bottom,
             placement.ShowCmd,
             NativeMethodsWindow.GetDpiForWindow(hwnd));
+        if (NativeMethodsWindow.DwmGetWindowAttribute(
+                hwnd,
+                NativeMethodsWindow.DWMWA_EXTENDED_FRAME_BOUNDS,
+                out NativeMethodsWindow.Rect visible,
+                Marshal.SizeOf<NativeMethodsWindow.Rect>()) == 0 &&
+            visible.Right > visible.Left && visible.Bottom > visible.Top)
+        {
+            observation = observation with
+            {
+                VisibleLeft = visible.Left,
+                VisibleTop = visible.Top,
+                VisibleRight = visible.Right,
+                VisibleBottom = visible.Bottom
+            };
+        }
+        return observation;
     }
 }
 

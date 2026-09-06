@@ -67,7 +67,13 @@ public static class NativeMethodsShell
 
         public void Dispose()
         {
-            try { PropVariantClear(this); } catch { /* best effort */ }
+            try
+            {
+                int clearResult = PropVariantClear(this);
+                // Cleanup is best effort because the native variant may already be empty.
+                _ = clearResult;
+            }
+            catch { /* best effort */ }
             _vt = VT_EMPTY;
             GC.SuppressFinalize(this);
         }

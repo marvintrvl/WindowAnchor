@@ -47,6 +47,8 @@ public class StorageServiceTests
         var current = Assert.Single(workspaces, workspace => workspace.Name == "Stable Workspace");
         Assert.Equal("11111111-1111-4111-8111-111111111111", current.WorkspaceId);
         Assert.Equal("22222222-2222-4222-8222-222222222222", Assert.Single(current.Entries).EntryId);
+        Assert.Equal(RestoreModeKind.Resume, current.DefaultRestoreMode);
+        Assert.Equal(EntryRestorePolicy.WorkspaceDefault, Assert.Single(current.Entries).RestorePolicy);
         Assert.False(File.Exists(currentPath));
         Assert.True(File.Exists(WorkspacePath(directory, current.WorkspaceId)));
 
@@ -176,6 +178,52 @@ public class StorageServiceTests
     }
 
     [Fact]
+    public void Recapture_preserves_restore_configuration_for_unique_matching_entries()
+    {
+        using var directory = new TestDirectory();
+        var storage = new StorageService(directory.Path);
+        var originalEntry = new WorkspaceEntry
+        {
+            ProcessName = "editor",
+            ExecutablePath = @"C:\Apps\editor\app-1.0\editor.exe",
+            WindowClassName = "EditorWindow",
+            RestorePolicy = EntryRestorePolicy.NeverLaunch,
+            Position = new WindowRecord { TitleSnippet = "Quarterly notes" }
+        };
+        var original = new WorkspaceSnapshot
+        {
+            Name = "Configured workspace",
+            SavedAt = DateTime.UtcNow,
+            DefaultRestoreMode = RestoreModeKind.Repair,
+            Entries = [originalEntry]
+        };
+        storage.SaveWorkspace(original);
+
+        var replacementEntry = new WorkspaceEntry
+        {
+            ProcessName = "editor",
+            ExecutablePath = @"C:\Apps\editor\app-1.1\editor.exe",
+            WindowClassName = "EditorWindow",
+            Position = new WindowRecord { TitleSnippet = "Quarterly notes" }
+        };
+        var replacement = new WorkspaceSnapshot
+        {
+            Name = original.Name,
+            SavedAt = DateTime.UtcNow,
+            Entries = [replacementEntry]
+        };
+
+        storage.SaveWorkspace(replacement);
+
+        WorkspaceSnapshot saved = Assert.Single(storage.LoadAllWorkspaces());
+        WorkspaceEntry savedEntry = Assert.Single(saved.Entries);
+        Assert.Equal(original.WorkspaceId, saved.WorkspaceId);
+        Assert.Equal(RestoreModeKind.Repair, saved.DefaultRestoreMode);
+        Assert.Equal(originalEntry.EntryId, savedEntry.EntryId);
+        Assert.Equal(EntryRestorePolicy.NeverLaunch, savedEntry.RestorePolicy);
+    }
+
+    [Fact]
     public void Current_workspace_round_trips_monitor_work_area_and_normalized_layout()
     {
         using var directory = new TestDirectory();
@@ -240,6 +288,33 @@ public class StorageServiceTests
         Assert.Equal(WindowLayoutKind.LeftHalf, layout.Kind);
         Assert.Equal(.5, layout.Width);
         Assert.Equal(VerticalWindowAnchor.Stretch, layout.VerticalAnchor);
+    }
+
+    [Fact]
+    public void Current_workspace_round_trips_restore_mode_and_entry_policy()
+    {
+        using var directory = new TestDirectory();
+        var storage = new StorageService(directory.Path);
+        var snapshot = new WorkspaceSnapshot
+        {
+            Name = "Policy workspace",
+            SavedAt = DateTime.UtcNow,
+            DefaultRestoreMode = RestoreModeKind.MoveExisting,
+            Entries =
+            [
+                new WorkspaceEntry
+                {
+                    ProcessName = "editor",
+                    RestorePolicy = EntryRestorePolicy.NeverClose
+                }
+            ]
+        };
+
+        storage.SaveWorkspace(snapshot);
+        WorkspaceSnapshot restored = Assert.Single(storage.LoadAllWorkspaces());
+
+        Assert.Equal(RestoreModeKind.MoveExisting, restored.DefaultRestoreMode);
+        Assert.Equal(EntryRestorePolicy.NeverClose, Assert.Single(restored.Entries).RestorePolicy);
     }
 
     [Fact]

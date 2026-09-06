@@ -30,17 +30,6 @@ public static class AppLogger
     /// <summary>Minimum severity retained by the local log.</summary>
     public static DiagnosticLogLevel MinimumLevel { get; set; } = DiagnosticLogLevel.Debug;
 
-    public static void Debug(string message) =>
-        Write(DiagnosticLogLevel.Debug, "legacy.debug", message, null, []);
-    public static void Info(string message) =>
-        Write(DiagnosticLogLevel.Info, "legacy.info", message, null, []);
-    public static void Warn(string message) =>
-        Write(DiagnosticLogLevel.Warning, "legacy.warning", message, null, []);
-    public static void Error(string message) =>
-        Write(DiagnosticLogLevel.Error, "legacy.error", message, null, []);
-    public static void Error(string message, Exception ex) =>
-        Write(DiagnosticLogLevel.Error, "legacy.error", message, ex, []);
-
     public static void Debug(string eventId, string message, params LogField[] fields) =>
         Write(DiagnosticLogLevel.Debug, eventId, message, null, fields);
     public static void Debug(string eventId, string message, Exception ex, params LogField[] fields) =>

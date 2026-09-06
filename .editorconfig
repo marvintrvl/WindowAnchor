@@ -1,0 +1,22 @@
+root = true
+
+[*.cs]
+# Phase 5 keeps only correctness/lifecycle/interop rules visible at the project level. Existing
+# native signatures, serialized DTOs, and UI binding models remain documented exceptions rather
+# than being mass-renamed or reformatted.
+dotnet_diagnostic.CA2000.severity = warning
+dotnet_diagnostic.CA2016.severity = warning
+dotnet_diagnostic.CA1849.severity = warning
+dotnet_diagnostic.CA2012.severity = warning
+dotnet_diagnostic.CA1065.severity = warning
+
+# Native boundary methods intentionally use Win32-compatible signatures and return conventions.
+dotnet_diagnostic.CA1716.severity = none
+dotnet_diagnostic.CA1815.severity = none
+dotnet_diagnostic.CA1819.severity = none
+
+[tests/**.cs]
+# Test-owned fakes and cancellation sources intentionally use method lifetime; production ownership
+# remains checked by the warning-level rules above.
+dotnet_diagnostic.CA2000.severity = none
+dotnet_diagnostic.CA1849.severity = none

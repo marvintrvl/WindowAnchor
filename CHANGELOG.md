@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-09-06
+
+### Added
+- **Explicit restore modes** — Each workspace can default to Repair, Move Existing, Resume, Launch
+  Fresh, Exact Switch, or Preview Only, with one-off “Restore As” commands that do not rewrite the
+  saved default.
+- **Per-entry restore policy** — Entries can inherit the workspace mode or request reuse,
+  launch-if-missing, always-launch-new, never-launch, never-close, or ignore-during-switch behavior.
+  Existing workspaces migrate to the compatible Resume/inherit behavior.
+- **Update-safe Squirrel executable recovery** — When a saved executable under an `app-<version>`
+  directory is missing, WindowAnchor can select the newest immediate version sibling containing the
+  exact same executable name inside a recognized Squirrel root. Arbitrary wildcard paths are not
+  accepted.
+- **First-run onboarding and permanent Help & Guide** — A fresh interactive install explains the
+  notification-area workflow and offers direct Save Workspace and Settings actions. The same guide
+  remains available from the tray and Settings with reference material for restore modes, entry
+  policies, preview/checkpoint options, matching, privacy, browser support, and limitations.
+- **Restore workflow preferences** — Settings can independently disable routine restore previews
+  and pre-restore recovery checkpoints.
+
+### Changed
+- **Consistent restore entry points** — Tray, Settings, and restore hotkeys share the same preview
+  policy and stable default-workspace resolution. A disabled routine preview still appears when a
+  plan contains ambiguity or blockers that require a user decision.
+- **Full reconciliation for Undo** — Undo Last Restore uses switch-style reconciliation so windows
+  absent from the checkpoint are closed normally before the checkpoint layout is restored.
+- **Settings schema v5** — Preview/checkpoint preferences and first-run completion are versioned.
+  Existing installations migrate without receiving surprise onboarding; fresh interactive installs
+  see it once, while minimized and native-messaging launches stay silent.
+- **Workspace schema v5** — Restore mode and per-entry policy persist with stable workspace/entry
+  identities and backward-compatible defaults.
+- **Maintainability cleanup** — Oversized orchestration, matching, native-messaging, settings, and
+  capture/restore implementations were split behind existing boundaries while preserving the public
+  restore pipeline and adding equivalence tests.
+
+### Fixed
+- **Discord and other Squirrel apps after updates** — A stale versioned executable path no longer
+  becomes a blocking missing resource when a valid newer sibling installation can be resolved.
+- **Restore Default hotkey divergence** — Hotkey restores now use the same default-workspace lookup
+  and manual preview behavior as tray and Settings restores.
+- **Optional low-friction restore** — Users who prefer one-click operation can skip routine review
+  and/or checkpoint capture without disabling matching safety, staleness checks, bounded readiness,
+  placement verification, or execution serialization.
+- **Checkpoint Undo scope** — Recovery now restores the captured desktop context instead of only
+  adding/moving saved windows and leaving unrelated windows behind.
+- **Adapted edge placement** — Semantic targets use visible DWM frame bounds and compensate for
+  invisible resize borders, avoiding the common inset from a monitor edge after topology changes.
+- **Native-messaging framing robustness** — Connector framing uses bounded exact reads and rejects
+  malformed or oversized messages without partially processing them.
+
 ## [1.5.1] - 2026-09-05
 
 ### Added

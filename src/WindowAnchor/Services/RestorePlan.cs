@@ -7,25 +7,44 @@ using WindowAnchor.Models;
 
 namespace WindowAnchor.Services;
 
-/// <summary>High-level behavior requested for one restore plan.</summary>
-public enum RestoreModeKind
-{
-    Standard,
-    Selective,
-    AlignAndMinimize
-}
-
 /// <summary>
 /// Immutable restore-mode input. Selective restores retain excluded entries in the plan so every
 /// saved entry has an explicit, inspectable outcome.
 /// </summary>
 public sealed record RestoreMode
 {
-    public RestoreModeKind Kind { get; init; } = RestoreModeKind.Standard;
+    public RestoreModeKind Kind { get; init; } = RestoreModeKind.Resume;
     public IReadOnlyList<string> SelectedMonitorIds { get; init; } = Array.Empty<string>();
     public bool CancellationRequested { get; init; }
 
-    public static RestoreMode Standard { get; } = new();
+    public static RestoreMode Resume { get; } = new();
+
+    public static RestoreMode Standard => Resume;
+
+    public static RestoreMode Repair { get; } = new()
+    {
+        Kind = RestoreModeKind.Repair
+    };
+
+    public static RestoreMode MoveExisting { get; } = new()
+    {
+        Kind = RestoreModeKind.MoveExisting
+    };
+
+    public static RestoreMode LaunchFresh { get; } = new()
+    {
+        Kind = RestoreModeKind.LaunchFresh
+    };
+
+    public static RestoreMode ExactSwitch { get; } = new()
+    {
+        Kind = RestoreModeKind.ExactSwitch
+    };
+
+    public static RestoreMode PreviewOnly { get; } = new()
+    {
+        Kind = RestoreModeKind.PreviewOnly
+    };
 
     public static RestoreMode AlignAndMinimize { get; } = new()
     {
@@ -41,6 +60,21 @@ public sealed record RestoreMode
             .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
             .ToArray()
     };
+
+    /// <summary>Creates a runtime mode from a persisted workspace default.</summary>
+    public static RestoreMode FromWorkspace(WorkspaceSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        return snapshot.DefaultRestoreMode switch
+        {
+            RestoreModeKind.Repair => Repair,
+            RestoreModeKind.MoveExisting => MoveExisting,
+            RestoreModeKind.LaunchFresh => LaunchFresh,
+            RestoreModeKind.ExactSwitch => ExactSwitch,
+            RestoreModeKind.PreviewOnly => PreviewOnly,
+            _ => Resume
+        };
+    }
 }
 
 /// <summary>Availability of an external target observed before pure planning begins.</summary>
@@ -226,9 +260,11 @@ public enum RestorePlanIssueCode
     MissingResource,
     StaleResource,
     MissingExecutable,
+    UpdatedExecutablePath,
     MissingWebAppLaunchTarget,
     MissingBrowserUrl,
-    RunningApplicationHasNoRestorableWindow
+    RunningApplicationHasNoRestorableWindow,
+    UnsupportedAlwaysLaunchNew
 }
 
 /// <summary>Severity of an explained restore-plan issue.</summary>
@@ -263,7 +299,8 @@ public sealed record RestorePlanCandidate(
     bool IsWithinAmbiguityMargin = false,
     bool IsLearnedHintMatch = false,
     bool IsUserSelected = false,
-    bool CanRememberChoice = false);
+    bool CanRememberChoice = false,
+    int ShowCmd = 1);
 
 /// <summary>Kind of launch the executor would need to perform.</summary>
 public enum RestoreLaunchKind
@@ -363,7 +400,19 @@ public sealed record RestorePlanEntry(
     RestoreLaunchRequirement LaunchRequirement,
     IReadOnlyList<RestoreAction> Actions,
     IReadOnlyList<RestorePlanIssue> Warnings,
-    IReadOnlyList<RestorePlanIssue> BlockingErrors);
+    IReadOnlyList<RestorePlanIssue> BlockingErrors)
+{
+    /// <summary>Resolved workspace/entry policy that produced this entry's actions.</summary>
+    public ResolvedEntryRestorePolicy RestorePolicy { get; init; } =
+        ResolvedEntryRestorePolicy.ResumeDefault;
+
+    /// <summary>
+    /// Pre-existing candidates that a fresh-launch readiness wait must not claim as the new
+    /// instance.
+    /// </summary>
+    public IReadOnlySet<long> ReadinessExcludedWindowHandles { get; init; } =
+        new HashSet<long>();
+}
 
 /// <summary>
 /// Serializable, immutable restore intent. It contains no clocks or random IDs, so identical
@@ -371,7 +420,7 @@ public sealed record RestorePlanEntry(
 /// </summary>
 public sealed record RestorePlan
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 4;
 
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
     public string WorkspaceId { get; init; } = "";
@@ -390,7 +439,9 @@ public sealed record RestorePlan
     public IReadOnlyList<RestorePlanIssue> BlockingErrors { get; init; } = Array.Empty<RestorePlanIssue>();
 
     [JsonIgnore]
-    public bool CanExecute => !WasCancelled && BlockingErrors.Count == 0;
+    public bool CanExecute => !WasCancelled &&
+        Mode != RestoreModeKind.PreviewOnly &&
+        BlockingErrors.Count == 0;
 
     /// <summary>Returns a deep privacy-safe projection suitable for diagnostic serialization.</summary>
     public RestorePlan Redact() => this with

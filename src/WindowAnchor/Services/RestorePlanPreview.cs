@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using WindowAnchor.Models;
 
 namespace WindowAnchor.Services;
 
@@ -67,7 +68,10 @@ public sealed record RestorePlanPreviewEntry(
     IReadOnlyList<RestorePlanPreviewAction> Actions,
     IReadOnlyList<string> Warnings,
     IReadOnlyList<string> BlockingErrors,
-    IReadOnlyList<RestorePlanPreviewCandidate> Candidates);
+    IReadOnlyList<RestorePlanPreviewCandidate> Candidates)
+{
+    public string PolicyLabel { get; init; } = "Workspace mode default";
+}
 
 /// <summary>
 /// Read-only UI projection of the exact plan that will be approved. It never observes windows or
@@ -194,7 +198,10 @@ public static class RestorePlanPreviewBuilder
             actions,
             entry.Warnings.Select(issue => issue.Explanation).ToArray(),
             entry.BlockingErrors.Select(issue => issue.Explanation).ToArray(),
-            candidates);
+            candidates)
+        {
+            PolicyLabel = RestorePolicyResolver.Label(entry.RestorePolicy)
+        };
     }
 
     private static RestorePreviewOutcomeKind Classify(RestorePlanEntry entry)

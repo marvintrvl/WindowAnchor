@@ -83,13 +83,13 @@ public sealed class SystemAppReadinessProbe : IAppReadinessProbe
                 .OrderBy(window => window.Hwnd.ToInt64())
                 .ToArray();
             var processNames = new HashSet<string>(
-                windows.Select(window => NormalizeProcessName(window.ProcessName)),
+                windows.Select(window => ProcessIdentityNormalizer.Normalize(window.ProcessName)),
                 StringComparer.OrdinalIgnoreCase);
             foreach (Process process in Process.GetProcesses())
             {
                 using (process)
                 {
-                    try { processNames.Add(NormalizeProcessName(process.ProcessName)); }
+                    try { processNames.Add(ProcessIdentityNormalizer.Normalize(process.ProcessName)); }
                     catch { /* Elevated and short-lived processes are not readiness failures. */ }
                 }
             }
@@ -117,17 +117,9 @@ public sealed class SystemAppReadinessProbe : IAppReadinessProbe
     internal static string ProcessName(SavedWindowIdentity identity)
     {
         if (!string.IsNullOrWhiteSpace(identity.ProcessName))
-            return NormalizeProcessName(identity.ProcessName);
-        try { return NormalizeProcessName(Path.GetFileNameWithoutExtension(identity.ExecutablePath)); }
+            return ProcessIdentityNormalizer.Normalize(identity.ProcessName);
+        try { return ProcessIdentityNormalizer.Normalize(Path.GetFileNameWithoutExtension(identity.ExecutablePath)); }
         catch { return ""; }
-    }
-
-    private static string NormalizeProcessName(string? processName)
-    {
-        string value = (processName ?? "").Trim();
-        return value.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-            ? value[..^4]
-            : value;
     }
 }
 

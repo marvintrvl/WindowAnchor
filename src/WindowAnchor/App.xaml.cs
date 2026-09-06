@@ -1,8 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
@@ -24,6 +24,9 @@ public partial class App : System.Windows.Application
     private StorageService?     _storageService;
     private SettingsService?    _settingsService;
     private HotkeyService?     _hotkeyService;
+    private UI.SettingsWindow? _settingsWindow;
+    private UI.HelpReferenceWindow? _helpWindow;
+    private int _shutdownStarted;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -140,6 +143,8 @@ public partial class App : System.Windows.Application
                 await HandleStartupRestoreAsync(startupBehavior);
             }, DispatcherPriority.ApplicationIdle);
         }
+
+        ScheduleFirstRunOnboarding(minimized);
     }
 
     // ── Startup workspace restore ─────────────────────────────────────────
@@ -194,95 +199,109 @@ public partial class App : System.Windows.Application
         }
     }
 
-    private void OnDisplaySettingsChanged(object? sender, EventArgs e)
+    private async void OnDisplaySettingsChanged(object? sender, EventArgs e)
     {
         string fingerprint = _monitorService?.GetCurrentMonitorFingerprint() ?? "unknown";
         AppLogger.Info(
             "display.settings_changed",
             "Received a display-settings change notification",
             LogField.Identifier("monitorFingerprint", fingerprint));
-        _coordinator?.HandleDisplayChangeAsync();
+        if (_coordinator is not null)
+            await _coordinator.HandleDisplayChangeAsync();
     }
 
     private void OnOpenSettingsClick(object sender, RoutedEventArgs e)
     {
-        var settings = new UI.SettingsWindow(_workspaceService!, _storageService!, _coordinator!, _settingsService!, _monitorService!);
-        settings.Show();
+        ShowSettingsWindow();
+    }
+
+    private void ShowSettingsWindow()
+    {
+        if (_settingsWindow is { IsVisible: true })
+        {
+            _settingsWindow.Activate();
+            return;
+        }
+
+        _settingsWindow = new UI.SettingsWindow(
+            _workspaceService!,
+            _storageService!,
+            _coordinator!,
+            _settingsService!,
+            _monitorService!,
+            () => ShowHelpWindow());
+        _settingsWindow.Closed += (_, _) => _settingsWindow = null;
+        _settingsWindow.Show();
+    }
+
+    private void OnOpenHelpClick(object sender, RoutedEventArgs e) => ShowHelpWindow();
+
+    private void ShowHelpWindow(bool firstRun = false)
+    {
+        if (_helpWindow is { IsVisible: true })
+        {
+            _helpWindow.Activate();
+            return;
+        }
+
+        var help = new UI.HelpReferenceWindow(firstRun);
+        _helpWindow = help;
+        help.SaveWorkspaceRequested += (_, _) => ShowSaveWorkspaceDialog();
+        help.SettingsRequested += (_, _) => ShowSettingsWindow();
+        help.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_helpWindow, help))
+                _helpWindow = null;
+        };
+        help.Show();
+    }
+
+    private void ScheduleFirstRunOnboarding(bool minimized)
+    {
+        if (_settingsService is null || _workspaceService is null)
+            return;
+
+        bool hasSavedWorkspaces = _workspaceService.GetAllWorkspaces().Count > 0;
+        bool shouldShow = FirstRunOnboardingPolicy.ShouldShow(
+            _settingsService.Settings.OnboardingCompleted,
+            minimized,
+            _settingsService.IsSaveBlocked,
+            hasSavedWorkspaces);
+
+        if (!shouldShow)
+        {
+            // A workspace is stronger evidence of an established installation than a missing
+            // settings file. Record that fact silently instead of showing first-run UI later.
+            if (!minimized &&
+                !_settingsService.IsSaveBlocked &&
+                !_settingsService.Settings.OnboardingCompleted &&
+                hasSavedWorkspaces)
+            {
+                _settingsService.Settings.OnboardingCompleted = true;
+                _settingsService.Save();
+            }
+            return;
+        }
+
+        // Persist before showing so an application restart cannot turn onboarding into spam.
+        _settingsService.Settings.OnboardingCompleted = true;
+        _settingsService.Save();
+        AppLogger.Info(
+            "onboarding.first_run_scheduled",
+            "Scheduled the first interactive-launch guide");
+        _ = Dispatcher.InvokeAsync(
+            () => ShowHelpWindow(firstRun: true),
+            DispatcherPriority.ApplicationIdle);
     }
 
     private async void ShowSaveWorkspaceDialog()
     {
-        // Build per-monitor window lists for the selective-save dialog
-        List<(MonitorInfo Monitor, List<WindowRecord> Windows)> windowPreview;
-        try
+        var workflow = new UI.SaveWorkspaceWorkflow(_workspaceService!, _settingsService);
+        UI.SaveWorkspaceWorkflowResult result = await workflow.RunAsync();
+        if (result.Status == UI.SaveWorkspaceWorkflowStatus.Saved)
         {
-            windowPreview = await Task.Run(() => _workspaceService!.GetWindowPreviewForDialog());
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Warn(
-                "workspace.preview_enumeration_failed",
-                "Could not enumerate windows for the save dialog",
-                ex,
-                LogField.Public("errorCategory", "window_enumeration"));
-            windowPreview = new();
-        }
-
-        var dialog = new UI.SaveWorkspaceDialog(windowPreview, _settingsService);
-        if (dialog.ShowDialog() != true) return;
-
-        // Read all dialog properties on the UI thread before Task.Run.
-        var name            = dialog.WorkspaceName;
-        var saveFiles       = dialog.SaveFiles;
-        var selectedWindows = dialog.SelectedWindows;
-
-        // Show progress window when file detection is enabled (can take several seconds).
-        UI.SaveProgressWindow? progressWindow = null;
-        if (saveFiles)
-        {
-            progressWindow = new UI.SaveProgressWindow(name);
-            progressWindow.Show();
-        }
-
-        var progress = progressWindow != null
-            ? new Progress<Services.SaveProgressReport>(r => progressWindow.ApplyReport(r))
-            : (IProgress<Services.SaveProgressReport>?)null;
-
-        try
-        {
-            WorkspaceCaptureResult capture = await _workspaceService!.CaptureWorkspaceAsync(
-                name,
-                saveFiles: saveFiles,
-                selectedWindows: selectedWindows,
-                progress: progress);
-            _workspaceService.PersistCapture(
-                capture,
-                WorkspaceArtifactKind.NamedWorkspace,
-                IncompleteBrowserCapturePolicy.SavePartialWorkspace);
-            AppLogger.Info(
-                "workspace.saved",
-                "Saved a named workspace",
-                LogField.Identifier("workspaceId", capture.Snapshot.WorkspaceId),
-                LogField.Workspace("workspaceName", name),
-                LogField.Public("saveFiles", saveFiles),
-                LogField.Public("browserCaptureStatus", capture.BrowserCapture.Status));
             ShowBalloon("Workspace Saved",
-                $"\u201c{name}\u201d saved \u2014 {selectedWindows.Count} window(s)");
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Error(
-                "workspace.save_failed",
-                "Workspace capture or persistence failed",
-                ex,
-                LogField.Workspace("workspaceName", name),
-                LogField.Public("errorCategory", "workspace_save"));
-            System.Windows.MessageBox.Show($"Failed to save workspace: {ex.Message}", "WindowAnchor",
-                System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
-        }
-        finally
-        {
-            progressWindow?.Close();
+                $"\u201c{result.WorkspaceName}\u201d saved \u2014 {result.SelectedWindowCount} window(s)");
         }
     }
 
@@ -405,10 +424,9 @@ public partial class App : System.Windows.Application
     private void OnRestoreWorkspaceClick(WindowAnchor.Models.WorkspaceSnapshot snapshot)
     {
         if (_coordinator is not null)
-            _ = UI.RestorePlanPreviewWorkflow.RunAsync(
+            _ = UI.RestorePlanPreviewWorkflow.RunWorkspaceDefaultAsync(
                 _coordinator,
-                snapshot,
-                RestoreMode.Standard);
+                snapshot);
     }
 
     private void OnSwitchWorkspaceClick(WindowAnchor.Models.WorkspaceSnapshot snapshot)
@@ -426,12 +444,27 @@ public partial class App : System.Windows.Application
                 RestoreMode.AlignAndMinimize);
     }
 
-    private void OnExitClick(object sender, RoutedEventArgs e)
+    private async void OnExitClick(object sender, RoutedEventArgs e)
     {
-        AppLogger.Info("User requested exit.");
+        AppLogger.Info(
+            "app.exit_requested",
+            "User requested application exit");
+        await DisposeOwnedServicesAsync();
+        Current.Shutdown();
+    }
+
+    private async Task DisposeOwnedServicesAsync()
+    {
+        if (Interlocked.Exchange(ref _shutdownStarted, 1) != 0)
+            return;
+
+        SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+        if (_coordinator is not null)
+            await _coordinator.DisposeAsync();
+        if (_workspaceService is not null)
+            await _workspaceService.DisposeAsync();
         _hotkeyService?.Dispose();
         _trayIcon?.Dispose();
-        Current.Shutdown();
     }
 
     // ── Hotkey integration ────────────────────────────────────────────────
@@ -482,10 +515,9 @@ public partial class App : System.Windows.Application
         var ws = _workspaceService?.GetAllWorkspaces()
             .FirstOrDefault(w => w.WorkspaceId.Equals(workspaceId, StringComparison.OrdinalIgnoreCase));
         if (ws != null)
-            _ = UI.RestorePlanPreviewWorkflow.RunDirectAsync(
+            _ = UI.RestorePlanPreviewWorkflow.RunWorkspaceDefaultAsync(
                 _coordinator!,
-                ws,
-                RestoreMode.Standard);
+                ws);
     }
 
     private void SwitchDefaultWorkspace()
@@ -503,10 +535,9 @@ public partial class App : System.Windows.Application
     {
         var workspaces = GetOrderedWorkspaces();
         if (index < workspaces.Count)
-            _ = UI.RestorePlanPreviewWorkflow.RunDirectAsync(
+            _ = UI.RestorePlanPreviewWorkflow.RunWorkspaceDefaultAsync(
                 _coordinator!,
-                workspaces[index],
-                RestoreMode.Standard);
+                workspaces[index]);
     }
 
     private void SwitchWorkspaceByIndex(int index)
@@ -574,6 +605,7 @@ public partial class App : System.Windows.Application
             e.Exception,
             LogField.Public("errorCategory", "unhandled_dispatcher_exception"));
         _trayIcon?.Dispose();   // prevent ghost tray icon
+        _ = DisposeOwnedServicesAsync();
         e.Handled = false;      // let Windows show the crash dialog
     }
 
@@ -586,180 +618,7 @@ public partial class App : System.Windows.Application
                 ex,
                 LogField.Public("errorCategory", "unhandled_domain_exception"));
         _trayIcon?.Dispose();   // prevent ghost tray icon
-    }
-}
-
-/// <summary>
-/// A MenuItem that gives the pointer a short grace period when moving from a
-/// submenu header into its popup. This is useful for tray menus because the
-/// submenu is hosted in a separate Popup window and may flip to the opposite
-/// side of the parent near a screen edge.
-/// </summary>
-public sealed class DelayedSubmenuMenuItem : System.Windows.Controls.MenuItem
-{
-    public static readonly DependencyProperty SubmenuCloseDelayProperty =
-        DependencyProperty.Register(
-            nameof(SubmenuCloseDelay),
-            typeof(int),
-            typeof(DelayedSubmenuMenuItem),
-            new FrameworkPropertyMetadata(250, null, CoerceSubmenuCloseDelay));
-
-    private DispatcherTimer? _submenuCloseTimer;
-    private System.Windows.Controls.Primitives.Popup? _submenuPopup;
-    private FrameworkElement? _submenuSurface;
-
-    /// <summary>
-    /// Time in milliseconds that the submenu remains open after the pointer
-    /// leaves the header. Entering the submenu cancels the pending close.
-    /// Set to 0 to use normal WPF MenuItem behaviour.
-    /// </summary>
-    public int SubmenuCloseDelay
-    {
-        get => (int)GetValue(SubmenuCloseDelayProperty);
-        set => SetValue(SubmenuCloseDelayProperty, value);
-    }
-
-    public override void OnApplyTemplate()
-    {
-        DetachPopupHandlers();
-
-        base.OnApplyTemplate();
-
-        _submenuPopup =
-            GetTemplateChild("PART_Popup") as System.Windows.Controls.Primitives.Popup;
-
-        if (_submenuPopup != null)
-        {
-            _submenuPopup.Opened += OnSubmenuPopupOpened;
-            _submenuPopup.Closed += OnSubmenuPopupClosed;
-            AttachSubmenuSurface(_submenuPopup.Child as FrameworkElement);
-        }
-    }
-
-    protected override void OnMouseEnter(System.Windows.Input.MouseEventArgs e)
-    {
-        CancelPendingSubmenuClose();
-        base.OnMouseEnter(e);
-    }
-
-    protected override void OnMouseLeave(System.Windows.Input.MouseEventArgs e)
-    {
-        // Calling MenuItem.OnMouseLeave immediately lets WPF deselect/close the
-        // hierarchy before the pointer can cross a tiny popup boundary. Suppress
-        // that immediate close while the submenu is open and close it ourselves
-        // after the configured grace period instead.
-        if (IsSubmenuOpen && SubmenuCloseDelay > 0)
-        {
-            StartSubmenuCloseTimer();
-            return;
-        }
-
-        base.OnMouseLeave(e);
-    }
-
-    private static object CoerceSubmenuCloseDelay(DependencyObject d, object baseValue)
-    {
-        return Math.Max(0, (int)baseValue);
-    }
-
-    private void OnSubmenuPopupOpened(object? sender, EventArgs e)
-    {
-        AttachSubmenuSurface(_submenuPopup?.Child as FrameworkElement);
-        CancelPendingSubmenuClose();
-    }
-
-    private void OnSubmenuPopupClosed(object? sender, EventArgs e)
-    {
-        CancelPendingSubmenuClose();
-    }
-
-    private void OnSubmenuSurfaceMouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
-    {
-        CancelPendingSubmenuClose();
-    }
-
-    private void OnSubmenuSurfaceMouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
-    {
-        if (IsSubmenuOpen && !IsMouseOver)
-            StartSubmenuCloseTimer();
-    }
-
-    private void StartSubmenuCloseTimer()
-    {
-        if (SubmenuCloseDelay <= 0)
-        {
-            CloseSubmenuAfterGracePeriod();
-            return;
-        }
-
-        _submenuCloseTimer ??= new DispatcherTimer(DispatcherPriority.Input);
-        _submenuCloseTimer.Tick -= OnSubmenuCloseTimerTick;
-        _submenuCloseTimer.Tick += OnSubmenuCloseTimerTick;
-        _submenuCloseTimer.Interval = TimeSpan.FromMilliseconds(SubmenuCloseDelay);
-        _submenuCloseTimer.Stop();
-        _submenuCloseTimer.Start();
-    }
-
-    private void CancelPendingSubmenuClose()
-    {
-        _submenuCloseTimer?.Stop();
-    }
-
-    private void OnSubmenuCloseTimerTick(object? sender, EventArgs e)
-    {
-        _submenuCloseTimer?.Stop();
-
-        // The pointer successfully crossed into either surface: keep it open.
-        if (IsMouseOver || _submenuSurface?.IsMouseOver == true)
-            return;
-
-        CloseSubmenuAfterGracePeriod();
-    }
-
-    private void CloseSubmenuAfterGracePeriod()
-    {
-        if (!IsSubmenuOpen)
-            return;
-
-        IsSubmenuOpen = false;
-
-        // OnMouseLeave was intentionally deferred, so clear the visual highlight
-        // when the grace period expires outside both menu surfaces.
-        IsHighlighted = false;
-    }
-
-    private void AttachSubmenuSurface(FrameworkElement? surface)
-    {
-        if (ReferenceEquals(_submenuSurface, surface))
-            return;
-
-        if (_submenuSurface != null)
-        {
-            _submenuSurface.MouseEnter -= OnSubmenuSurfaceMouseEnter;
-            _submenuSurface.MouseLeave -= OnSubmenuSurfaceMouseLeave;
-        }
-
-        _submenuSurface = surface;
-
-        if (_submenuSurface != null)
-        {
-            _submenuSurface.MouseEnter += OnSubmenuSurfaceMouseEnter;
-            _submenuSurface.MouseLeave += OnSubmenuSurfaceMouseLeave;
-        }
-    }
-
-    private void DetachPopupHandlers()
-    {
-        CancelPendingSubmenuClose();
-
-        if (_submenuPopup != null)
-        {
-            _submenuPopup.Opened -= OnSubmenuPopupOpened;
-            _submenuPopup.Closed -= OnSubmenuPopupClosed;
-        }
-
-        AttachSubmenuSurface(null);
-        _submenuPopup = null;
+        _ = DisposeOwnedServicesAsync();
     }
 }
 

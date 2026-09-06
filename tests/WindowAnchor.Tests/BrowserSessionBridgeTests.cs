@@ -1,10 +1,22 @@
 using System.Text.Json;
+using WindowAnchor.Models;
 using WindowAnchor.Services;
 
 namespace WindowAnchor.Tests;
 
 public class BrowserSessionBridgeTests
 {
+    [Fact]
+    public async Task Restore_propagates_caller_cancellation()
+    {
+        var bridge = new BrowserSessionBridge();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            bridge.RestoreAsync("cancelled", new List<BrowserSession>(), cancellation.Token));
+    }
+
     [Theory]
     [InlineData(
         "{\"ok\":false,\"error\":\"Browser extension timed out.\"}",

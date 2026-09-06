@@ -1,0 +1,262 @@
+<ui:FluentWindow
+    x:Class="WindowAnchor.UI.HelpReferenceWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    Title="WindowAnchor — Help &amp; Guide"
+    Width="860" Height="720"
+    MinWidth="700" MinHeight="560"
+    WindowStartupLocation="CenterScreen"
+    ExtendsContentIntoTitleBar="True"
+    ShowInTaskbar="True">
+
+    <ui:FluentWindow.Resources>
+        <Style x:Key="SectionCard" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="16"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+        </Style>
+        <Style x:Key="SectionTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+            <Setter Property="Margin" Value="0,0,0,6"/>
+        </Style>
+        <Style x:Key="BodyText" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="LineHeight" Value="20"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+        </Style>
+        <Style x:Key="ModeTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+        </Style>
+    </ui:FluentWindow.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <ui:TitleBar Grid.Row="0" Title="WindowAnchor — Help &amp; Guide"
+                     ShowMinimize="False" ShowMaximize="False"/>
+
+        <Border Grid.Row="1" Margin="24,14,24,8" Padding="18,14"
+                Background="{DynamicResource AccentFillColorSecondaryBrush}"
+                CornerRadius="9">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock x:Name="GuideTitleText" Text="WindowAnchor Help &amp; Reference"
+                               FontSize="22" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                    <TextBlock x:Name="GuideSubtitleText"
+                               Text="Everything needed to save, restore, and troubleshoot a workspace—without leaving the app."
+                               Margin="0,4,0,0" FontSize="13" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                </StackPanel>
+                <Border x:Name="FirstRunBadge" Grid.Column="1" Visibility="Collapsed"
+                        VerticalAlignment="Top" Margin="16,2,0,0" Padding="9,4"
+                        Background="{DynamicResource SystemAccentColorPrimaryBrush}"
+                        CornerRadius="10">
+                    <TextBlock Text="FIRST RUN" Foreground="White"
+                               FontSize="10" FontWeight="Bold"/>
+                </Border>
+            </Grid>
+        </Border>
+
+        <TabControl Grid.Row="2" Margin="24,4,24,10" Padding="2">
+            <TabItem Header="Getting started">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="12,16,12,8">
+                    <StackPanel>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="WindowAnchor lives in the notification area" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}"
+                                           Text="Closing Settings or this guide does not exit WindowAnchor. Look near the Windows clock for the anchor icon. Right-click it to save, restore, switch, undo, open Settings, or return to this guide."/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="1. Arrange and save" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}"
+                                           Text="Arrange the windows you want, choose Save current workspace, select the relevant monitors and windows, and give the workspace a name. File and folder detection is optional; enable it when reopening documents matters more than the extra capture work."/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="2. Restore or switch" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}"
+                                           Text="Restore reuses suitable windows and recreates missing entries according to the workspace mode. Exact Switch additionally asks unrelated task windows to close. Align + minimize others restores the workspace and minimizes other windows without closing them."/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="3. Review, execute, and verify" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}"
+                                           Text="WindowAnchor inventories the desktop, matches each saved entry, builds a plan, optionally asks for approval, executes approved actions, and verifies final placement. Ambiguous or blocked entries still require attention even when routine previews are disabled."/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Restore modes">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="12,16,12,8">
+                    <StackPanel>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Resume" Style="{StaticResource ModeTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="Best general-purpose choice. Reuse confidently matched windows, launch missing entries when possible, and apply their saved placement."/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Repair" Style="{StaticResource ModeTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="Correct placement differences on windows that already exist. Missing applications are not launched."/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Move Existing" Style="{StaticResource ModeTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="Move matched live windows to their saved targets and never launch missing applications. Useful when you only want to rearrange what is already open."/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Launch Fresh" Style="{StaticResource ModeTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="Prefer a distinct new instance when the application has a reliable launch contract. When it cannot safely create another instance, WindowAnchor reports the limitation and chooses the safest supported behavior."/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Exact Switch" Style="{StaticResource ModeTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="Gracefully close unrelated user-facing task windows, preserve destination and protected entries, then resume the target workspace. Review the plan before using this mode with unsaved work."/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Preview Only" Style="{StaticResource ModeTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="Inspect matches, launch requirements, monitor mapping, warnings, and planned actions without crossing a mutation boundary."/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Selective and Align + minimize" Style="{StaticResource ModeTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="Selective Restore limits Resume to chosen entries or monitors. Align + minimize restores the workspace and minimizes unrelated windows; it does not perform an Exact Switch."/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Policies &amp; options">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="12,16,12,8">
+                    <StackPanel>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Per-window restore policies" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}"
+                                           Text="Workspace Default follows the selected mode. Reuse Existing prefers a current match. Launch If Missing may recreate an absent entry. Always Launch New requests a separate instance. Never Launch only reuses. Never Close protects a matching window during Exact Switch. Ignore During Switch neither restores nor closes that entry during a switch."/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Restore Preview" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="When enabled, manual restores show the planned matches and actions before execution. When disabled, routine executable plans continue immediately, but ambiguity and blocking errors still open the review dialog because WindowAnchor needs a safe decision."/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Recovery checkpoints and Undo" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="When enabled, WindowAnchor captures a local metadata-only recovery point before restore mutations. Disabling checkpoints reduces work but new operations cannot create an Undo point. Undo uses the normal matching and restore pipeline; applications may still refuse to close, launch, or move."/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Startup, notifications, hotkeys, and monitors" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="Startup controls whether nothing, the default workspace, the most recently saved workspace, or a chooser runs after launch. Notifications affect tray messages, not this guide. Hotkeys can restore or switch the default and first three ordered workspaces. Monitor aliases change display names without changing stable monitor identity."/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Browser connection" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="The browser extension and native connection are optional. They add metadata-based Chromium tab/session capture. Dedicated URL patterns intentionally read matching address bars so selected sites can reopen as separate windows; leave the list empty if you do not need that behavior."/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Matching &amp; privacy">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="12,16,12,8">
+                    <StackPanel>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="How windows are identified" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="WindowAnchor combines executable or package identity, window class, document/folder/browser evidence, title similarity, process evidence, and weak geometry context. It assigns one live window to at most one saved entry. Low-confidence or tied candidates are shown for selection instead of being guessed."/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Remembered choices" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="A remembered ambiguity choice is scoped to a stable workspace and entry ID and stores composite application identity—not a temporary process ID or window handle. Clear remembered choices from Settings whenever an application’s windows change purpose."/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Updates and changing monitors" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="Store applications use stable package activation identities. Recognized Squirrel applications with versioned app-* folders can resolve to the newest installed executable. When the saved monitor is unavailable, semantic or normalized layout is mapped deterministically onto a visible monitor and may be clamped to its work area."/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Local data and diagnostics" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="Workspaces, settings, learned matches, and checkpoints are stored locally in versioned JSON. Diagnostic output uses structured sensitivity labels and redaction. WindowAnchor does not store screenshots, browser page contents, cookies, credentials, or runtime HWND/PID values as learned identity."/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Important limits" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="WindowAnchor cannot guarantee that another application has saved its documents, that every app supports multiple instances, or that an app will accept a requested close or position. Review destructive plans, save important work first, and use the progress and result details when an entry needs attention."/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <Border Grid.Row="3" Padding="24,12,24,18"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                BorderThickness="0,1,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <ui:Button x:Name="SaveWorkspaceButton" Grid.Column="0"
+                           HorizontalAlignment="Left" Content="Save my first workspace"
+                           Appearance="Primary" Click="OnSaveWorkspaceClick"/>
+                <ui:Button Grid.Column="1" Content="Open Settings" Margin="0,0,8,0"
+                           Appearance="Secondary" Click="OnOpenSettingsClick"/>
+                <ui:Button x:Name="CloseButton" Grid.Column="2" Content="Close"
+                           Appearance="Secondary" Click="OnCloseClick"/>
+            </Grid>
+        </Border>
+    </Grid>
+</ui:FluentWindow>

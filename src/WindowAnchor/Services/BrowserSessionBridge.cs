@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Text.Json;
@@ -13,6 +14,7 @@ namespace WindowAnchor.Services;
 public sealed class BrowserSessionBridge : IBrowserSessionConnector
 {
     public const string PipeName = "WindowAnchor.BrowserBridge";
+    public const int ProtocolVersion = 1;
     // The native host applies its own 5-second extension timeout. Allow that structured response
     // to arrive before treating the pipe itself as timed out.
     private const int TimeoutMs = 6000;
@@ -20,17 +22,21 @@ public sealed class BrowserSessionBridge : IBrowserSessionConnector
     public async Task<BrowserCaptureResult> CaptureAsync(
         string workspaceName, IEnumerable<string> selectedBrowserTitles, CancellationToken ct = default)
     {
+        Stopwatch stopwatch = Stopwatch.StartNew();
         try
         {
             using var response = await SendAsync(new
             {
                 type = "capture",
+                protocolVersion = ProtocolVersion,
                 workspaceName,
                 selectedBrowserTitles,
                 requestId = Guid.NewGuid().ToString("N")
             }, ct).ConfigureAwait(false);
 
-            return ParseCaptureResponse(response.RootElement);
+            BrowserCaptureResult result = ParseCaptureResponse(response.RootElement);
+            LogCaptureCompleted(workspaceName, result, stopwatch);
+            return result;
         }
         catch (TimeoutException ex)
         {
@@ -40,7 +46,9 @@ public sealed class BrowserSessionBridge : IBrowserSessionConnector
                 ex,
                 LogField.Workspace("workspaceName", workspaceName),
                 LogField.Public("errorCategory", "browser_capture_timeout"));
-            return BrowserCaptureResult.Empty(BrowserCaptureStatus.TimedOut, ex.Message);
+            BrowserCaptureResult result = BrowserCaptureResult.Empty(BrowserCaptureStatus.TimedOut, ex.Message);
+            LogCaptureCompleted(workspaceName, result, stopwatch);
+            return result;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -50,7 +58,9 @@ public sealed class BrowserSessionBridge : IBrowserSessionConnector
                 ex,
                 LogField.Workspace("workspaceName", workspaceName),
                 LogField.Public("errorCategory", "browser_capture_unavailable"));
-            return BrowserCaptureResult.Empty(BrowserCaptureStatus.Unavailable, ex.Message);
+            BrowserCaptureResult result = BrowserCaptureResult.Empty(BrowserCaptureStatus.Unavailable, ex.Message);
+            LogCaptureCompleted(workspaceName, result, stopwatch);
+            return result;
         }
         catch (JsonException ex)
         {
@@ -60,25 +70,41 @@ public sealed class BrowserSessionBridge : IBrowserSessionConnector
                 ex,
                 LogField.Workspace("workspaceName", workspaceName),
                 LogField.Public("errorCategory", "browser_capture_invalid"));
-            return BrowserCaptureResult.Empty(BrowserCaptureStatus.Failed, ex.Message);
+            BrowserCaptureResult result = BrowserCaptureResult.Empty(BrowserCaptureStatus.Failed, ex.Message);
+            LogCaptureCompleted(workspaceName, result, stopwatch);
+            return result;
         }
     }
 
     public async Task<bool> RestoreAsync(string workspaceName, List<BrowserSession> sessions, CancellationToken ct = default)
     {
+        Stopwatch stopwatch = Stopwatch.StartNew();
         try
         {
             using var response = await SendAsync(new
             {
                 type = "restore",
+                protocolVersion = ProtocolVersion,
                 workspaceName,
                 sessions,
                 requestId = Guid.NewGuid().ToString("N")
             }, ct).ConfigureAwait(false);
-            return response.RootElement.TryGetProperty("ok", out var ok) && ok.GetBoolean();
+            bool success = response.RootElement.TryGetProperty("ok", out var ok) && ok.GetBoolean();
+            LogRestoreCompleted(workspaceName, sessions.Count, success, stopwatch);
+            return success;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            AppLogger.Debug(
+                "browser_session.restore_cancelled",
+                "Browser session restore was cancelled",
+                LogField.Workspace("workspaceName", workspaceName),
+                LogField.Public("sessionCount", sessions.Count),
+                LogField.Public("durationMs", stopwatch.Elapsed.TotalMilliseconds));
+            throw;
         }
         catch (Exception ex) when (
-            ex is TimeoutException or IOException or UnauthorizedAccessException or OperationCanceledException)
+            ex is TimeoutException or IOException or UnauthorizedAccessException)
         {
             AppLogger.Debug(
                 "browser_session.restore_unavailable",
@@ -86,9 +112,30 @@ public sealed class BrowserSessionBridge : IBrowserSessionConnector
                 ex,
                 LogField.Workspace("workspaceName", workspaceName),
                 LogField.Public("errorCategory", "browser_restore_unavailable"));
+            LogRestoreCompleted(workspaceName, sessions.Count, false, stopwatch);
             return false;
         }
     }
+
+    private static void LogCaptureCompleted(
+        string workspaceName, BrowserCaptureResult result, Stopwatch stopwatch) =>
+        AppLogger.Debug(
+            "browser_session.capture_completed",
+            "Completed browser session capture",
+            LogField.Workspace("workspaceName", workspaceName),
+            LogField.Public("status", result.Status.ToString()),
+            LogField.Public("sessionCount", result.Sessions.Count),
+            LogField.Public("durationMs", stopwatch.Elapsed.TotalMilliseconds));
+
+    private static void LogRestoreCompleted(
+        string workspaceName, int sessionCount, bool success, Stopwatch stopwatch) =>
+        AppLogger.Debug(
+            "browser_session.restore_completed",
+            "Completed browser session restore request",
+            LogField.Workspace("workspaceName", workspaceName),
+            LogField.Public("sessionCount", sessionCount),
+            LogField.Public("success", success),
+            LogField.Public("durationMs", stopwatch.Elapsed.TotalMilliseconds));
 
     internal static BrowserCaptureResult ParseCaptureResponse(JsonElement root)
     {

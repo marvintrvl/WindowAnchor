@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 5,
+  "startupBehavior": 1,
+  "defaultWorkspaceId": "11111111-1111-4111-8111-111111111111",
+  "notificationsEnabled": true,
+  "onboardingCompleted": true,
+  "showRestorePreview": true,
+  "createRestoreCheckpoints": true,
+  "diagnosticLogLevel": 0,
+  "hotkeysEnabled": true,
+  "workspaceOrderIds": [
+    "11111111-1111-4111-8111-111111111111"
+  ],
+  "monitorAliases": null,
+  "dedicatedBrowserUrlPatterns": [],
+  "windowMatchHints": null
+}

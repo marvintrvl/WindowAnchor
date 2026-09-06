@@ -28,6 +28,7 @@ public class SettingsServiceTests
         Assert.Null(service.Settings.DefaultWorkspaceName);
         Assert.Null(service.Settings.WorkspaceOrder);
         Assert.Equal("Main Desk", service.Settings.MonitorAliases!["1234:5678:0"]);
+        Assert.True(service.Settings.OnboardingCompleted);
 
         string onceMigrated = File.ReadAllText(settingsPath);
         service.Load();
@@ -41,7 +42,7 @@ public class SettingsServiceTests
     {
         using var directory = new TestDirectory();
         directory.CopyFixture("current-v3.workspace.json", @"workspaces\Stable Workspace.workspace.json");
-        string settingsPath = directory.CopyFixture("current-v3.settings.json", "settings.json");
+        string settingsPath = directory.CopyFixture("current-v5.settings.json", "settings.json");
         var storage = new StorageService(directory.Path);
         var workspace = Assert.Single(storage.LoadAllWorkspaces());
         var settings = new SettingsService(settingsPath, storage);
@@ -66,11 +67,13 @@ public class SettingsServiceTests
         service.Settings.DefaultWorkspaceId = workspaceId;
         service.Settings.WorkspaceOrderIds = [workspaceId];
         service.Settings.DiagnosticLogLevel = DiagnosticLogLevel.Warning;
+        service.Settings.ShowRestorePreview = false;
+        service.Settings.CreateRestoreCheckpoints = false;
 
         service.Save();
 
         using var json = JsonDocument.Parse(File.ReadAllText(settingsPath));
-        Assert.Equal(3, json.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(5, json.RootElement.GetProperty("schemaVersion").GetInt32());
         Assert.Equal(workspaceId, json.RootElement.GetProperty("defaultWorkspaceId").GetString());
         Assert.Equal(
             workspaceId,
@@ -78,11 +81,17 @@ public class SettingsServiceTests
         Assert.Equal(
             (int)DiagnosticLogLevel.Warning,
             json.RootElement.GetProperty("diagnosticLogLevel").GetInt32());
+        Assert.False(json.RootElement.GetProperty("showRestorePreview").GetBoolean());
+        Assert.False(json.RootElement.GetProperty("createRestoreCheckpoints").GetBoolean());
+        Assert.False(json.RootElement.GetProperty("onboardingCompleted").GetBoolean());
         Assert.False(json.RootElement.TryGetProperty("defaultWorkspaceName", out _));
         Assert.False(json.RootElement.TryGetProperty("workspaceOrder", out _));
 
         var reloaded = new SettingsService(settingsPath, storage);
         Assert.Equal(DiagnosticLogLevel.Warning, reloaded.Settings.DiagnosticLogLevel);
+        Assert.False(reloaded.Settings.ShowRestorePreview);
+        Assert.False(reloaded.Settings.CreateRestoreCheckpoints);
+        Assert.False(reloaded.Settings.OnboardingCompleted);
     }
 
     [Theory]
@@ -111,14 +120,30 @@ public class SettingsServiceTests
     public void Current_settings_load_without_rewrite()
     {
         using var directory = new TestDirectory();
-        string settingsPath = directory.CopyFixture("current-v3.settings.json", "settings.json");
+        string settingsPath = directory.CopyFixture("current-v5.settings.json", "settings.json");
         string original = File.ReadAllText(settingsPath);
 
         var service = new SettingsService(settingsPath, new StorageService(directory.Path));
 
         Assert.False(service.IsSaveBlocked);
         Assert.Equal("11111111-1111-4111-8111-111111111111", service.Settings.DefaultWorkspaceId);
+        Assert.True(service.Settings.OnboardingCompleted);
         Assert.Equal(original, File.ReadAllText(settingsPath));
+    }
+
+    [Fact]
+    public void V4_settings_migrate_as_an_existing_installation_without_first_run_onboarding()
+    {
+        using var directory = new TestDirectory();
+        string settingsPath = directory.CopyFixture("current-v4.settings.json", "settings.json");
+
+        var service = new SettingsService(settingsPath, new StorageService(directory.Path));
+
+        Assert.Equal(AppSettings.CurrentSchemaVersion, service.Settings.SchemaVersion);
+        Assert.True(service.Settings.OnboardingCompleted);
+        string migrated = File.ReadAllText(settingsPath);
+        Assert.Contains("\"schemaVersion\": 5", migrated);
+        Assert.Contains("\"onboardingCompleted\": true", migrated);
     }
 
     [Fact]
@@ -132,7 +157,27 @@ public class SettingsServiceTests
         Assert.Equal(AppSettings.CurrentSchemaVersion, service.Settings.SchemaVersion);
         Assert.Equal("11111111-1111-4111-8111-111111111111", service.Settings.DefaultWorkspaceId);
         Assert.Null(service.Settings.WindowMatchHints);
-        Assert.Contains("\"schemaVersion\": 3", File.ReadAllText(settingsPath));
+        Assert.True(service.Settings.ShowRestorePreview);
+        Assert.True(service.Settings.CreateRestoreCheckpoints);
+        Assert.True(service.Settings.OnboardingCompleted);
+        Assert.Contains("\"schemaVersion\": 5", File.ReadAllText(settingsPath));
+    }
+
+    [Fact]
+    public void V3_settings_migrate_with_existing_restore_safety_behavior_enabled()
+    {
+        using var directory = new TestDirectory();
+        string settingsPath = directory.CopyFixture("current-v3.settings.json", "settings.json");
+
+        var service = new SettingsService(settingsPath, new StorageService(directory.Path));
+
+        Assert.Equal(AppSettings.CurrentSchemaVersion, service.Settings.SchemaVersion);
+        Assert.True(service.Settings.ShowRestorePreview);
+        Assert.True(service.Settings.CreateRestoreCheckpoints);
+        Assert.True(service.Settings.OnboardingCompleted);
+        string migrated = File.ReadAllText(settingsPath);
+        Assert.Contains("\"showRestorePreview\": true", migrated);
+        Assert.Contains("\"createRestoreCheckpoints\": true", migrated);
     }
 
     [Fact]
@@ -173,7 +218,7 @@ public class SettingsServiceTests
     {
         using var directory = new TestDirectory();
         _ = new StorageService(directory.Path); // Creates the legacy-import marker before injection.
-        string settingsPath = directory.CopyFixture("current-v3.settings.json", "settings.json");
+        string settingsPath = directory.CopyFixture("current-v5.settings.json", "settings.json");
         string original = File.ReadAllText(settingsPath);
         var failingStorage = new StorageService(
             directory.Path,

@@ -6,13 +6,12 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>Resources\windowanchor.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- Release packaging -->
-    <AssemblyVersion>1.5.1.0</AssemblyVersion>
-    <FileVersion>1.5.1.0</FileVersion>
-    <Version>1.5.1</Version>
+    <AssemblyVersion>1.5.2.0</AssemblyVersion>
+    <FileVersion>1.5.2.0</FileVersion>
+    <Version>1.5.2</Version>
     <Product>WindowAnchor</Product>
     <Company>WindowAnchor</Company>
     <Description>Workspace restoration tool — saves and restores open apps, files, and window positions across monitor changes and reboots.</Description>
@@ -34,7 +33,6 @@
 
   <ItemGroup>
     <PackageReference Include="H.NotifyIcon.Wpf" Version="2.1.0" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.3" />
     <PackageReference Include="OpenMcdf" Version="3.1.4" />
     <PackageReference Include="WPF-UI" Version="3.0.5" />
   </ItemGroup>

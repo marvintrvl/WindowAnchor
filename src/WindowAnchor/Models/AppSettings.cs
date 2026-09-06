@@ -81,7 +81,7 @@ public sealed record WindowMatchHint
 public class AppSettings
 {
     /// <summary>Current persisted settings schema version.</summary>
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 5;
 
     /// <summary>Schema version used to serialize this settings document.</summary>
     [JsonInclude]
@@ -100,6 +100,28 @@ public class AppSettings
     // ── Notifications ────────────────────────────────────────────────────
     /// <summary>Whether WindowAnchor may show system-tray balloon notifications.</summary>
     public bool NotificationsEnabled { get; set; } = true;
+
+    // ── Onboarding ───────────────────────────────────────────────────────
+    /// <summary>
+    /// Whether the first interactive-launch guide has already been presented. Existing
+    /// installations are marked complete by the v4-to-v5 settings migration; the guide remains
+    /// available from the tray and Settings regardless of this value.
+    /// </summary>
+    public bool OnboardingCompleted { get; set; }
+
+    // ── Restore workflow ─────────────────────────────────────────────────
+    /// <summary>
+    /// Whether interactive restore and switch commands show the review dialog before execution.
+    /// A preview can still be required when the plan needs an explicit ambiguity or blocking-error
+    /// decision.
+    /// </summary>
+    public bool ShowRestorePreview { get; set; } = true;
+
+    /// <summary>
+    /// Whether restore-related mutations capture a durable recovery checkpoint first.
+    /// Disabling this reduces restore latency but means the operation cannot create a new undo point.
+    /// </summary>
+    public bool CreateRestoreCheckpoints { get; set; } = true;
 
     // ── Diagnostics ──────────────────────────────────────────────────────
     /// <summary>

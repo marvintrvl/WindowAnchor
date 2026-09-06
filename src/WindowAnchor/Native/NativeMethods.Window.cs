@@ -97,6 +97,7 @@ public static class NativeMethodsWindow
     public const long WS_EX_NOACTIVATE = 0x08000000L;
     public const uint GA_ROOTOWNER = 3;
     public const int DWMWA_CLOAKED = 14;
+    public const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)]
     private static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
@@ -121,6 +122,13 @@ public static class NativeMethodsWindow
         IntPtr hWnd,
         int dwAttribute,
         out uint pvAttribute,
+        int cbAttribute);
+
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmGetWindowAttribute(
+        IntPtr hWnd,
+        int dwAttribute,
+        out Rect pvAttribute,
         int cbAttribute);
 
     // ── DPI ───────────────────────────────────────────────────────────────────

@@ -204,11 +204,25 @@ public sealed class FileSystemRestoreResourceBoundary : IRestoreResourceBoundary
         string target)
     {
         RestoreResourceValidation validation = ValidateTarget(target);
+        string resolvedTarget = validation.IsAvailable ? target : "";
+        if (!validation.IsAvailable &&
+            kind == RestoreResourceKind.Executable &&
+            VersionedExecutableResolver.TryResolve(target, out string currentExecutable))
+        {
+            validation = Available(
+                "The saved Squirrel app version changed; the newest installed version was resolved safely.");
+            resolvedTarget = currentExecutable;
+            AppLogger.Info(
+                "restore.executable_version_resolved",
+                "Resolved a missing versioned executable to the newest installed sibling",
+                LogField.Path("savedExecutablePath", target),
+                LogField.Path("resolvedExecutablePath", currentExecutable));
+        }
         return new RestoreResourceObservation(
             entryIndex,
             kind,
             validation.Availability,
-            validation.IsAvailable ? target : "");
+            resolvedTarget);
     }
 
     public RestoreResourceValidation Revalidate(RestoreAction action)

@@ -57,7 +57,9 @@ public sealed class HotkeyService : IDisposable
 
         _hwndSource = new HwndSource(parameters);
         _hwndSource.AddHook(WndProc);
-        AppLogger.Info("HotkeyService: initialised message window");
+        AppLogger.Info(
+            "hotkey.message_window_initialized",
+            "Initialized the hotkey message window");
     }
 
     /// <summary>
@@ -106,7 +108,9 @@ public sealed class HotkeyService : IDisposable
         foreach (int id in _callbacks.Keys)
             UnregisterHotKey(_hwndSource.Handle, id);
         _callbacks.Clear();
-        AppLogger.Info("HotkeyService: unregistered all hotkeys");
+        AppLogger.Info(
+            "hotkey.all_unregistered",
+            "Unregistered all global hotkeys");
     }
 
     // ── Default shortcuts ─────────────────────────────────────────────────
@@ -238,6 +242,8 @@ public sealed class HotkeyService : IDisposable
         _hwndSource?.RemoveHook(WndProc);
         _hwndSource?.Dispose();
         _hwndSource = null;
-        AppLogger.Info("HotkeyService: disposed");
+        AppLogger.Info(
+            "hotkey.service_disposed",
+            "Disposed the hotkey service");
     }
 }

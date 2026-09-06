@@ -180,6 +180,30 @@ public class RestoreExecutorTests
     }
 
     [Fact]
+    public void Semantic_placement_verifies_visible_frame_instead_of_invisible_outer_border()
+    {
+        WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Notes");
+        RestoreTargetPlacement target = Assert.Single(Plan(Snapshot(entry)).Entries)
+            .TargetPlacement with { Strategy = RestorePlacementStrategy.Semantic };
+        var observation = Placement(target, -8) with
+        {
+            VisibleLeft = target.Left,
+            VisibleTop = target.Top,
+            VisibleRight = target.Right,
+            VisibleBottom = target.Bottom
+        };
+
+        WindowPlacementEvaluation evaluation = WindowPlacementVerifier.Evaluate(
+            target,
+            observation,
+            VerificationPolicy(maxRetries: 2),
+            finalObservation: true,
+            wasPreviouslyApplied: false);
+
+        Assert.Equal(WindowPlacementVerificationState.Applied, evaluation.State);
+    }
+
+    [Fact]
     public async Task Placement_adapter_can_override_generic_tolerance_without_changing_matching()
     {
         WorkspaceEntry entry = Entry(@"C:\Apps\special.exe", "Special");
@@ -895,6 +919,48 @@ public class RestoreExecutorTests
         Assert.Equal(RestoreExecutionStatus.Cancelled, result.Status);
         Assert.Single(mutation.Restores);
         Assert.Equal(RestoreExecutionActionStatus.Succeeded, Assert.Single(result.Actions).Status);
+    }
+
+    [Fact]
+    public async Task Execution_trace_preserves_observation_mutation_verification_order()
+    {
+        WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Notes");
+        RestorePlan plan = Plan(
+            Snapshot(entry),
+            [Live(90, 9090, entry.ExecutablePath, "Notes")]);
+        RestoreTargetPlacement target = Assert.Single(plan.Entries).TargetPlacement;
+        var trace = new List<string>();
+        FakeWindowInventory inventory = Inventory((90, 9090, entry.ExecutablePath, "Notes"));
+        inventory.OnGetWindowsWithPids = () => trace.Add("inventory");
+        var mutation = new RecordingWindowMutation
+        {
+            OnRestore = (_, _) => trace.Add("mutation")
+        };
+        var clock = new FakeRestoreClock
+        {
+            OnDelay = _ => trace.Add("delay")
+        };
+        var placement = new FakeWindowPlacementProbe
+        {
+            ObservationProvider = (_, _) =>
+            {
+                trace.Add("verification");
+                return Placement(target);
+            }
+        };
+
+        RestoreExecutionResult result = await Executor(
+            inventory,
+            mutation,
+            clock: clock,
+            placementProbe: placement).ExecuteAsync(plan);
+
+        Assert.Equal(RestoreExecutionStatus.Completed, result.Status);
+        Assert.Equal(
+            ["inventory", "inventory", "mutation", "verification", "delay", "verification"],
+            trace);
+        Assert.Equal([90L], result.AssignedWindowHandles);
+        Assert.Single(mutation.Restores);
     }
 
     private static RestoreExecutor Executor(

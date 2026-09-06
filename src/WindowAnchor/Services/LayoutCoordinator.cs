@@ -12,7 +12,7 @@ namespace WindowAnchor.Services;
 /// Owns the debounce timer for <c>WM_DISPLAYCHANGE</c>, the auto-restore logic,
 /// and all system-tray notification balloons.
 /// </summary>
-public class LayoutCoordinator
+public class LayoutCoordinator : IAsyncDisposable
 {
     private readonly MonitorService  _monitorService;
     private readonly WorkspaceService _workspaceService;
@@ -20,15 +20,20 @@ public class LayoutCoordinator
     private readonly object _switchRequestSync = new();
     private CancellationTokenSource? _activeSwitchRequest;
     private CancellationTokenSource? _displayChangeCts;
+    private Task _activeDisplayChange = Task.CompletedTask;
+    private TaskCompletionSource? _disposeCompletion;
+    private bool _disposed;
 
     public LayoutCoordinator(
         MonitorService  monitorService,
         WindowService   windowService,
         WorkspaceService workspaceService)
+#pragma warning disable CA2000 // The delegated constructor transfers ownership to this coordinator.
         : this(
             monitorService,
             workspaceService,
             new WorkspaceSwitchEngine(windowService))
+#pragma warning restore CA2000
     {
     }
 
@@ -48,11 +53,31 @@ public class LayoutCoordinator
     /// auto-restores the matching workspace (if any). Cancels any in-flight invocation
     /// so that rapid display changes do not trigger multiple concurrent restores.
     /// </summary>
-    public async void HandleDisplayChangeAsync()
+    public async Task HandleDisplayChangeAsync()
     {
-        _displayChangeCts?.Cancel();
-        _displayChangeCts = new CancellationTokenSource();
-        var token = _displayChangeCts.Token;
+        var invocation = new CancellationTokenSource();
+        CancellationTokenSource? previous;
+        Task operation;
+        lock (_switchRequestSync)
+        {
+            if (_disposed)
+            {
+                invocation.Dispose();
+                return;
+            }
+            previous = _displayChangeCts;
+            _displayChangeCts = invocation;
+            operation = HandleDisplayChangeCoreAsync(invocation);
+            _activeDisplayChange = operation;
+        }
+        if (previous is not null)
+            await TryCancelAsync(previous).ConfigureAwait(false);
+        await operation.ConfigureAwait(false);
+    }
+
+    private async Task HandleDisplayChangeCoreAsync(CancellationTokenSource invocation)
+    {
+        var token = invocation.Token;
 
         try
         {
@@ -107,38 +132,39 @@ public class LayoutCoordinator
                 $"\u201c{matchedWorkspace.Name}\u201d \u2014 {matchedWorkspace.Entries.Count} windows repositioned.");
         }
         catch (TaskCanceledException) { }
+        finally
+        {
+            lock (_switchRequestSync)
+            {
+                if (ReferenceEquals(_displayChangeCts, invocation))
+                {
+                    _displayChangeCts = null;
+                    _activeDisplayChange = Task.CompletedTask;
+                }
+            }
+            invocation.Dispose();
+        }
     }
 
     /// <summary>Restores a workspace and shows a completion balloon.</summary>
-    public async Task RestoreWorkspaceAsync(
+    public Task RestoreWorkspaceAsync(
         WorkspaceSnapshot snapshot,
         CancellationToken token = default,
-        IProgress<RestoreProgressReport>? progress = null)
-    {
-        AppLogger.Info(
-            "layout.restore_requested",
-            "Requested a workspace restore",
-            LogField.Identifier("workspaceId", snapshot.WorkspaceId),
-            LogField.Workspace("workspaceName", snapshot.Name),
-            LogField.Public("mode", "restore"));
-        NotifyBalloon("Restoring\u2026", $"\u201c{snapshot.Name}\u201d \u2014 creating a recovery checkpoint first.");
-        RestoreExecutionResult result = await _workspaceService.RestoreWorkspaceWithExecutionResultAsync(
+        IProgress<RestoreProgressReport>? progress = null) =>
+        ExecuteRestoreAndNotifyAsync(
             snapshot,
-            RestoreMode.Standard,
+            RestoreMode.Resume,
+            "Requested a workspace restore",
+            "restore",
+            "Restoring…",
+            RestoreStartMessage(snapshot.Name, "restoring windows"),
+            "Workspace Restored",
+            $"“{snapshot.Name}” restored — other open windows were left untouched. " +
+            "Use “Switch to Workspace” to close everything else first.",
+            "Restore Needs Attention",
+            "The workspace restore did not complete cleanly. Open the preview for details.",
             token,
             progress);
-        if (token.IsCancellationRequested || result.WasCancelled || NotifyCheckpointFailure(result))
-            return;
-        if (result.Status == RestoreExecutionStatus.Completed)
-            NotifyBalloon("Workspace Restored",
-                $"\u201c{snapshot.Name}\u201d restored \u2014 other open windows were left untouched. " +
-                $"Use \u201cSwitch to Workspace\u201d to close everything else first.");
-        else
-            NotifyBalloon(
-                "Restore Needs Attention",
-                "The workspace restore did not complete cleanly. Open the preview for details.",
-                H.NotifyIcon.Core.NotificationIcon.Warning);
-    }
 
     /// <summary>
     /// Restores a workspace and then minimizes every window that is not part of it (nothing is
@@ -146,58 +172,79 @@ public class LayoutCoordinator
     /// unrelated windows — a non-destructive middle ground between Restore (leaves other windows
     /// untouched) and Switch (closes everything else first).
     /// </summary>
-    public async Task AlignAndMinimizeOthersAsync(
+    public Task AlignAndMinimizeOthersAsync(
         WorkspaceSnapshot snapshot,
         CancellationToken token = default,
-        IProgress<RestoreProgressReport>? progress = null)
-    {
-        AppLogger.Info(
-            "layout.restore_requested",
-            "Requested workspace alignment and minimization",
-            LogField.Identifier("workspaceId", snapshot.WorkspaceId),
-            LogField.Workspace("workspaceName", snapshot.Name),
-            LogField.Public("mode", "align_and_minimize"));
-        NotifyBalloon("Aligning\u2026",
-            $"\u201c{snapshot.Name}\u201d \u2014 creating a recovery checkpoint before positioning windows.");
-        RestoreExecutionResult result = await _workspaceService.RestoreWorkspaceWithExecutionResultAsync(
+        IProgress<RestoreProgressReport>? progress = null) =>
+        ExecuteRestoreAndNotifyAsync(
             snapshot,
             RestoreMode.AlignAndMinimize,
+            "Requested workspace alignment and minimization",
+            "align_and_minimize",
+            "Aligning…",
+            RestoreStartMessage(snapshot.Name, "positioning windows"),
+            "Workspace Aligned",
+            $"“{snapshot.Name}” — other windows were minimized, not closed.",
+            "Alignment Needs Attention",
+            "The workspace could not be fully aligned. Open the preview for details.",
             token,
             progress);
-        if (token.IsCancellationRequested || result.WasCancelled || NotifyCheckpointFailure(result))
-            return;
-        if (result.Status == RestoreExecutionStatus.Completed)
-            NotifyBalloon("Workspace Aligned",
-                $"\u201c{snapshot.Name}\u201d \u2014 other windows were minimized, not closed.");
-        else
-            NotifyBalloon(
-                "Alignment Needs Attention",
-                "The workspace could not be fully aligned. Open the preview for details.",
-                H.NotifyIcon.Core.NotificationIcon.Warning);
-    }
 
     /// <summary>
     /// Restores only entries on the specified monitors and shows a completion balloon.
     /// When <paramref name="monitorIds"/> is <c>null</c> all monitors are restored.
     /// </summary>
-    public async Task RestoreWorkspaceSelectiveAsync(
+    public Task RestoreWorkspaceSelectiveAsync(
         WorkspaceSnapshot snapshot,
         HashSet<string>? monitorIds,
         CancellationToken token = default,
         IProgress<RestoreProgressReport>? progress = null)
     {
         string desc = monitorIds == null ? "all monitors" : $"{monitorIds.Count} monitor(s)";
-        AppLogger.Info(
-            "layout.restore_requested",
-            "Requested a selective workspace restore",
-            LogField.Identifier("workspaceId", snapshot.WorkspaceId),
-            LogField.Workspace("workspaceName", snapshot.Name),
-            LogField.Public("mode", "selective"),
-            LogField.Public("monitorCount", monitorIds?.Count));
-        NotifyBalloon("Restoring\u2026", $"\u201c{snapshot.Name}\u201d ({desc}) \u2014 creating a recovery checkpoint first.");
         RestoreMode mode = monitorIds is null
             ? RestoreMode.Standard
             : RestoreMode.Selective(monitorIds.ToArray());
+        return ExecuteRestoreAndNotifyAsync(
+            snapshot,
+            mode,
+            "Requested a selective workspace restore",
+            "selective",
+            "Restoring…",
+            RestoreStartMessage($"{snapshot.Name} ({desc})", "restoring windows"),
+            "Workspace Restored",
+            $"“{snapshot.Name}” ({desc}) — restored successfully.",
+            "Restore Needs Attention",
+            "The selective restore did not complete cleanly. Open the preview for details.",
+            token,
+            progress,
+            LogField.Public("monitorCount", monitorIds?.Count));
+    }
+
+    private async Task ExecuteRestoreAndNotifyAsync(
+        WorkspaceSnapshot snapshot,
+        RestoreMode mode,
+        string requestMessage,
+        string modeName,
+        string startedTitle,
+        string startedMessage,
+        string successTitle,
+        string successMessage,
+        string failureTitle,
+        string failureMessage,
+        CancellationToken token,
+        IProgress<RestoreProgressReport>? progress,
+        params LogField[] additionalLogFields)
+    {
+        LogField[] logFields =
+        [
+            LogField.Identifier("workspaceId", snapshot.WorkspaceId),
+            LogField.Workspace("workspaceName", snapshot.Name),
+            LogField.Public("mode", modeName),
+            .. additionalLogFields
+        ];
+        AppLogger.Info("layout.restore_requested", requestMessage, logFields);
+        NotifyBalloon(startedTitle, startedMessage);
+
         RestoreExecutionResult result = await _workspaceService.RestoreWorkspaceWithExecutionResultAsync(
             snapshot,
             mode,
@@ -205,19 +252,22 @@ public class LayoutCoordinator
             progress);
         if (token.IsCancellationRequested || result.WasCancelled || NotifyCheckpointFailure(result))
             return;
+
         if (result.Status == RestoreExecutionStatus.Completed)
-            NotifyBalloon("Workspace Restored",
-                $"\u201c{snapshot.Name}\u201d ({desc}) \u2014 restored successfully.");
+            NotifyBalloon(successTitle, successMessage);
         else
             NotifyBalloon(
-                "Restore Needs Attention",
-                "The selective restore did not complete cleanly. Open the preview for details.",
+                failureTitle,
+                failureMessage,
                 H.NotifyIcon.Core.NotificationIcon.Warning);
     }
 
     /// <summary>Builds the immutable plan shown by the manual restore preview.</summary>
     public RestorePlan CreateRestorePlan(WorkspaceSnapshot snapshot, RestoreMode mode) =>
         _workspaceService.CreateRestorePlan(snapshot, mode);
+
+    /// <summary>Current user preference for routine interactive restore previews.</summary>
+    public bool RestorePreviewEnabled => _workspaceService.RestorePreviewEnabled;
 
     /// <summary>Persists one user-confirmed match after its approved plan executes safely.</summary>
     public void RememberWindowMatch(
@@ -235,7 +285,7 @@ public class LayoutCoordinator
     {
         NotifyBalloon(
             "Restoring…",
-            $"“{snapshot.Name}” — creating a recovery checkpoint, then executing the reviewed plan.");
+            RestoreStartMessage(snapshot.Name, "executing the reviewed plan"));
         RestoreExecutionResult result = await _workspaceService.ExecuteApprovedRestorePlanAsync(
             snapshot,
             approvedPlan,
@@ -285,7 +335,7 @@ public class LayoutCoordinator
         IProgress<RestoreProgressReport>? progress = null) =>
         SwitchWorkspaceAsync(
             snapshot,
-            CreateRestorePlan(snapshot, RestoreMode.Standard),
+            CreateRestorePlan(snapshot, RestoreMode.ExactSwitch),
             token,
             progress);
 
@@ -293,11 +343,26 @@ public class LayoutCoordinator
     /// Switches to the exact reviewed plan. Approved target-workspace HWNDs stay open; only
     /// unrelated close candidates receive WM_CLOSE and only those handles are polled.
     /// </summary>
-    public async Task<RestoreExecutionResult?> SwitchWorkspaceAsync(
+    public Task<RestoreExecutionResult?> SwitchWorkspaceAsync(
         WorkspaceSnapshot snapshot,
         RestorePlan approvedPlan,
         CancellationToken token = default,
-        IProgress<RestoreProgressReport>? progress = null)
+        IProgress<RestoreProgressReport>? progress = null) =>
+        SwitchWorkspaceAsync(
+            snapshot,
+            approvedPlan,
+            WorkspaceCheckpointTrigger.WorkspaceSwitch,
+            isUndo: false,
+            token,
+            progress);
+
+    private async Task<RestoreExecutionResult?> SwitchWorkspaceAsync(
+        WorkspaceSnapshot snapshot,
+        RestorePlan approvedPlan,
+        WorkspaceCheckpointTrigger checkpointTrigger,
+        bool isUndo,
+        CancellationToken token,
+        IProgress<RestoreProgressReport>? progress)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(approvedPlan);
@@ -305,15 +370,26 @@ public class LayoutCoordinator
             throw new ArgumentException("The approved switch plan belongs to another workspace.", nameof(approvedPlan));
 
         using var request = CancellationTokenSource.CreateLinkedTokenSource(token);
+        CancellationTokenSource? previous;
         lock (_switchRequestSync)
         {
-            _activeSwitchRequest?.Cancel();
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(LayoutCoordinator));
+            previous = _activeSwitchRequest;
             _activeSwitchRequest = request;
         }
+        if (previous is not null)
+            await TryCancelAsync(previous).ConfigureAwait(false);
 
         try
         {
-            return await SwitchWorkspaceCoreAsync(snapshot, approvedPlan, request.Token, progress);
+            return await SwitchWorkspaceCoreAsync(
+                snapshot,
+                approvedPlan,
+                checkpointTrigger,
+                isUndo,
+                request.Token,
+                progress);
         }
         finally
         {
@@ -328,37 +404,40 @@ public class LayoutCoordinator
     private async Task<RestoreExecutionResult?> SwitchWorkspaceCoreAsync(
         WorkspaceSnapshot snapshot,
         RestorePlan approvedPlan,
+        WorkspaceCheckpointTrigger checkpointTrigger,
+        bool isUndo,
         CancellationToken token,
         IProgress<RestoreProgressReport>? progress)
     {
         if (!approvedPlan.CanExecute || approvedPlan.Actions.Count == 0)
         {
             NotifyBalloon(
-                "Switch Needs Review",
-                "Resolve blocking entries in the restore preview before switching.",
+                isUndo ? "Undo Needs Review" : "Switch Needs Review",
+                isUndo
+                    ? "The recovery checkpoint contains entries that require review before it can be restored."
+                    : "Resolve blocking entries in the restore preview before switching.",
                 H.NotifyIcon.Core.NotificationIcon.Warning);
             return null;
         }
 
         AppLogger.Info(
-            "layout.switch_requested",
-            "Requested a workspace switch",
+            isUndo ? "layout.undo_requested" : "layout.switch_requested",
+            isUndo ? "Requested recovery-checkpoint reconciliation" : "Requested a workspace switch",
             LogField.Identifier("workspaceId", snapshot.WorkspaceId),
             LogField.Workspace("workspaceName", snapshot.Name),
             LogField.Public("approvedEntryCount", approvedPlan.Entries.Count - approvedPlan.DisabledEntryIndexes.Count));
-        NotifyBalloon("Switching\u2026",
-            $"Creating a recovery checkpoint for \u201c{snapshot.Name}\u201d before closing unrelated windows.");
+        NotifyBalloon(
+            isUndo ? "Undoing Restore…" : "Switching…",
+            RestoreStartMessage(
+                snapshot.Name,
+                isUndo ? "restoring the previous desktop" : "closing unrelated windows"));
 
-        HashSet<IntPtr> keep = approvedPlan.Actions
-            .Where(action => action.Kind == RestoreActionKind.RestoreExistingWindow &&
-                action.WindowHandle.HasValue)
-            .Select(action => new IntPtr(action.WindowHandle!.Value))
-            .ToHashSet();
+        HashSet<IntPtr> keep = GetSwitchKeepHandles(approvedPlan);
 
         CheckpointedOperationResult<WorkspaceSwitchResult> transaction =
             await _workspaceService.ExecuteCheckpointedOperationAsync(
                 snapshot,
-                WorkspaceCheckpointTrigger.WorkspaceSwitch,
+                checkpointTrigger,
                 (checkpoint, transactionToken) => _switchEngine.ExecuteAsync(
                     keep,
                     cancellationToken => _workspaceService.ExecuteApprovedRestorePlanAfterCheckpointAsync(
@@ -394,7 +473,7 @@ public class LayoutCoordinator
                 "Workspace switch reached its wall-clock timeout while waiting for requested windows",
                 LogField.Public("remainingWindowCount", remaining),
                 LogField.Public("errorCategory", "window_close_timeout"));
-            NotifyBalloon("Switch Cancelled",
+            NotifyBalloon(isUndo ? "Undo Cancelled" : "Switch Cancelled",
                 $"{remaining} window{(remaining == 1 ? " is" : "s are")} still open. Workspace switch aborted.",
                 H.NotifyIcon.Core.NotificationIcon.Warning);
             return null;
@@ -406,8 +485,10 @@ public class LayoutCoordinator
         if (restoreResult.HasStalePlan)
         {
             NotifyBalloon(
-                "Switch Preview Is Stale",
-                "The desktop changed after review. Reopen the switch preview and try again.",
+                isUndo ? "Undo State Is Stale" : "Switch Preview Is Stale",
+                isUndo
+                    ? "The desktop changed while restoring the recovery checkpoint. Try Undo Last Restore again."
+                    : "The desktop changed after review. Reopen the switch preview and try again.",
                 H.NotifyIcon.Core.NotificationIcon.Warning);
         }
         else if (restoreResult.Status is RestoreExecutionStatus.CompletedWithFailures or
@@ -415,25 +496,45 @@ public class LayoutCoordinator
         {
             int placementFailures = restoreResult.PlacementFailures.Count;
             NotifyBalloon(
-                "Switch Needs Attention",
+                isUndo ? "Undo Needs Attention" : "Switch Needs Attention",
                 placementFailures > 0
                     ? $"{placementFailures} window placement{(placementFailures == 1 ? "" : "s")} " +
                       "could not be verified after bounded retries."
-                    : "The reviewed workspace plan could not be completed.",
+                    : isUndo
+                        ? "The previous desktop state could not be fully restored."
+                        : "The reviewed workspace plan could not be completed.",
                 H.NotifyIcon.Core.NotificationIcon.Warning);
         }
         else
         {
-            NotifyBalloon("Workspace Switched",
-                $"Switched to \u201c{snapshot.Name}\u201d \u2014 {snapshot.Entries.Count} entries processed.");
+            NotifyBalloon(
+                isUndo ? "Restore Undone" : "Workspace Switched",
+                isUndo
+                    ? "The previous desktop state was reconciled, including closing unrelated windows."
+                    : $"Switched to \u201c{snapshot.Name}\u201d \u2014 {snapshot.Entries.Count} entries processed.");
         }
         return restoreResult;
+    }
+
+    internal static HashSet<IntPtr> GetSwitchKeepHandles(RestorePlan approvedPlan)
+    {
+        ArgumentNullException.ThrowIfNull(approvedPlan);
+        HashSet<IntPtr> keep = approvedPlan.Actions
+            .Where(action => action.Kind == RestoreActionKind.RestoreExistingWindow &&
+                action.WindowHandle.HasValue)
+            .Select(action => new IntPtr(action.WindowHandle!.Value))
+            .ToHashSet();
+        keep.UnionWith(approvedPlan.ProtectedWindowHandles.Select(handle => new IntPtr(handle)));
+        return keep;
     }
 
     /// <summary>True when a healthy recovery checkpoint makes undo available.</summary>
     public bool CanUndoLastRestore => _workspaceService.CanUndoLastRestore;
 
-    /// <summary>Restores the latest checkpoint through the normal planner and transaction gate.</summary>
+    /// <summary>
+    /// Reconciles the desktop to the latest checkpoint, including closing windows that were not
+    /// present before the original restore. A new checkpoint is created first when enabled.
+    /// </summary>
     public async Task<RestoreExecutionResult?> UndoLastRestoreAsync(
         CancellationToken token = default,
         IProgress<RestoreProgressReport>? progress = null)
@@ -447,27 +548,75 @@ public class LayoutCoordinator
             return null;
         }
 
-        NotifyBalloon("Undoing Restore…", "Creating a new safety checkpoint before restoring the previous desktop.");
-        RestoreExecutionResult? result = await _workspaceService.UndoLastRestoreAsync(token, progress);
-        if (result is null || token.IsCancellationRequested || result.WasCancelled)
-            return result;
-        if (NotifyCheckpointFailure(result))
-            return result;
+        WorkspaceSnapshot? checkpoint = _workspaceService.GetLatestRestoreCheckpoint();
+        if (checkpoint is null) return null;
+        RestorePlan plan = CreateRestorePlan(checkpoint, RestoreMode.ExactSwitch);
+        return await SwitchWorkspaceAsync(
+            checkpoint,
+            plan,
+            WorkspaceCheckpointTrigger.Undo,
+            isUndo: true,
+            token,
+            progress);
+    }
 
-        if (result.Status == RestoreExecutionStatus.Completed)
+    public async ValueTask DisposeAsync()
+    {
+        CancellationTokenSource? switchRequest = null;
+        CancellationTokenSource? displayChange = null;
+        Task displayChangeTask = Task.CompletedTask;
+        TaskCompletionSource completion;
+        bool ownsDisposal;
+        lock (_switchRequestSync)
         {
-            NotifyBalloon(
-                "Restore Undone",
-                "The previous desktop state was restored. Undo is available for this operation too.");
+            if (_disposeCompletion is not null)
+            {
+                completion = _disposeCompletion;
+                ownsDisposal = false;
+            }
+            else
+            {
+                _disposed = true;
+                switchRequest = _activeSwitchRequest;
+                _activeSwitchRequest = null;
+                displayChange = _displayChangeCts;
+                _displayChangeCts = null;
+                displayChangeTask = _activeDisplayChange;
+                _activeDisplayChange = Task.CompletedTask;
+                completion = _disposeCompletion = new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                ownsDisposal = true;
+            }
         }
-        else
+
+        if (!ownsDisposal)
         {
-            NotifyBalloon(
-                "Undo Needs Attention",
-                "The previous desktop state could not be fully restored.",
-                H.NotifyIcon.Core.NotificationIcon.Warning);
+            await completion.Task.ConfigureAwait(false);
+            return;
         }
-        return result;
+
+        try
+        {
+            if (switchRequest is not null)
+                await TryCancelAsync(switchRequest).ConfigureAwait(false);
+            if (displayChange is not null)
+                await TryCancelAsync(displayChange).ConfigureAwait(false);
+            await displayChangeTask.ConfigureAwait(false);
+            await _switchEngine.DisposeAsync().ConfigureAwait(false);
+            // Each operation owns and disposes its token source after observing cancellation.
+            completion.TrySetResult();
+        }
+        catch (Exception ex)
+        {
+            completion.TrySetException(ex);
+            throw;
+        }
+    }
+
+    private static async ValueTask TryCancelAsync(CancellationTokenSource source)
+    {
+        try { await source.CancelAsync().ConfigureAwait(false); }
+        catch (ObjectDisposedException) { }
     }
 
     private static bool NotifyCheckpointFailure(RestoreExecutionResult result)
@@ -481,6 +630,11 @@ public class LayoutCoordinator
             H.NotifyIcon.Core.NotificationIcon.Warning);
         return true;
     }
+
+    private string RestoreStartMessage(string workspaceName, string nextAction) =>
+        _workspaceService.RestoreCheckpointsEnabled
+            ? $"“{workspaceName}” — creating a recovery checkpoint before {nextAction}."
+            : $"“{workspaceName}” — {nextAction}; recovery checkpoints are disabled.";
 
     private static void ReportSwitchProgress(
         WorkspaceSwitchProgress progress,
@@ -526,9 +680,6 @@ public class LayoutCoordinator
                         "Waiting for requested user windows to close",
                         LogField.Public("remainingWindowCount", progress.WindowCount),
                         LogField.Public("elapsedMs", progress.Elapsed?.TotalMilliseconds));
-                }
-                if (progress.ShouldNotifyUser)
-                {
                     NotifyBalloon("Waiting\u2026",
                         $"{progress.WindowCount} window{(progress.WindowCount == 1 ? "" : "s")} still open \u2014 save your work to continue.");
                 }

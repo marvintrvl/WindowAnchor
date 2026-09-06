@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 using WindowAnchor.Native;
 
@@ -32,7 +33,8 @@ public sealed record ObservedWindow(
     long ExtendedStyle = 0,
     bool IsCloaked = false,
     IntPtr RootOwnerHwnd = default,
-    IntPtr TaskSwitcherRepresentativeHwnd = default);
+    IntPtr TaskSwitcherRepresentativeHwnd = default,
+    WindowBounds? VisibleBounds = null);
 
 /// <summary>Named product policy applied to raw native window observations.</summary>
 public enum WindowCandidatePolicy
@@ -92,16 +94,38 @@ public sealed class WindowInventory : IRawWindowInventory
             cloakState != 0;
 
         var className = new StringBuilder(256);
-        NativeMethodsWindow.GetClassName(hWnd, className, className.Capacity);
+        int classNameLength = NativeMethodsWindow.GetClassName(hWnd, className, className.Capacity);
+        string observedClassName = classNameLength > 0 ? className.ToString() : "";
 
         var title = new StringBuilder(256);
-        NativeMethodsWindow.GetWindowText(hWnd, title, title.Capacity);
+        int titleLength = NativeMethodsWindow.GetWindowText(hWnd, title, title.Capacity);
+        // A zero title length is valid for untitled top-level windows and is not logged as failure.
+        string observedTitle = titleLength > 0 ? title.ToString() : "";
 
         WindowBounds? bounds = null;
         if (NativeMethodsWindow.GetWindowRect(hWnd, out var rect))
             bounds = new WindowBounds(rect.Left, rect.Top, rect.Right, rect.Bottom);
+        WindowBounds? visibleBounds = null;
+        if (NativeMethodsWindow.DwmGetWindowAttribute(
+                hWnd,
+                NativeMethodsWindow.DWMWA_EXTENDED_FRAME_BOUNDS,
+                out NativeMethodsWindow.Rect visibleRect,
+                Marshal.SizeOf<NativeMethodsWindow.Rect>()) == 0 &&
+            visibleRect.Right > visibleRect.Left &&
+            visibleRect.Bottom > visibleRect.Top)
+        {
+            visibleBounds = new WindowBounds(
+                visibleRect.Left,
+                visibleRect.Top,
+                visibleRect.Right,
+                visibleRect.Bottom);
+        }
 
-        NativeMethodsWindow.GetWindowThreadProcessId(hWnd, out uint processId);
+        uint threadId = NativeMethodsWindow.GetWindowThreadProcessId(hWnd, out uint processId);
+        // A zero result means the process could not be identified; retain the raw window with
+        // PID 0 so policy evaluation can still use its other facts.
+        if (threadId == 0)
+            processId = 0;
         string executablePath = "";
         string processName = "";
         try
@@ -132,8 +156,8 @@ public sealed class WindowInventory : IRawWindowInventory
             processId,
             ownerHwnd,
             isVisible,
-            className.ToString(),
-            title.ToString(),
+            observedClassName,
+            observedTitle,
             bounds,
             executablePath,
             processName,
@@ -141,7 +165,8 @@ public sealed class WindowInventory : IRawWindowInventory
             extendedStyle,
             isCloaked,
             rootOwnerHwnd,
-            taskSwitcherRepresentativeHwnd);
+            taskSwitcherRepresentativeHwnd,
+            visibleBounds);
     }
 
     private static IntPtr FindTaskSwitcherRepresentative(IntPtr rootOwnerHwnd)

@@ -57,9 +57,23 @@ public class WebAppService
     private DateTime _indexBuiltAt = DateTime.MinValue;
     private static readonly TimeSpan RebuildCooldown = TimeSpan.FromMinutes(2);
 
+    public WebAppService()
+    {
+    }
+
+    /// <summary>Creates a deterministic pre-indexed resolver for service-level tests.</summary>
+    internal WebAppService(IEnumerable<WebAppInfo> knownWebApps)
+    {
+        ArgumentNullException.ThrowIfNull(knownWebApps);
+        _shortcutIndex = knownWebApps.ToDictionary(
+            app => app.AppUserModelId.ToLowerInvariant(),
+            StringComparer.OrdinalIgnoreCase);
+        _indexBuiltAt = DateTime.UtcNow;
+    }
+
     /// <summary>Returns <c>true</c> when the process is a Chromium-based browser.</summary>
     public static bool IsChromiumBrowser(string processName) =>
-        ChromiumProcessNames.Contains(processName.Replace(".exe", "", StringComparison.OrdinalIgnoreCase));
+        ChromiumProcessNames.Contains(ProcessIdentityNormalizer.Normalize(processName));
 
     // ── Friendly display name ─────────────────────────────────────────────────
 
@@ -114,7 +128,8 @@ public class WebAppService
         }
         finally
         {
-            if (store != null) Marshal.ReleaseComObject(store);
+            if (store is not null && Marshal.IsComObject(store))
+                Marshal.ReleaseComObject(store);
         }
     }
 
@@ -137,8 +152,9 @@ public class WebAppService
         {
             uint length = 0;
             // First call: probe the required buffer length (expected ERROR_INSUFFICIENT_BUFFER).
-            NativeMethodsShell.GetApplicationUserModelId(hProcess, ref length, null);
-            if (length == 0) return "";
+            int probeResult = NativeMethodsShell.GetApplicationUserModelId(hProcess, ref length, null);
+            if (probeResult != NativeMethodsShell.ERROR_INSUFFICIENT_BUFFER || length == 0)
+                return "";
 
             var buffer = new char[length];
             int rc = NativeMethodsShell.GetApplicationUserModelId(hProcess, ref length, buffer);
@@ -310,7 +326,8 @@ public class WebAppService
         }
         finally
         {
-            if (comObj != null) Marshal.ReleaseComObject(comObj);
+            if (comObj is not null && Marshal.IsComObject(comObj))
+                Marshal.ReleaseComObject(comObj);
         }
     }
 

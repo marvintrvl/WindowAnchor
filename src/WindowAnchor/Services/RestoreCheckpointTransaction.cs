@@ -7,6 +7,7 @@ namespace WindowAnchor.Services;
 public enum RestoreCheckpointStatus
 {
     Created,
+    Disabled,
     Failed,
     Cancelled
 }
@@ -20,6 +21,8 @@ public sealed record RestoreCheckpointOutcome(
     string Explanation)
 {
     public bool IsCreated => Status == RestoreCheckpointStatus.Created;
+    public bool AllowsOperation => Status is
+        RestoreCheckpointStatus.Created or RestoreCheckpointStatus.Disabled;
 }
 
 /// <summary>Internal result of running one operation behind the checkpoint transaction gate.</summary>

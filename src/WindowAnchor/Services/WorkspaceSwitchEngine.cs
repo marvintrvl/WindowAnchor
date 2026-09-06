@@ -50,7 +50,7 @@ internal sealed record WorkspaceSwitchResult(
 /// previous request, polls only HWNDs that actually received WM_CLOSE, and measures a real
 /// wall-clock timeout.
 /// </summary>
-internal sealed class WorkspaceSwitchEngine
+internal sealed class WorkspaceSwitchEngine : IAsyncDisposable
 {
     private readonly IWorkspaceSwitchWindowController _windows;
     private readonly TimeSpan _pollInterval;
@@ -59,6 +59,8 @@ internal sealed class WorkspaceSwitchEngine
     private readonly SemaphoreSlim _singleFlight = new(1, 1);
     private readonly object _sync = new();
     private CancellationTokenSource? _activeSwitch;
+    private TaskCompletionSource? _disposeCompletion;
+    private bool _disposed;
 
     internal WorkspaceSwitchEngine(
         IWorkspaceSwitchWindowController windows,
@@ -82,11 +84,19 @@ internal sealed class WorkspaceSwitchEngine
         ArgumentNullException.ThrowIfNull(restore);
 
         var switchCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        CancellationTokenSource? previous;
         lock (_sync)
         {
-            _activeSwitch?.Cancel();
+            if (_disposed)
+            {
+                switchCancellation.Dispose();
+                throw new ObjectDisposedException(nameof(WorkspaceSwitchEngine));
+            }
+            previous = _activeSwitch;
             _activeSwitch = switchCancellation;
         }
+        if (previous is not null)
+            await TryCancelAsync(previous).ConfigureAwait(false);
 
         bool entered = false;
         try
@@ -184,5 +194,58 @@ internal sealed class WorkspaceSwitchEngine
             }
             switchCancellation.Dispose();
         }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        CancellationTokenSource? active = null;
+        TaskCompletionSource completion;
+        bool ownsDisposal;
+        lock (_sync)
+        {
+            if (_disposeCompletion is not null)
+            {
+                completion = _disposeCompletion;
+                ownsDisposal = false;
+            }
+            else
+            {
+                _disposed = true;
+                active = _activeSwitch;
+                completion = _disposeCompletion = new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                ownsDisposal = true;
+            }
+        }
+
+        if (!ownsDisposal)
+        {
+            await completion.Task.ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            if (active is not null)
+            {
+                try { await active.CancelAsync().ConfigureAwait(false); }
+                catch (ObjectDisposedException) { }
+            }
+            await _singleFlight.WaitAsync().ConfigureAwait(false);
+            _singleFlight.Release();
+            _singleFlight.Dispose();
+            completion.TrySetResult();
+        }
+        catch (Exception ex)
+        {
+            completion.TrySetException(ex);
+            throw;
+        }
+    }
+
+    private static async ValueTask TryCancelAsync(CancellationTokenSource source)
+    {
+        try { await source.CancelAsync().ConfigureAwait(false); }
+        catch (ObjectDisposedException) { }
     }
 }

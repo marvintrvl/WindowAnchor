@@ -74,6 +74,9 @@ public class WorkspaceEntry
     /// <summary>Friendly name of the monitor, e.g. "DELL U2723QE". For UI display only.</summary>
     public string MonitorName     { get; set; } = "";
 
+    /// <summary>Optional behavior override applied when this entry is planned.</summary>
+    public EntryRestorePolicy RestorePolicy { get; set; } = EntryRestorePolicy.WorkspaceDefault;
+
     // ── Runtime-only ─────────────────────────────────────────────────────────
     [JsonIgnore]
     public bool WasRestored { get; set; } = false;

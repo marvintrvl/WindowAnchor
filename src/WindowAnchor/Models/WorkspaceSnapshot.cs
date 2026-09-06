@@ -5,14 +5,15 @@ using System.Linq;
 namespace WindowAnchor.Models;
 
 /// <summary>
-/// The top-level save artifact produced by <see cref="WindowAnchor.Services.WorkspaceService.TakeSnapshot"/>.
+/// The top-level save artifact produced by
+/// <see cref="WindowAnchor.Services.WorkspaceService.CaptureWorkspaceAsync"/>.
 /// Contains the monitor configuration at save time, the set of captured windows grouped
 /// by monitor, and metadata controlling restore behaviour.
 /// </summary>
 public class WorkspaceSnapshot
 {
     /// <summary>Current persisted workspace schema version.</summary>
-    public const int CurrentSchemaVersion = 4;
+    public const int CurrentSchemaVersion = 5;
 
     /// <summary>Schema version used to serialize this workspace document.</summary>
     [System.Text.Json.Serialization.JsonInclude]
@@ -43,6 +44,12 @@ public class WorkspaceSnapshot
     /// False means FilePath/LaunchArg on all entries will be null.
     /// </summary>
     public bool                 SavedWithFiles { get; set; } = true;
+
+    /// <summary>
+    /// Default behavior for interactive restores of this workspace. Resume preserves the
+    /// pre-WA-007 behavior for newly captured and migrated workspaces.
+    /// </summary>
+    public RestoreModeKind DefaultRestoreMode { get; set; } = RestoreModeKind.Resume;
 
     public List<WorkspaceEntry> Entries        { get; set; } = new();
 

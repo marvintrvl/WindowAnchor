@@ -73,6 +73,13 @@ public class WindowRecord
     public bool CoordinatesAreFinal { get; set; }
 
     /// <summary>
+    /// Runtime-only marker indicating that final coordinates describe the visible DWM frame.
+    /// The native mutation boundary converts them to WINDOWPLACEMENT outer bounds.
+    /// </summary>
+    [JsonIgnore]
+    public bool CoordinatesRepresentVisibleBounds { get; set; }
+
+    /// <summary>
     /// For File Explorer windows: the folder open at snapshot time.
     /// Populated via Shell.Application COM. Empty for non-Explorer windows.
     /// </summary>

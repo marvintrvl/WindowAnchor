@@ -122,6 +122,7 @@
                                   Click="OnUndoLastRestoreClick"/>
                         <Separator/>
                         <MenuItem Header="Settings..." Click="OnOpenSettingsClick"/>
+                        <MenuItem Header="Help &amp; Guide..." Click="OnOpenHelpClick"/>
                         <Separator/>
                         <MenuItem Header="Exit" Click="OnExitClick"/>
                     </ContextMenu>
