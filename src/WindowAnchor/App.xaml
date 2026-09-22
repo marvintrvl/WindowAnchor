@@ -120,6 +120,12 @@
                         <MenuItem Header="Undo Last Restore"
                                   x:Name="UndoLastRestoreMenuItem"
                                   Click="OnUndoLastRestoreClick"/>
+                        <MenuItem Header="Copy Last Restore Diagnostics"
+                                  x:Name="CopyLastRestoreDiagnosticsMenuItem"
+                                  Click="OnCopyLastRestoreDiagnosticsClick"/>
+                        <MenuItem Header="Rescue Active Window"
+                                  ToolTip="Move the selected off-screen window into a reachable monitor work area."
+                                  Click="OnRescueActiveWindowClick"/>
                         <Separator/>
                         <MenuItem Header="Settings..." Click="OnOpenSettingsClick"/>
                         <MenuItem Header="Help &amp; Guide..." Click="OnOpenHelpClick"/>

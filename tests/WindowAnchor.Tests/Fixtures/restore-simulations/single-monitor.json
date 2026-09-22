@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "name": "single-monitor-existing-window",
+  "snapshot": {
+    "schemaVersion": 6,
+    "workspaceId": "11111111-1111-4111-8111-111111111111",
+    "name": "Simulation Desk",
+    "savedAt": "2026-09-18T08:00:00Z",
+    "monitors": [
+      {
+        "monitorId": "primary",
+        "index": 0,
+        "widthPixels": 1920,
+        "heightPixels": 1080,
+        "boundsRight": 1920,
+        "boundsBottom": 1080,
+        "workAreaRight": 1920,
+        "workAreaBottom": 1040,
+        "dpi": 96,
+        "isPrimary": true
+      }
+    ],
+    "entries": [
+      {
+        "entryId": "22222222-2222-4222-8222-222222222222",
+        "executablePath": "C:\\Apps\\editor.exe",
+        "processName": "editor",
+        "windowClassName": "EditorWindow",
+        "monitorId": "primary",
+        "position": {
+          "executablePath": "C:\\Apps\\editor.exe",
+          "processName": "editor",
+          "className": "EditorWindow",
+          "titleSnippet": "Project Alpha",
+          "monitorId": "primary",
+          "normalRight": 900,
+          "normalBottom": 700,
+          "savedDpi": 96
+        }
+      }
+    ]
+  },
+  "currentTopology": {
+    "isExactMatch": true,
+    "monitors": [
+      {
+        "monitorId": "primary",
+        "monitorIndex": 0,
+        "left": 0,
+        "top": 0,
+        "right": 1920,
+        "bottom": 1080,
+        "dpi": 96,
+        "isPrimary": true,
+        "workAreaRight": 1920,
+        "workAreaBottom": 1040
+      }
+    ]
+  },
+  "mode": { "kind": "moveExisting" },
+  "liveWindows": [
+    {
+      "windowHandle": 101,
+      "processId": 1101,
+      "window": {
+        "executablePath": "C:\\Apps\\editor.exe",
+        "processName": "editor",
+        "className": "EditorWindow",
+        "titleSnippet": "Project Alpha",
+        "monitorId": "primary",
+        "normalRight": 900,
+        "normalBottom": 700,
+        "savedDpi": 96
+      }
+    }
+  ],
+  "expected": {
+    "entryOutcomes": [ "matched" ],
+    "actionKinds": [ "restoreExistingWindow" ],
+    "protectedWindowHandles": [],
+    "warningCodes": []
+  }
+}

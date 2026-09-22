@@ -6,6 +6,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-09-22
+
+### Added
+- **Global keep-open identities (WA-012)** — Stable executable-name or AppUserModelID preferences
+  apply the existing never-close policy across workspaces and remain removable in Settings.
+- **Active-window rescue (WA-030A)** — The tray can move an insufficiently visible foreground
+  window to the nearest current work area using a configurable visible-area threshold while
+  preserving restored/maximized behavior.
+- **Logical path aliases (WA-032)** — Per-device `${ALIAS}` mappings are captured alongside local
+  executable, file, and launch paths and are resolved only after the exact saved path is unavailable.
+- **Display topology stabilization (WA-008)** — Startup and display-change restore share a bounded,
+  cancellable sampler that waits for monitor identity, geometry, work area, DPI, primary state, and
+  orientation to settle before planning.
+- **Workspace layout variants (WA-009)** — A logical workspace can persist, select, rename, and
+  delete topology-specific placement sets without duplicating shared app/file/browser context.
+- **Deterministic restore simulation groundwork (WA-046)** — `--simulate-restore <fixture.json>`
+  runs the pure planner against versioned synthetic state and prints a redacted, diffable result.
+  The fixture matrix is not yet complete; see `docs/implementation-status.md`.
+- **Persistent-app manager** — Settings now presents globally preserved applications in an
+  expandable app list with runtime icons, readable names, and one-click remove controls.
+
+### Changed
+- **Restore performance fast paths (WA-005A)** — Exact Resume no-ops still revalidate reviewed
+  state but perform no mutation or wait. Routine preview/checkpoint defaults are quiet, browser
+  checkpoint capture is bounded, and stage timings identify restore cost.
+- **Application adapter architecture (WA-016)** — Chromium PWA, dedicated-browser, Explorer-folder,
+  and generic Win32 capture/launch behavior now live in independently testable adapter files.
+- **Service ownership cleanup** — Capture, desktop/native operations, matching, restore execution,
+  storage/repositories/migrations, system integration, and workspace coordination now live in
+  logical service subfolders. `WorkspaceService` delegates checkpoint, diagnostics, and layout-
+  variant policy to focused collaborators.
+- **Transfer and sync groundwork (WA-033/WA-034, partial)** — Internal exact/portable workspace
+  transfer and an atomic generic folder transport are present with focused tests. Import/export UI,
+  configurable redaction, transfer-schema migration, staged validation, manifests, device IDs, and
+  conflict orchestration are not yet implemented and are not documented as shipped workflows.
+
+### Fixed
+- **Checkpoint and Undo hardening (WA-006A)** — Automated coverage verifies durability before
+  mutation, failed-checkpoint rejection, conservative reconciliation, and undo-of-undo behavior.
+  The ticket's real-Windows Restore/Exact Switch/Undo checklist remains a release gate.
+- **Portable export isolation** — Layout variants now receive the same machine-path, monitor,
+  browser, title, AUMID, and checkpoint redaction as primary entries.
+- **Import name collisions** — An imported workspace with a duplicate display name receives a
+  unique imported name instead of entering same-name recapture replacement behavior.
+- **Folder sync writes** — Provider files use the shared atomic sibling-temp/replace writer, so a
+  failed commit preserves the previous revision.
+- **Legacy Store-app restores** — Older captures without an AppUserModelID now derive a stable
+  package family from their versioned `WindowsApps` path, allowing a live updated app such as
+  Spotify to match and move instead of being reported as missing.
+- **Skipped editor entries** — A second VS Code/Cursor entry with only a saved title now explains
+  that WindowAnchor cannot safely recreate its file or workspace context or move one live window
+  twice. Routine preview remains off for plans that contain only safe skips.
+
 ## [1.5.2] - 2026-09-06
 
 ### Added
@@ -144,6 +197,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [1.5.0] - 2026-09-01
 
 ### Added
+- **Chrome Web Store connector setup** — The published WindowAnchor Browser Connector is now available from the [Chrome Web Store](https://chromewebstore.google.com/detail/windowanchor-browser-conn/liiklnjpifhhmjncifbjjfgplonkkinh). Choosing Set Up Chrome registers the current-user native host for the published extension and opens the store listing.
 - **Restore plan preview and per-entry controls** — Manual tray and Settings restores now show exact, adapted, ambiguous, skipped, and missing outcomes before changing the desktop. Individual entries can be disabled without mutating or recomputing the original plan.
 - **Stale-preview protection** — Approved HWNDs, candidate inventories, browser capability, executables, files, folders, and URLs are revalidated before execution. A changed preview is rejected with a structured explanation instead of silently replanning or applying stale actions.
 - **Pure restore planning and structured execution** — Restore intent is now an immutable, privacy-redactable plan consumed by an executor with per-entry and per-action results.

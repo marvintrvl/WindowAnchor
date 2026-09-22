@@ -7,6 +7,22 @@ namespace WindowAnchor.Tests;
 public class StorageServiceTests
 {
     [Fact]
+    public void V5_workspace_migration_creates_a_default_layout_variant()
+    {
+        string json = File.ReadAllText(TestDirectory.FixturePath("current-v3.workspace.json"));
+        var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
+        MigratedDocument<WorkspaceSnapshot> migrated = WorkspaceSchemaMigrator.Migrate(
+            json,
+            "current-v3.workspace.json",
+            options);
+
+        LayoutVariant variant = Assert.Single(migrated.Value.LayoutVariants);
+        Assert.Equal("Default layout", variant.Name);
+        Assert.Equal(migrated.Value.Entries.Count, variant.Placements.Count);
+    }
+
+    [Fact]
     public void Load_all_workspaces_migrates_v2_loads_v3_and_reports_corrupt_and_future_documents()
     {
         using var directory = new TestDirectory();
@@ -580,6 +596,33 @@ public class StorageServiceTests
         JsonElement indexed = Assert.Single(index.RootElement.GetProperty("checkpoints").EnumerateArray());
         Assert.Equal(healthy.WorkspaceId, indexed.GetProperty("checkpointId").GetString());
         Assert.Equal("AdaptiveRestore", indexed.GetProperty("trigger").GetString());
+    }
+
+    [Fact]
+    public void Incomplete_checkpoint_is_not_advertised_as_undoable_or_indexed()
+    {
+        using var directory = new TestDirectory();
+        var clock = new FakeCheckpointClock();
+        var storage = new StorageService(directory.Path, checkpointClock: clock);
+        var healthy = new WorkspaceSnapshot { Name = "Healthy" };
+        storage.Checkpoints.Save(healthy, WorkspaceCheckpointTrigger.Restore, Guid.NewGuid().ToString("D"));
+
+        var incomplete = new WorkspaceSnapshot { Name = "Incomplete", SavedAt = clock.UtcNow.AddMinutes(1) };
+        storage.TemporaryCaptures.Save(incomplete);
+        string incompletePath = Path.Combine(directory.Path, "checkpoints", $"{incomplete.WorkspaceId:D}.checkpoint.json");
+        File.Copy(
+            Path.Combine(directory.Path, "temporary-captures", $"{incomplete.WorkspaceId:D}.temporary.json"),
+            incompletePath);
+
+        WorkspaceSnapshot latest = Assert.IsType<WorkspaceSnapshot>(storage.Checkpoints.GetLatest());
+
+        Assert.Equal(healthy.WorkspaceId, latest.WorkspaceId);
+        using JsonDocument index = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+            directory.Path,
+            "checkpoints",
+            "checkpoint-index.json")));
+        Assert.Equal(healthy.WorkspaceId, Assert.Single(
+            index.RootElement.GetProperty("checkpoints").EnumerateArray()).GetProperty("checkpointId").GetString());
     }
 
     private static string WorkspacePath(TestDirectory directory, string workspaceId) =>

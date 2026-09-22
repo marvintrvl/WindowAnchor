@@ -4,6 +4,9 @@
 
 [![GitHub release](https://img.shields.io/github/v/release/marvintrvl/WindowAnchor)](../../releases/latest)
 
+This README describes the current development tree. Use the changelog and release notes to
+distinguish unreleased behavior from the latest packaged release.
+
 ![Saved workspace management](docs/screenshots/settings_saved_workspaces.png)
 
 ##  Key Features
@@ -27,10 +30,10 @@
 - **Verified Window Placement**: After positioning, WindowAnchor re-reads normal bounds and state
   with DPI-aware tolerance. Apps that reject or override placement receive bounded same-HWND
   retries, with `Applied`, `Rejected`, `MovedByApp`, and `WindowGone` outcomes in the result.
-- **Optional Transactional Restore & Full Undo**: Recovery checkpoints are enabled by default and
-  can be disabled in Settings for lower restore latency. “Undo Last Restore” reconciles the saved
-  pre-restore desktop, including closing unrelated windows, and creates an undo-of-undo point when
-  checkpoints remain enabled.
+- **Conditional Transactional Restore & Full Undo**: Routine Repair, Move Existing, and Resume
+  restores skip recovery capture by default for lower latency and can opt in from Settings. Exact
+  Switch and Undo always retain their checkpoint gate. “Undo Last Restore” reconciles the saved
+  pre-restore desktop, including closing unrelated windows and creating an undo-of-undo point.
 - **Optional Restore Preview**: Manual tray, Settings, and hotkey restores share one policy. The
   review dialog can be disabled for routine one-click restores; WindowAnchor still opens it when
   ambiguity or a blocking entry requires an explicit choice.
@@ -45,6 +48,12 @@
   missing monitors use the semantic representation and are clamped fully onto a visible work area.
   Visible DWM frame bounds are kept distinct from invisible resize borders so edge-aligned windows
   do not acquire the usual Windows 8-pixel inset after adaptation.
+- **Stabilized Display Changes**: Dock/KVM event bursts share one cancellable topology stabilizer.
+  Restore begins only after monitor identity, bounds, work area, DPI, primary state, and orientation
+  remain unchanged for the settle interval; a timeout refuses to restore an unstable intermediate state.
+- **Layout Variants**: One logical workspace can retain multiple topology-specific placement sets
+  without copying its shared application, file, or browser context. Exact topology wins, then the
+  variant with the strongest current-monitor overlap supplies adaptive placement.
 - **Default Workspace & Startup Restore**: Set a default workspace to auto-restore on launch, restore the last-used one, or choose from a picker dialog.
 - **Global Keyboard Shortcuts**: Customisable hotkeys for quick save, restore, workspace switching (Ctrl+Alt+1/2/3), switch workspace (Ctrl+Alt+Shift+1/2/3) and settings.
 - **Workspace Ordering**: Reorder workspaces with Move Up/Down — the first three map to the hotkey slots.
@@ -53,6 +62,16 @@
   Approved destination windows stay open; only unrelated windows receive normal close requests,
   with bounded single-flight waiting and no force-close behavior. Expected closure of an
   unselected candidate does not invalidate the already-reviewed plan.
+- **Keep Applications Open Globally**: Stable executable or AppUserModelID identities can inherit
+  the existing never-close behavior across every workspace without title-based exceptions or a
+  second placement policy.
+- **Rescue Active Window**: After selecting a partly or fully off-screen window, use the tray
+  command to move only that foreground window into the nearest reachable work area when it falls
+  below the configured visible-area threshold. It does not restore a workspace, reopen apps, alter
+  other windows, or unmaximize a maximized window.
+- **Logical Path Aliases**: Map portable roots such as `${PROJECTS}` to a local directory. Captures
+  retain the exact local path and add the most-specific matching alias; restore checks the exact
+  path first and then the current device mapping.
 - **Native Task-Window Filtering**: Workspace windows are selected from OS capabilities rather
   than application names: DWM-cloaked, tool-only, non-activatable, and owned/transient surfaces
   are not saved as independent tasks. `WS_EX_APPWINDOW` remains an
@@ -93,12 +112,13 @@ WindowAnchor operates silently in your system tray, watching your display config
 ## Settings at a Glance
 
 Configure Windows startup behavior, notifications, browser integration, automatic workspace
-restore, optional manual previews, optional recovery checkpoints, and remembered window choices
-from one place. Open a workspace’s “View & Edit Windows” dialog to set its default restore mode and
-the policy for each saved entry; “Restore As” in the workspace menu runs any mode once without
-changing that default. Recapturing a workspace with the same name preserves its configured mode
-and uniquely matched entry policies. **Help & Guide** provides these explanations inside the app,
-so normal operation does not require the GitHub documentation.
+restore, optional manual previews, optional routine recovery checkpoints, persistent applications,
+logical path aliases, the active-window rescue threshold, and remembered window choices from one
+place. Open a workspace’s “View & Edit Windows” dialog to set its default restore mode and the
+policy for each saved entry; “Restore As” in the workspace menu runs any mode once without changing
+that default. Recapturing a workspace with the same name preserves its configured mode and uniquely
+matched entry policies. **Help & Guide** provides these explanations inside the app, so normal
+operation does not require the GitHub documentation.
 
 ![System, browser integration, and startup settings](docs/screenshots/settings_system_browser_startup.png)
 
@@ -106,9 +126,9 @@ Customize global keyboard shortcuts and assign recognizable names to connected m
 
 ![Keyboard shortcuts and monitor aliases](docs/screenshots/settings_hotkeys_monitors.png)
 
-## Review Status & Manual Install
+## Browser Connector
 
-The browser extension is currently under review for the Chrome Web Store. While review is in progress, the extension can still be used locally via manual installation.
+Install the [WindowAnchor Browser Connector from the Chrome Web Store](https://chromewebstore.google.com/detail/windowanchor-browser-conn/liiklnjpifhhmjncifbjjfgplonkkinh). In WindowAnchor, open **Settings > Browser Integration > Set Up Chrome**: the app registers its current-user native host and opens this store listing in Chrome.
 
 ### Local desktop app install
 1. Download the latest versioned `WindowAnchor-v*.exe` from the GitHub release page and verify it
@@ -116,20 +136,14 @@ The browser extension is currently under review for the Chrome Web Store. While 
 2. Run the executable once to confirm the app starts correctly.
 3. If Windows prompts for security permissions, allow the app to run.
 
-### Manual browser extension install
-1. Download the browser connector package from the GitHub release assets.
-2. Open `chrome://extensions` or `edge://extensions` and enable **Developer mode**.
-3. Click **Load unpacked** and select the extracted browser extension folder.
-4. Copy the generated extension ID shown on the extension card.
-5. Update the native host manifest and register the native messaging host for Chrome or Edge using the included PowerShell script.
-6. Reload the extension and verify that it can capture and restore tabs.
+### Local extension development
 
-For local testing, the included script is the recommended setup path:
+Unpacked installation is reserved for contributor testing. Load `browser-extension/` from `chrome://extensions` with Developer mode enabled, then register its development ID with the included script:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\register-native-host.ps1 -ExtensionId <id> -WindowAnchorPath <path-to-exe>
 ```
 
-This manual workflow is fully supported for local testing while the extension is being reviewed.
+The development ID differs from the published Chrome Web Store ID.
 
 ## 🛠 How It Works
 
@@ -153,11 +167,12 @@ This manual workflow is fully supported for local testing while the extension is
    available; Exact Switch closes unrelated context normally; Preview Only cannot reach a mutation
    boundary. Unsupported fresh-instance requests are reported and reuse the safest match.
 
-4. **Optional checkpoint** — When enabled (the default), a fast metadata-only desktop capture is
-   atomically committed before the first move, minimize, close, browser restore, or process launch.
-   It retains title, Explorer-folder, PWA, and browser metadata, but skips Jump List parsing and
-   recursive folder scans. A failed required checkpoint blocks mutation; disabling checkpoints
-   keeps the same single-flight restore serialization but creates no new Undo point.
+4. **Conditional checkpoint** — Routine non-destructive restores skip capture by default; the
+   Settings opt-in enables a fast metadata-only checkpoint. Exact Switch and Undo always require
+   one before the first close or replacement mutation. It retains title, Explorer-folder, PWA, and
+   browser metadata, but skips Jump List parsing and recursive folder scans. A failed required
+   checkpoint blocks mutation, while a skipped routine checkpoint still uses the same serialized
+   execution gate.
 
 5. **Execute and report** — The executor launches only approved targets, polls process/window
    readiness against a 45-second real wall-clock limit instead of sleeping for fixed intervals,
@@ -170,6 +185,10 @@ This manual workflow is fully supported for local testing while the extension is
 
 For a deep dive into how WindowAnchor handles monitor fingerprints, DPI-aware restoration, and Tier 1/2 file detection, check out:
 - [**Architecture Overview**](docs/architecture.md) — A technical breakdown of the services and data flow.
+- [**Implementation Status**](docs/implementation-status.md) — Verified ticket coverage, remaining
+  manual gates, and deliberately incomplete portability/sync work.
+- [**Restore Simulation**](docs/restore-simulation.md) — Run deterministic planner fixtures without
+  enumerating or changing the live desktop.
 
 ## Contributing
 
@@ -194,7 +213,7 @@ published release includes `SHA256SUMS.txt` for its executable and browser conne
 
 ##  Roadmap
 
-### v1.5.2 (Current Release) — *Restore Control and Update Recovery* ✅
+### v1.6.0 (Current Release) — *Diagnostics and Topology* ✅
 - **Explainable Matching**: Confidence classes, ambiguity choices, and optional stable learned hints replace destructive guessing.
 - **Responsive Restore**: Correlated readiness signals replace fixed sleeps, expose progress, and keep every wait cancellable and bounded.
 - **Adaptive Layouts**: Semantic, normalized, DPI-aware placement keeps windows visible when monitors, work areas, or orientation change.
@@ -206,13 +225,22 @@ published release includes `SHA256SUMS.txt` for its executable and browser conne
 - **Update-Safe Desktop Apps**: Recognized Squirrel `app-<version>` installations are rebound to
   the newest matching executable after application updates, without accepting arbitrary wildcards.
 - **Restore Control**: Routine previews and pre-restore checkpoints can be disabled independently;
-  ambiguity and blockers still require review, and restore execution remains serialized.
+  both default to quiet operation, ambiguity and blockers still require review, and Exact Switch
+  and Undo retain mandatory recovery checkpoints.
 - **Restore Modes and Policies**: Workspaces support Repair, Move Existing, Resume, Launch Fresh,
   Exact Switch, and Preview Only plus persisted per-entry reuse/launch/close overrides.
 - **First-Run Help**: A one-time welcome explains the tray workflow, while the complete guide stays
   available from both the tray and Settings.
+- **Diagnostics and Simulation**: Restore results are structured, privacy-safe, and reproducible
+  through deterministic planner simulation fixtures.
+- **Topology and Layout Variants**: Display state stabilizes before restoration and workspaces can
+  retain named, topology-specific layout variants without duplicating application context.
+- **Adaptation Controls**: Logical path aliases, global keep-open app identities, and active-window
+  rescue make changed-device and changed-display recovery more deliberate.
+- **Application Adapters**: Chromium PWA, dedicated browser URL, Explorer, and generic Win32
+  capture and launch behavior are isolated behind independently testable adapters.
 
-### v1.3 — *UX Improvements* ✅
+### v1.5.2 — *Restore Control and Update Recovery* ✅
 - **Monitor Renaming**: Personalise monitor names ("Generic PnP" → "Left Monitor") in Settings → Monitors.
 - **Switch Workspace**: Instant context switch — closes all windows and restores a different workspace.
 - **Switch Default hotkey**: Ctrl+Alt+Shift+W switches to the default workspace in one keystroke.
@@ -221,20 +249,17 @@ published release includes `SHA256SUMS.txt` for its executable and browser conne
 ### v1.2 — *Stability & Control* ✅
 - Selective Window Save, Default Workspace, Keyboard Shortcuts, Workspace Ordering, Browser Session Restore.
 
-### v1.6 (Next Release) — *Diagnostics and Topology*
-- **Restore Reports**: Present structured action and entry outcomes after execution.
-- **Topology Stabilization**: Avoid restoring against transient monitor states while docking.
-- **Workspace Diff**: Compare saved intent with the current desktop without changing either.
-- **Adapter Architecture**: Add reusable application-specific identity and launch strategies behind the shared safety boundaries.
-
 ### v1.6+ — *Recovery and Adaptation*
 - **Workspace Health and Diff**: Inspect missing resources and current-vs-saved differences without mutation.
 - **Recovery Timeline and Quick Captures**: Add checkpoint browsing plus temporary workspace saves
   on top of the transactional checkpoint store.
 
 ### v2.0 & Beyond
-- **Portability**: Logical path aliases, workspace import/export, and cross-device monitor identity.
-- **Sync and Ecosystem**: Provider-neutral folder sync, catalog metadata, desk profiles, and templates.
+- **Portability**: Complete the workspace import/export UI, conflict preview, old transfer-schema
+  migration, and cross-device monitor identity. Logical path aliases are already implemented.
+- **Sync and Ecosystem**: Complete staged validation, manifests, device identity, and conflict-copy
+  orchestration above the experimental provider-neutral folder transport, then add catalog metadata,
+  desk profiles, and templates.
 
 ##  License
 This project is licensed under the MIT License.

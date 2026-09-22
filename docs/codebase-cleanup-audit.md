@@ -5,8 +5,19 @@
 **Scope:** tracked application source, tests, browser connector, build/release configuration, and documentation assets
 **Status:** Phases 0-5 and Phase 6.0-6.6 implementation/automated gates complete; manual release gate remains
 
+> **Current verification addendum (2026-09-22):** the present tree has since completed the
+> service-folder ownership migration and additional ticket work. `dotnet test WindowAnchor.sln
+> --configuration Release --no-restore` passes 289/289 tests, the deterministic restore-simulation
+> smoke passes, and the current package graph has no known NuGet vulnerabilities. Real Windows
+> Restore/Switch/Undo, changed-topology rescue, and warm-resume checks remain unrecorded release
+> gates; current ticket status lives in `docs/implementation-status.md`.
+
 References in the findings identify the audited pre-cleanup baseline. See
 `docs/cleanup-phase-baseline.md` for measured evidence and the release smoke gate.
+
+> Historical-path note: source paths and line counts in individual findings intentionally describe
+> the audited v1.5.1 baseline. The current service-folder ownership is documented in
+> `docs/architecture.md`; do not use the old flat paths as present-day navigation.
 
 ## Execution status
 

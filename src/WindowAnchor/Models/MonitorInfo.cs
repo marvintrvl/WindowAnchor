@@ -37,6 +37,8 @@ public class MonitorInfo
     public uint   Dpi            { get; set; } = 96;
     /// <summary><c>true</c> if this is the primary monitor in the Windows display configuration.</summary>
     public bool   IsPrimary      { get; set; }
+    /// <summary>Windows display rotation value when it is available from the active display path.</summary>
+    public int    Orientation    { get; set; }
 
     [System.Text.Json.Serialization.JsonIgnore]
     public bool HasValidBounds => BoundsRight > BoundsLeft && BoundsBottom > BoundsTop;

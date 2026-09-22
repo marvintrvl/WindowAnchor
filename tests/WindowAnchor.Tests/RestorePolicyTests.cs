@@ -162,6 +162,91 @@ public class RestorePolicyTests
     }
 
     [Fact]
+    public void Persistent_application_identities_protect_matching_windows_across_workspaces_without_titles()
+    {
+        var spotify = new LiveWindowIdentity
+        {
+            Hwnd = new IntPtr(70),
+            ExecutablePath = @"C:\\Users\\me\\AppData\\Roaming\\Spotify\\Spotify.exe",
+            ProcessName = "spotify",
+            Title = "A completely different song title"
+        };
+        var teams = new LiveWindowIdentity
+        {
+            Hwnd = new IntPtr(71),
+            ExecutablePath = @"C:\\Users\\me\\AppData\\Local\\Teams\\current\\teams.exe",
+            ProcessName = "teams",
+            AppUserModelId = "MSTeams_8wekyb3d8bbwe!MSTeams",
+            Title = "A duplicate title"
+        };
+        var sameTitleOnly = new LiveWindowIdentity
+        {
+            Hwnd = new IntPtr(72),
+            ExecutablePath = @"C:\\Apps\\other.exe",
+            ProcessName = "other",
+            Title = "A completely different song title"
+        };
+        PersistentApplicationIdentity[] persistent =
+        [
+            new() { ExecutableName = "spotify.exe" },
+            new() { AppUserModelId = "MSTeams_8wekyb3d8bbwe!MSTeams" }
+        ];
+
+        RestorePlan first = RestorePlanner.Build(
+            Snapshot(Entry(@"C:\\Apps\\editor.exe", "Desk one")),
+            Inventory(windows: [spotify, teams, sameTitleOnly]),
+            Topology(),
+            RestoreMode.ExactSwitch,
+            AppAdapterRegistry.CreatePlanningDefault(),
+            persistent);
+        WorkspaceSnapshot secondSnapshot = Snapshot(Entry(@"C:\\Apps\\editor.exe", "Desk two"));
+        secondSnapshot.WorkspaceId = "22222222-2222-4222-8222-222222222222";
+        RestorePlan second = RestorePlanner.Build(
+            secondSnapshot,
+            Inventory(windows: [spotify, teams, sameTitleOnly]),
+            Topology(),
+            RestoreMode.ExactSwitch,
+            AppAdapterRegistry.CreatePlanningDefault(),
+            persistentApplications: persistent);
+
+        foreach (RestorePlan plan in new[] { first, second })
+        {
+            Assert.Contains(70L, plan.ProtectedWindowHandles);
+            Assert.Contains(71L, plan.ProtectedWindowHandles);
+            Assert.DoesNotContain(72L, plan.ProtectedWindowHandles);
+        }
+    }
+
+    [Fact]
+    public void Removing_persistent_identity_restores_ordinary_exact_switch_policy()
+    {
+        var live = new LiveWindowIdentity
+        {
+            Hwnd = new IntPtr(80),
+            ExecutablePath = @"C:\\Apps\\music\\music.exe",
+            ProcessName = "music"
+        };
+        WorkspaceSnapshot snapshot = Snapshot(Entry(@"C:\\Apps\\editor.exe", "Desk"));
+        RestorePlan protectedPlan = RestorePlanner.Build(
+            snapshot,
+            Inventory(windows: [live]),
+            Topology(),
+            RestoreMode.ExactSwitch,
+            AppAdapterRegistry.CreatePlanningDefault(),
+            persistentApplications:
+            [new PersistentApplicationIdentity { ExecutableName = "music.exe" }]);
+        RestorePlan ordinaryPlan = RestorePlanner.Build(
+            snapshot,
+            Inventory(windows: [live]),
+            Topology(),
+            RestoreMode.ExactSwitch,
+            AppAdapterRegistry.CreatePlanningDefault());
+
+        Assert.Contains(80L, protectedPlan.ProtectedWindowHandles);
+        Assert.DoesNotContain(80L, ordinaryPlan.ProtectedWindowHandles);
+    }
+
+    [Fact]
     public void Planning_is_non_mutating_deterministic_and_exposes_mode_and_policy_in_preview()
     {
         WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Notes");

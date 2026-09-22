@@ -54,7 +54,7 @@ gate.
 
 ### Canonical process-name normalization
 
-`Services/ProcessIdentityNormalizer.cs` is now the single canonical comparison-key implementation
+`Services/Restore/ProcessIdentityNormalizer.cs` is now the single canonical comparison-key implementation
 for inventory, matching, planning, readiness, execution, and Chromium-family detection. It:
 
 - accepts null/empty values;

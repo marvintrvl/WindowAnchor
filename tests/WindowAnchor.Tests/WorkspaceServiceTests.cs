@@ -6,6 +6,120 @@ namespace WindowAnchor.Tests;
 public class WorkspaceServiceTests
 {
     [Fact]
+    public void Restore_plan_prefers_an_exact_layout_variant_without_mutating_shared_context()
+    {
+        using var directory = new TestDirectory();
+        MonitorInfo primary = Monitor("primary", 0, true);
+        var monitors = new FakeMonitorInventory
+        {
+            Fingerprint = "home-topology",
+            Monitors = [primary]
+        };
+        WorkspaceEntry entry = new()
+        {
+            ProcessName = "editor",
+            ExecutablePath = @"C:\Apps\editor.exe",
+            WindowClassName = "EditorWindow",
+            MonitorId = "primary",
+            Position = Record(@"C:\Apps\editor.exe", "Notes", "primary", 96)
+        };
+        var workspace = new WorkspaceSnapshot
+        {
+            Name = "Focus",
+            MonitorFingerprint = "laptop-topology",
+            SavedAt = DateTime.UtcNow,
+            Monitors = [primary],
+            Entries = [entry],
+            BrowserSessions = [new BrowserSession { Browser = "Edge" }]
+        };
+        workspace.EnsureLayoutVariants();
+        var home = new LayoutVariant
+        {
+            Name = "Home office",
+            MonitorFingerprint = "home-topology",
+            Monitors = [primary],
+            Placements =
+            [
+                new LayoutVariantPlacement
+                {
+                    EntryId = entry.EntryId,
+                    Position = Record(@"C:\Apps\editor.exe", "Notes", "primary", 144),
+                    MonitorId = "primary"
+                }
+            ],
+            SavedAt = DateTime.UtcNow,
+            LastUsedAt = DateTime.UtcNow
+        };
+        workspace.LayoutVariants.Add(home);
+        var service = CreateService(directory, new FakeWindowInventory(), new RecordingWindowMutation(), monitors);
+
+        RestorePlan plan = service.CreateRestorePlan(workspace, RestoreMode.Resume);
+
+        Assert.Equal(home.VariantId, plan.LayoutVariantId);
+        Assert.Equal("Home office", plan.LayoutVariantName);
+        Assert.Single(workspace.BrowserSessions);
+        Assert.Equal((uint)96, entry.Position.SavedDpi);
+    }
+
+    [Fact]
+    public void Layout_variants_can_be_renamed_and_deleted_without_copying_workspace_context()
+    {
+        using var directory = new TestDirectory();
+        var storage = new StorageService(directory.Path);
+        MonitorInfo primary = Monitor("primary", 0, true);
+        var monitors = new FakeMonitorInventory { Fingerprint = "dock", Monitors = [primary] };
+        var workspace = new WorkspaceSnapshot
+        {
+            Name = "Writing",
+            MonitorFingerprint = "laptop",
+            SavedAt = DateTime.UtcNow,
+            Monitors = [primary],
+            Entries = [new WorkspaceEntry { ProcessName = "editor", Position = new WindowRecord() }],
+            BrowserSessions = [new BrowserSession { Browser = "Edge" }]
+        };
+        storage.SaveWorkspace(workspace);
+        var service = CreateService(directory, new FakeWindowInventory(), new RecordingWindowMutation(), monitors, storage);
+
+        LayoutVariant dock = service.AddLayoutVariant(workspace, "Docked desk", "desk-1");
+        service.RenameLayoutVariant(workspace, dock.VariantId, "Studio dock");
+
+        WorkspaceSnapshot persisted = Assert.Single(storage.LoadAllWorkspaces());
+        LayoutVariant renamed = Assert.Single(persisted.LayoutVariants, item => item.VariantId == dock.VariantId);
+        Assert.Equal("Studio dock", renamed.Name);
+        Assert.Single(persisted.BrowserSessions);
+        Assert.Single(persisted.Entries);
+
+        service.DeleteLayoutVariant(workspace, dock.VariantId);
+        Assert.Single(Assert.Single(storage.LoadAllWorkspaces()).LayoutVariants);
+        Assert.Throws<InvalidOperationException>(() =>
+            service.DeleteLayoutVariant(workspace, Assert.Single(workspace.LayoutVariants).VariantId));
+    }
+
+    [Fact]
+    public void Layout_variant_fallback_prefers_the_largest_monitor_identity_overlap()
+    {
+        var workspace = new WorkspaceSnapshot { Name = "Portable" };
+        var oneMatch = new LayoutVariant
+        {
+            Name = "Laptop",
+            Monitors = [Monitor("internal", 0, true)]
+        };
+        var twoMatches = new LayoutVariant
+        {
+            Name = "Office",
+            Monitors = [Monitor("internal", 0, true), Monitor("dock", 1, false)]
+        };
+        workspace.LayoutVariants = [oneMatch, twoMatches];
+
+        LayoutVariant selected = Assert.IsType<LayoutVariant>(LayoutVariantSelector.Select(
+            workspace,
+            "unknown-topology",
+            ["internal", "dock", "new-display"]));
+
+        Assert.Equal(twoMatches.VariantId, selected.VariantId);
+    }
+
+    [Fact]
     public async Task Capture_maps_fake_window_inventory_without_persisting_it()
     {
         using var directory = new TestDirectory();
@@ -478,17 +592,19 @@ public class WorkspaceServiceTests
             Position = position
         };
         var storage = new StorageService(directory.Path);
+        var settings = RoutineCheckpointSettings(directory, storage);
         var service = CreateService(
             directory,
             windows,
             new ThrowingWindowMutation(),
             new FakeMonitorInventory(),
-            storage);
+            storage,
+            settings: settings);
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             service.RestoreWorkspaceWithExecutionResultAsync(
                 new WorkspaceSnapshot { Entries = [entry] },
-                RestoreMode.Standard));
+                RestoreMode.MoveExisting));
 
         Assert.Equal("Injected mutation failure", error.Message);
         Assert.Single(storage.Checkpoints.Load().Workspaces);
@@ -534,18 +650,20 @@ public class WorkspaceServiceTests
             OnRestore = (_, _) => events.Add("mutation")
         };
         var storage = new StorageService(directory.Path);
+        var settings = RoutineCheckpointSettings(directory, storage);
         var service = CreateService(
             directory,
             windows,
             mutation,
             new FakeMonitorInventory { Monitors = [Monitor("primary", 0, true)] },
             storage,
+            settings: settings,
             restoreClock: new FakeRestoreClock(),
             placementProbe: new FakeWindowPlacementProbe());
 
         RestoreExecutionResult result = await service.RestoreWorkspaceWithExecutionResultAsync(
             snapshot,
-            RestoreMode.Standard);
+            RestoreMode.MoveExisting);
 
         Assert.Equal(["capture", "mutation"], events.Take(2));
         Assert.Equal(RestoreCheckpointStatus.Created, result.Checkpoint?.Status);
@@ -591,6 +709,7 @@ public class WorkspaceServiceTests
             }
         };
         var storage = new StorageService(directory.Path);
+        var settings = RoutineCheckpointSettings(directory, storage);
         var progress = new RecordingProgress<RestoreProgressReport>();
         var service = CreateService(
             directory,
@@ -598,12 +717,13 @@ public class WorkspaceServiceTests
             new RecordingWindowMutation(),
             new FakeMonitorInventory { Monitors = [Monitor("primary", 0, true)] },
             storage,
+            settings: settings,
             restoreClock: new FakeRestoreClock(),
             placementProbe: new FakeWindowPlacementProbe());
 
         RestoreExecutionResult result = await service.RestoreWorkspaceWithExecutionResultAsync(
             target,
-            RestoreMode.Standard,
+            RestoreMode.MoveExisting,
             progress: progress);
 
         Assert.Equal(RestoreCheckpointStatus.Created, result.Checkpoint?.Status);
@@ -712,12 +832,14 @@ public class WorkspaceServiceTests
             }
         };
         var mutation = new RecordingWindowMutation();
+        var settings = RoutineCheckpointSettings(directory, storage);
         var service = CreateService(
             directory,
             windows,
             mutation,
             new FakeMonitorInventory { Monitors = [Monitor("primary", 0, true)] },
-            storage);
+            storage,
+            settings: settings);
         var snapshot = new WorkspaceSnapshot
         {
             Name = "Blocked target",
@@ -737,7 +859,7 @@ public class WorkspaceServiceTests
 
         RestoreExecutionResult result = await service.RestoreWorkspaceWithExecutionResultAsync(
             snapshot,
-            RestoreMode.Standard);
+            RestoreMode.MoveExisting);
 
         Assert.Equal(RestoreExecutionStatus.Rejected, result.Status);
         Assert.Equal(RestoreCheckpointStatus.Failed, result.Checkpoint?.Status);
@@ -809,6 +931,71 @@ public class WorkspaceServiceTests
         WorkspaceSnapshot safety = Assert.IsType<WorkspaceSnapshot>(storage.Checkpoints.GetLatest());
         Assert.Equal(WorkspaceCheckpointTrigger.Undo, safety.Checkpoint?.Trigger);
         Assert.Equal(700, Assert.Single(safety.Entries).Position.NormalLeft);
+
+        // Undo captures the state it is about to replace, so a second Undo returns to the
+        // post-operation desktop rather than discarding the first recovery point.
+        windows.Snapshot = [prior];
+        windows.Live[new IntPtr(303)] = (3003, prior);
+        RestoreExecutionResult undoOfUndo = Assert.IsType<RestoreExecutionResult>(
+            await service.UndoLastRestoreAsync());
+
+        Assert.Equal(WorkspaceCheckpointTrigger.Undo, undoOfUndo.Checkpoint?.Trigger);
+        Assert.Equal(700, mutation.Restores.Last().Record.NormalLeft);
+    }
+
+    [Fact]
+    public async Task Failed_undo_safety_checkpoint_preserves_the_original_checkpoint_for_retry()
+    {
+        using var directory = new TestDirectory();
+        var baseline = new StorageService(directory.Path);
+        const string exe = @"C:\Apps\editor.exe";
+        WindowRecord prior = Record(exe, "notes", "primary", 96);
+        prior.ClassName = "EditorWindow";
+        var source = new WorkspaceSnapshot
+        {
+            Name = "Before restore",
+            Monitors = [Monitor("primary", 0, true)],
+            Entries =
+            [
+                new WorkspaceEntry
+                {
+                    ExecutablePath = exe,
+                    ProcessName = "editor",
+                    WindowClassName = "EditorWindow",
+                    MonitorId = "primary",
+                    Position = prior
+                }
+            ]
+        };
+        baseline.Checkpoints.Save(source, WorkspaceCheckpointTrigger.Restore, Guid.NewGuid().ToString("D"));
+
+        var failingStorage = new StorageService(directory.Path, new ThrowingAtomicFileWriter());
+        var windows = new FakeWindowInventory
+        {
+            Snapshot = [Record(exe, "notes", "primary", 96)],
+            Live = new Dictionary<IntPtr, (uint Pid, WindowRecord Record)>
+            {
+                [new IntPtr(401)] = (4001, Record(exe, "notes", "primary", 96))
+            }
+        };
+        windows.Snapshot[0].ClassName = "EditorWindow";
+        windows.Live[new IntPtr(401)].Record.ClassName = "EditorWindow";
+        var mutation = new RecordingWindowMutation();
+        var service = CreateService(
+            directory,
+            windows,
+            mutation,
+            new FakeMonitorInventory { Monitors = [Monitor("primary", 0, true)] },
+            failingStorage);
+
+        RestoreExecutionResult result = Assert.IsType<RestoreExecutionResult>(
+            await service.UndoLastRestoreAsync());
+
+        Assert.Equal(RestoreExecutionStatus.Rejected, result.Status);
+        Assert.Equal(RestoreCheckpointStatus.Failed, result.Checkpoint?.Status);
+        Assert.Empty(mutation.Restores);
+        WorkspaceSnapshot retained = Assert.IsType<WorkspaceSnapshot>(baseline.Checkpoints.GetLatest());
+        Assert.Equal(source.WorkspaceId, retained.WorkspaceId);
     }
 
     [Fact]
@@ -1006,6 +1193,15 @@ public class WorkspaceServiceTests
             settingsService: settings,
             packagedAppResolver: packagedApps,
             placementProbe: placementProbe);
+
+    private static SettingsService RoutineCheckpointSettings(
+        TestDirectory directory,
+        StorageService storage)
+    {
+        var settings = new SettingsService(Path.Combine(directory.Path, "settings.json"), storage);
+        settings.Settings.CreateRestoreCheckpoints = true;
+        return settings;
+    }
 
     private static MonitorInfo Monitor(string id, int index, bool primary) => new()
     {

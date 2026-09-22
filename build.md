@@ -73,7 +73,7 @@ Remove-Item -Recurse -Force src\WindowAnchor\bin, src\WindowAnchor\obj -ErrorAct
 ## Release assets
 
 ```powershell
-$tag = "v1.5.2"
+$tag = "v<release-version>"
 Copy-Item src/WindowAnchor/bin/Release/net8.0-windows/win-x64/publish/WindowAnchor.exe "WindowAnchor-$tag.exe"
 Compress-Archive browser-extension/* "WindowAnchor-Browser-Connector-$tag.zip"
 Get-FileHash -Algorithm SHA256 "WindowAnchor-$tag.exe", "WindowAnchor-Browser-Connector-$tag.zip"

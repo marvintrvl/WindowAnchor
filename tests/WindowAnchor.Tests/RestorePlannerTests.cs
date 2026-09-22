@@ -37,6 +37,33 @@ public class RestorePlannerTests
     }
 
     [Fact]
+    public void Exact_topology_resume_omits_an_already_correct_window_action()
+    {
+        WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Quarterly notes", "primary");
+        RestoreMonitorTopology topology = Topology(Monitor("primary", 0, 96, primary: true)) with
+        {
+            IsExactMatch = true
+        };
+
+        RestorePlan plan = RestorePlanner.Build(
+            Snapshot(entry),
+            new RestoreLiveInventory
+            {
+                Windows =
+                [
+                    Live(41, entry.ExecutablePath, "Quarterly notes", "EditorWindow", monitorId: "primary")
+                ]
+            },
+            topology,
+            RestoreMode.Resume);
+
+        RestorePlanEntry result = Assert.Single(plan.Entries);
+        Assert.Equal(RestorePlanEntryOutcome.Matched, result.Outcome);
+        Assert.Empty(plan.Actions);
+        Assert.Contains("no action is needed", result.Explanation, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Ambiguous_duplicate_windows_have_no_assignment_or_actions_and_stable_json()
     {
         WorkspaceEntry first = Entry(@"C:\Apps\editor.exe", "Untitled", "primary");
@@ -167,6 +194,67 @@ public class RestorePlannerTests
         RestorePlanEntry planned = Assert.Single(plan.Entries);
         Assert.Equal(RestorePlanEntryOutcome.Excluded, planned.Outcome);
         Assert.Empty(planned.Actions);
+    }
+
+    [Fact]
+    public void Legacy_store_capture_without_an_aumid_matches_the_current_package_window()
+    {
+        WorkspaceEntry entry = Entry(
+            @"C:\Program Files\WindowsApps\SpotifyAB.SpotifyMusic_1.284.476.0_x64__zpdnekdrzrea0\Spotify.exe",
+            "Spotify",
+            "primary");
+        entry.ProcessName = "Spotify";
+        entry.WindowClassName = "Chrome_WidgetWin_0";
+        entry.Position.ProcessName = entry.ProcessName;
+        entry.Position.ClassName = entry.WindowClassName;
+
+        LiveWindowIdentity live = Live(
+            35,
+            @"C:\Program Files\WindowsApps\SpotifyAB.SpotifyMusic_1.285.123.0_x64__zpdnekdrzrea0\Spotify.exe",
+            "Now playing",
+            entry.WindowClassName);
+
+        RestorePlan plan = Build(Snapshot(entry), [live]);
+
+        RestorePlanEntry planned = Assert.Single(plan.Entries);
+        Assert.Equal(RestorePlanEntryOutcome.Matched, planned.Outcome);
+        Assert.Equal(35, planned.SelectedMatch?.WindowHandle);
+        Assert.Contains(planned.SelectedMatch!.Evidence,
+            evidence => evidence.Explanation.Contains("Store update", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Legacy_store_capture_without_an_aumid_does_not_report_a_running_updated_package_as_missing()
+    {
+        const string savedPath =
+            @"C:\Program Files\WindowsApps\SpotifyAB.SpotifyMusic_1.284.476.0_x64__zpdnekdrzrea0\Spotify.exe";
+        const string currentPath =
+            @"C:\Program Files\WindowsApps\SpotifyAB.SpotifyMusic_1.285.123.0_x64__zpdnekdrzrea0\Spotify.exe";
+        WorkspaceEntry entry = Entry(savedPath, "Spotify", "primary");
+        entry.ProcessName = "Spotify";
+        entry.Position.ProcessName = entry.ProcessName;
+
+        RestorePlan plan = RestorePlanner.Build(
+            Snapshot(entry),
+            new RestoreLiveInventory
+            {
+                Resources =
+                [
+                    new RestoreResourceObservation(
+                        0,
+                        RestoreResourceKind.Executable,
+                        RestoreResourceAvailability.Missing)
+                ],
+                RunningApplications = [new RunningApplicationIdentity(currentPath, "Spotify")]
+            },
+            Topology(Monitor("primary", 0, 96, primary: true)),
+            RestoreMode.Standard);
+
+        RestorePlanEntry planned = Assert.Single(plan.Entries);
+        Assert.Equal(RestorePlanEntryOutcome.Excluded, planned.Outcome);
+        Assert.Empty(planned.BlockingErrors);
+        Assert.Contains(planned.Warnings,
+            warning => warning.Code == RestorePlanIssueCode.RunningApplicationHasNoRestorableWindow);
     }
 
     [Fact]

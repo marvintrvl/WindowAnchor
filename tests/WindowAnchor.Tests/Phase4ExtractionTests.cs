@@ -225,6 +225,38 @@ public class Phase4ExtractionTests
         Assert.Empty(result.Snapshot.BrowserSessions);
     }
 
+    [Fact]
+    public async Task Capture_builder_bounds_optional_browser_enrichment()
+    {
+        var connector = new NeverCompletingBrowserConnector();
+        var builder = new WorkspaceCaptureBuilder(connector);
+        WorkspaceSnapshot snapshot = Snapshot("capture", DateTimeOffset.UtcNow);
+        snapshot.Entries.Add(new WorkspaceEntry
+        {
+            ProcessName = "chrome",
+            Position = new WindowRecord { TitleSnippet = "Research" }
+        });
+
+        WorkspaceCaptureResult result = await builder.CaptureAsync(
+            new WorkspaceCaptureRequest(
+                snapshot.Name,
+                SaveFiles: false,
+                MonitorIds: null,
+                Progress: null,
+                SelectedWindows: null,
+                CaptureBrowserSessions: true,
+                SearchCommonFolders: false,
+                CommonFolderSearchBudget: null,
+                CancellationToken: CancellationToken.None,
+                BuildFullJumpListCache: false,
+                BrowserCaptureBudget: TimeSpan.FromMilliseconds(1)),
+            _ => snapshot);
+
+        Assert.Equal(BrowserCaptureStatus.TimedOut, result.BrowserCapture.Status);
+        Assert.Empty(result.Snapshot.BrowserSessions);
+        Assert.Equal(1, connector.CaptureCalls);
+    }
+
     private static WorkspaceSnapshot Snapshot(string id, DateTimeOffset savedAt) => new()
     {
         WorkspaceId = id,
@@ -239,4 +271,24 @@ public class Phase4ExtractionTests
             "checkpoint",
             DateTime.UtcNow,
             "created");
+
+    private sealed class NeverCompletingBrowserConnector : IBrowserSessionConnector
+    {
+        internal int CaptureCalls { get; private set; }
+
+        public Task<BrowserCaptureResult> CaptureAsync(
+            string workspaceName,
+            IEnumerable<string> selectedBrowserTitles,
+            CancellationToken cancellationToken = default)
+        {
+            CaptureCalls++;
+            return new TaskCompletionSource<BrowserCaptureResult>(
+                TaskCreationOptions.RunContinuationsAsynchronously).Task;
+        }
+
+        public Task<bool> RestoreAsync(
+            string workspaceName,
+            List<BrowserSession> sessions,
+            CancellationToken cancellationToken = default) => Task.FromResult(true);
+    }
 }

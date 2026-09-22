@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace WindowAnchor.Models;
 
@@ -13,7 +15,7 @@ namespace WindowAnchor.Models;
 public class WorkspaceSnapshot
 {
     /// <summary>Current persisted workspace schema version.</summary>
-    public const int CurrentSchemaVersion = 5;
+    public const int CurrentSchemaVersion = 6;
 
     /// <summary>Schema version used to serialize this workspace document.</summary>
     [System.Text.Json.Serialization.JsonInclude]
@@ -56,6 +58,9 @@ public class WorkspaceSnapshot
     /// <summary>Browser tab sessions captured by the optional WindowAnchor extension.</summary>
     public List<BrowserSession> BrowserSessions { get; set; } = new();
 
+    /// <summary>Topology-specific placement sets. Shared entry, file, and browser context remains on this workspace.</summary>
+    public List<LayoutVariant> LayoutVariants { get; set; } = new();
+
     /// <summary>
     /// Recovery-only metadata. Named workspaces and temporary captures leave this null.
     /// Checkpoints retain the complete workspace payload while declaring their bounded lifetime
@@ -77,4 +82,35 @@ public class WorkspaceSnapshot
     /// </summary>
     public IEnumerable<(MonitorInfo Monitor, IEnumerable<WorkspaceEntry> Entries)> EntriesByMonitor()
         => Monitors.Select(m => (m, EntriesForMonitor(m.MonitorId)));
+
+    /// <summary>Creates the compatibility default variant for new and pre-variant workspaces.</summary>
+    public void EnsureLayoutVariants()
+    {
+        if (LayoutVariants.Count != 0) return;
+
+        LayoutVariants.Add(new LayoutVariant
+        {
+            VariantId = CreateDefaultVariantId(),
+            Name = "Default layout",
+            MonitorFingerprint = MonitorFingerprint,
+            Monitors = Monitors,
+            Placements = Entries.Select(entry => new LayoutVariantPlacement
+            {
+                EntryId = entry.EntryId,
+                Position = entry.Position,
+                MonitorId = entry.MonitorId,
+                MonitorIndex = entry.MonitorIndex,
+                MonitorName = entry.MonitorName
+            }).ToList(),
+            SavedAt = SavedAt,
+            LastUsedAt = SavedAt
+        });
+    }
+
+    private string CreateDefaultVariantId()
+    {
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"workspace-default-layout-variant\u001f{WorkspaceId}\u001f{MonitorFingerprint}"));
+        return new Guid(hash.AsSpan(0, 16)).ToString("D");
+    }
 }

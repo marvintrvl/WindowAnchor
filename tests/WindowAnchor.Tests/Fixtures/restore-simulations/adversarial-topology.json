@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "name": "pwa-browser-code-and-missing-resource",
+  "snapshot": {
+    "schemaVersion": 6,
+    "workspaceId": "33333333-3333-4333-8333-333333333333",
+    "name": "Private Work Desk",
+    "savedAt": "2026-09-18T08:00:00Z",
+    "monitors": [
+      { "monitorId": "left", "index": 0, "boundsLeft": -1920, "boundsRight": 0, "boundsBottom": 1080, "workAreaLeft": -1920, "workAreaRight": 0, "workAreaBottom": 1040, "dpi": 96 },
+      { "monitorId": "right", "index": 1, "boundsRight": 2560, "boundsBottom": 1440, "workAreaRight": 2560, "workAreaBottom": 1400, "dpi": 144, "isPrimary": true }
+    ],
+    "entries": [
+      { "entryId": "44444444-4444-4444-8444-444444444444", "executablePath": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", "processName": "chrome", "appUserModelId": "Chrome._crx_sensitivepwaid", "isWebApp": true, "browserUrl": "https://example.test/private?access_token=fixture-secret-token", "webAppLaunchArguments": "--app-id=fixture --token=fixture-secret-token", "monitorId": "left", "position": { "executablePath": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", "processName": "chrome", "className": "Chrome_WidgetWin_1", "titleSnippet": "Private dashboard", "normalLeft": -1800, "normalTop": 20, "normalRight": -900, "normalBottom": 700, "savedDpi": 96 } },
+      { "entryId": "55555555-5555-4555-8555-555555555555", "executablePath": "C:\\Users\\fixture\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe", "processName": "code", "launchArg": "C:\\Users\\fixture\\source\\alpha.code-workspace", "monitorId": "right", "position": { "executablePath": "C:\\Users\\fixture\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe", "processName": "code", "className": "Chrome_WidgetWin_1", "titleSnippet": "Alpha - Visual Studio Code", "normalRight": 1500, "normalBottom": 900, "savedDpi": 144 } },
+      { "entryId": "66666666-6666-4666-8666-666666666666", "executablePath": "C:\\Missing\\missing.exe", "processName": "missing", "monitorId": "right", "position": { "executablePath": "C:\\Missing\\missing.exe", "processName": "missing", "className": "MissingWindow", "titleSnippet": "Confidential Title", "normalRight": 900, "normalBottom": 700, "savedDpi": 144 } }
+    ]
+  },
+  "currentTopology": {
+    "isExactMatch": false,
+    "monitors": [
+      { "monitorId": "laptop", "monitorIndex": 0, "left": 0, "top": 0, "right": 1920, "bottom": 1080, "dpi": 120, "isPrimary": true, "workAreaRight": 1920, "workAreaBottom": 1040 }
+    ]
+  },
+  "mode": { "kind": "resume" },
+  "liveWindows": [
+    { "windowHandle": 201, "processId": 1201, "window": { "executablePath": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", "processName": "chrome", "className": "Chrome_WidgetWin_1", "appUserModelId": "Chrome._crx_sensitivepwaid", "titleSnippet": "Private dashboard", "normalRight": 900, "normalBottom": 700 } },
+    { "windowHandle": 202, "processId": 1202, "window": { "executablePath": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", "processName": "chrome", "className": "Chrome_WidgetWin_1", "titleSnippet": "Another private browser tab", "normalRight": 900, "normalBottom": 700 } },
+    { "windowHandle": 203, "processId": 1203, "window": { "executablePath": "C:\\Users\\fixture\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe", "processName": "code", "className": "Chrome_WidgetWin_1", "titleSnippet": "Alpha - Visual Studio Code", "normalRight": 900, "normalBottom": 700 } },
+    { "windowHandle": 204, "processId": 1204, "window": { "executablePath": "C:\\Users\\fixture\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe", "processName": "code", "className": "Chrome_WidgetWin_1", "titleSnippet": "Beta - Visual Studio Code", "normalRight": 900, "normalBottom": 700 } }
+  ],
+  "resources": [
+    { "entryIndex": 2, "kind": "executable", "availability": "missing", "resolvedTarget": "C:\\Missing\\missing.exe" }
+  ]
+}

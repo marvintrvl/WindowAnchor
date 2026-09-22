@@ -1,3 +1,4 @@
+using WindowAnchor.Models;
 using WindowAnchor.Services;
 
 namespace WindowAnchor.Tests;
@@ -14,6 +15,14 @@ public class RestorePreviewPolicyTests
     public void Disabled_preference_skips_routine_executable_preview()
     {
         Assert.False(RestorePreviewPolicy.ShouldShow(ExecutablePlan(), previewEnabled: false));
+    }
+
+    [Fact]
+    public void Disabled_preference_still_shows_exact_switch_preview()
+    {
+        RestorePlan plan = ExecutablePlan() with { Mode = RestoreModeKind.ExactSwitch };
+
+        Assert.True(RestorePreviewPolicy.ShouldShow(plan, previewEnabled: false));
     }
 
     [Fact]
@@ -68,6 +77,43 @@ public class RestorePreviewPolicyTests
         };
 
         Assert.True(RestorePreviewPolicy.ShouldShow(plan, previewEnabled: false));
+    }
+
+    [Fact]
+    public void Disabled_preference_does_not_show_preview_for_an_excluded_entry_without_blocking_errors()
+    {
+        RestorePlan plan = ExecutablePlan() with
+        {
+            Entries =
+            [
+                new RestorePlanEntry(
+                    0,
+                    "entry",
+                    RestorePlanEntryOutcome.Excluded,
+                    "No safe action is available.",
+                    new SavedWindowIdentity(),
+                    Array.Empty<RestorePlanCandidate>(),
+                    null,
+                    new RestoreTargetPlacement(
+                        "monitor",
+                        0,
+                        RestoreMonitorMappingKind.ExactStableId,
+                        0,
+                        0,
+                        800,
+                        600,
+                        1,
+                        96,
+                        96,
+                        false),
+                    RestoreLaunchRequirement.None("Already running."),
+                    Array.Empty<RestoreAction>(),
+                    Array.Empty<RestorePlanIssue>(),
+                    Array.Empty<RestorePlanIssue>())
+            ]
+        };
+
+        Assert.False(RestorePreviewPolicy.ShouldShow(plan, previewEnabled: false));
     }
 
     private static RestorePlan ExecutablePlan() => new()

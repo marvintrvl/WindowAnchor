@@ -46,7 +46,10 @@ internal sealed class RestorePlanPreviewDialog : FluentWindow
         RestorePlanPreview preview = RestorePlanPreviewBuilder.Build(_workingPlan);
 
         string operation = _isPreviewOnly ? "preview" : isWorkspaceSwitch ? "switch" : "restore";
-        Title = $"Review {operation}: {preview.WorkspaceName}";
+        string variantLabel = string.IsNullOrWhiteSpace(previewPlan.LayoutVariantName)
+            ? ""
+            : $" ({previewPlan.LayoutVariantName})";
+        Title = $"Review {operation}: {preview.WorkspaceName}{variantLabel}";
         Width = 780;
         Height = 720;
         MinWidth = 640;
@@ -62,7 +65,7 @@ internal sealed class RestorePlanPreviewDialog : FluentWindow
 
         var titleBar = new TitleBar
         {
-            Title = $"Review {operation}: {preview.WorkspaceName}",
+            Title = $"Review {operation}: {preview.WorkspaceName}{variantLabel}",
             ShowMinimize = false,
             ShowMaximize = false
         };

@@ -76,12 +76,31 @@ public sealed record WindowMatchHint
 }
 
 /// <summary>
+/// A reusable application identity that is preserved during exact workspace switches. Either an
+/// executable filename or an AppUserModelId is required; window titles and install directories are
+/// deliberately not part of this preference.
+/// </summary>
+public sealed record PersistentApplicationIdentity
+{
+    public string ExecutableName { get; init; } = "";
+    public string AppUserModelId { get; init; } = "";
+}
+
+/// <summary>
+/// Runtime-only presentation data for a configured persistent application. It is deliberately
+/// separate from the persisted identity so display paths and titles do not become restore policy.
+/// </summary>
+public sealed record PersistentApplicationCandidate(
+    PersistentApplicationIdentity Identity,
+    string ExecutablePath);
+
+/// <summary>
 /// Persisted application settings stored in %AppData%\WindowAnchor\settings.json.
 /// </summary>
 public class AppSettings
 {
     /// <summary>Current persisted settings schema version.</summary>
-    public const int CurrentSchemaVersion = 5;
+    public const int CurrentSchemaVersion = 8;
 
     /// <summary>Schema version used to serialize this settings document.</summary>
     [JsonInclude]
@@ -115,13 +134,16 @@ public class AppSettings
     /// A preview can still be required when the plan needs an explicit ambiguity or blocking-error
     /// decision.
     /// </summary>
-    public bool ShowRestorePreview { get; set; } = true;
+    public bool ShowRestorePreview { get; set; }
 
     /// <summary>
-    /// Whether restore-related mutations capture a durable recovery checkpoint first.
-    /// Disabling this reduces restore latency but means the operation cannot create a new undo point.
+    /// Whether routine restore mutations capture a durable recovery checkpoint first. Exact workspace
+    /// switches and Undo always create a checkpoint because they can close or replace desktop state.
     /// </summary>
-    public bool CreateRestoreCheckpoints { get; set; } = true;
+    public bool CreateRestoreCheckpoints { get; set; }
+
+    /// <summary>Minimum foreground-window area that must remain in a current work area before rescue acts.</summary>
+    public double MinimumVisibleWindowAreaRatio { get; set; } = 0.25;
 
     // ── Diagnostics ──────────────────────────────────────────────────────
     /// <summary>
@@ -156,6 +178,13 @@ public class AppSettings
     /// </summary>
     public Dictionary<string, string>? MonitorAliases { get; set; }
 
+    // ── Logical path aliases ─────────────────────────────────────────────
+    /// <summary>
+    /// Per-device mappings from a logical root such as <c>PROJECTS</c> to an absolute local
+    /// directory. Workspace entries retain both the original absolute path and the logical form.
+    /// </summary>
+    public Dictionary<string, string>? LogicalPathAliases { get; set; }
+
     // ── Dedicated browser windows ─────────────────────────────────────────
     /// <summary>
     /// URL fragments identifying browser windows that should be restored as their own window
@@ -173,6 +202,14 @@ public class AppSettings
     /// </para>
     /// </summary>
     public List<string>? DedicatedBrowserUrlPatterns { get; set; }
+
+    // ── Global switch preservation ───────────────────────────────────────
+    /// <summary>
+    /// Applications preserved during Exact Switch across every workspace. Identities use an
+    /// executable filename or exact AUMID only, so titles and versioned install paths cannot
+    /// accidentally create an exception.
+    /// </summary>
+    public List<PersistentApplicationIdentity>? PersistentApplications { get; set; }
 
     // ── Learned window matching ──────────────────────────────────────────
     /// <summary>

@@ -7,6 +7,15 @@ namespace WindowAnchor.Tests;
 public class SettingsServiceTests
 {
     [Fact]
+    public void New_settings_keep_routine_restore_quiet_and_checkpoint_free()
+    {
+        var settings = new AppSettings();
+
+        Assert.False(settings.ShowRestorePreview);
+        Assert.False(settings.CreateRestoreCheckpoints);
+    }
+
+    [Fact]
     public void V1_settings_migrate_name_references_to_ids_and_are_idempotent()
     {
         using var directory = new TestDirectory();
@@ -73,7 +82,7 @@ public class SettingsServiceTests
         service.Save();
 
         using var json = JsonDocument.Parse(File.ReadAllText(settingsPath));
-        Assert.Equal(5, json.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(AppSettings.CurrentSchemaVersion, json.RootElement.GetProperty("schemaVersion").GetInt32());
         Assert.Equal(workspaceId, json.RootElement.GetProperty("defaultWorkspaceId").GetString());
         Assert.Equal(
             workspaceId,
@@ -83,6 +92,7 @@ public class SettingsServiceTests
             json.RootElement.GetProperty("diagnosticLogLevel").GetInt32());
         Assert.False(json.RootElement.GetProperty("showRestorePreview").GetBoolean());
         Assert.False(json.RootElement.GetProperty("createRestoreCheckpoints").GetBoolean());
+        Assert.Equal(0.25, json.RootElement.GetProperty("minimumVisibleWindowAreaRatio").GetDouble());
         Assert.False(json.RootElement.GetProperty("onboardingCompleted").GetBoolean());
         Assert.False(json.RootElement.TryGetProperty("defaultWorkspaceName", out _));
         Assert.False(json.RootElement.TryGetProperty("workspaceOrder", out _));
@@ -117,18 +127,17 @@ public class SettingsServiceTests
     }
 
     [Fact]
-    public void Current_settings_load_without_rewrite()
+    public void Previous_current_settings_migrate_to_the_current_schema()
     {
         using var directory = new TestDirectory();
         string settingsPath = directory.CopyFixture("current-v5.settings.json", "settings.json");
-        string original = File.ReadAllText(settingsPath);
-
         var service = new SettingsService(settingsPath, new StorageService(directory.Path));
 
         Assert.False(service.IsSaveBlocked);
         Assert.Equal("11111111-1111-4111-8111-111111111111", service.Settings.DefaultWorkspaceId);
         Assert.True(service.Settings.OnboardingCompleted);
-        Assert.Equal(original, File.ReadAllText(settingsPath));
+        Assert.Equal(AppSettings.CurrentSchemaVersion, service.Settings.SchemaVersion);
+        Assert.Contains("\"schemaVersion\": 8", File.ReadAllText(settingsPath));
     }
 
     [Fact]
@@ -142,7 +151,7 @@ public class SettingsServiceTests
         Assert.Equal(AppSettings.CurrentSchemaVersion, service.Settings.SchemaVersion);
         Assert.True(service.Settings.OnboardingCompleted);
         string migrated = File.ReadAllText(settingsPath);
-        Assert.Contains("\"schemaVersion\": 5", migrated);
+        Assert.Contains("\"schemaVersion\": 8", migrated);
         Assert.Contains("\"onboardingCompleted\": true", migrated);
     }
 
@@ -157,14 +166,14 @@ public class SettingsServiceTests
         Assert.Equal(AppSettings.CurrentSchemaVersion, service.Settings.SchemaVersion);
         Assert.Equal("11111111-1111-4111-8111-111111111111", service.Settings.DefaultWorkspaceId);
         Assert.Null(service.Settings.WindowMatchHints);
-        Assert.True(service.Settings.ShowRestorePreview);
-        Assert.True(service.Settings.CreateRestoreCheckpoints);
+        Assert.False(service.Settings.ShowRestorePreview);
+        Assert.False(service.Settings.CreateRestoreCheckpoints);
         Assert.True(service.Settings.OnboardingCompleted);
-        Assert.Contains("\"schemaVersion\": 5", File.ReadAllText(settingsPath));
+        Assert.Contains("\"schemaVersion\": 8", File.ReadAllText(settingsPath));
     }
 
     [Fact]
-    public void V3_settings_migrate_with_existing_restore_safety_behavior_enabled()
+    public void V3_settings_migrate_with_routine_restore_defaults_disabled()
     {
         using var directory = new TestDirectory();
         string settingsPath = directory.CopyFixture("current-v3.settings.json", "settings.json");
@@ -172,12 +181,12 @@ public class SettingsServiceTests
         var service = new SettingsService(settingsPath, new StorageService(directory.Path));
 
         Assert.Equal(AppSettings.CurrentSchemaVersion, service.Settings.SchemaVersion);
-        Assert.True(service.Settings.ShowRestorePreview);
-        Assert.True(service.Settings.CreateRestoreCheckpoints);
+        Assert.False(service.Settings.ShowRestorePreview);
+        Assert.False(service.Settings.CreateRestoreCheckpoints);
         Assert.True(service.Settings.OnboardingCompleted);
         string migrated = File.ReadAllText(settingsPath);
-        Assert.Contains("\"showRestorePreview\": true", migrated);
-        Assert.Contains("\"createRestoreCheckpoints\": true", migrated);
+        Assert.Contains("\"showRestorePreview\": false", migrated);
+        Assert.Contains("\"createRestoreCheckpoints\": false", migrated);
     }
 
     [Fact]
@@ -211,6 +220,34 @@ public class SettingsServiceTests
         Assert.Null(reloaded.Settings.WindowMatchHints);
         Assert.Empty(new SettingsService(settingsPath, new StorageService(directory.Path))
             .Settings.WindowMatchHints ?? []);
+    }
+
+    [Fact]
+    public void Persistent_applications_round_trip_and_can_be_removed()
+    {
+        using var directory = new TestDirectory();
+        string settingsPath = Path.Combine(directory.Path, "settings.json");
+        var service = new SettingsService(settingsPath, new StorageService(directory.Path));
+        var identity = new PersistentApplicationIdentity
+        {
+            ExecutableName = @"C:\\Users\\me\\AppData\\Local\\Teams\\current\\teams.exe"
+        };
+
+        service.AddPersistentApplication(identity);
+        service.AddPersistentApplication(new PersistentApplicationIdentity
+        {
+            ExecutableName = "TEAMS.EXE"
+        });
+
+        var reloaded = new SettingsService(settingsPath, new StorageService(directory.Path));
+        PersistentApplicationIdentity saved = Assert.Single(reloaded.Settings.PersistentApplications!);
+        Assert.Equal("teams.exe", saved.ExecutableName, ignoreCase: true);
+        Assert.True(reloaded.RemovePersistentApplication(new PersistentApplicationIdentity
+        {
+            ExecutableName = "teams.exe"
+        }));
+        Assert.Empty(new SettingsService(settingsPath, new StorageService(directory.Path))
+            .Settings.PersistentApplications ?? []);
     }
 
     [Fact]

@@ -182,6 +182,12 @@
                         </Border>
                         <Border Style="{StaticResource SectionCard}">
                             <StackPanel>
+                                <TextBlock Text="Rescue active window" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="Use the tray's Rescue Active Window command after selecting a window that is partly or fully off-screen. It moves only that foreground window into the nearest reachable monitor work area when less than the configured visible-area threshold remains on screen. It does not restore a workspace, reopen applications, change other windows, or unmaximize a maximized window."/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
                                 <TextBlock Text="Recovery checkpoints and Undo" Style="{StaticResource SectionTitle}"/>
                                 <TextBlock Style="{StaticResource BodyText}" Text="When enabled, WindowAnchor captures a local metadata-only recovery point before restore mutations. Disabling checkpoints reduces work but new operations cannot create an Undo point. Undo uses the normal matching and restore pipeline; applications may still refuse to close, launch, or move."/>
                             </StackPanel>

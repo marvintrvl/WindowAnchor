@@ -19,6 +19,8 @@ public class WorkspaceEntry
 
     // ── App identity ─────────────────────────────────────────────────────────
     public string ExecutablePath  { get; set; } = "";
+    /// <summary>Optional portable alias form of <see cref="ExecutablePath"/>; the absolute path remains local fallback data.</summary>
+    public string? LogicalExecutablePath { get; set; }
     public string ProcessName     { get; set; } = "";
     public string WindowClassName { get; set; } = "";
 
@@ -57,9 +59,13 @@ public class WorkspaceEntry
 
     // ── File tracking (null when SavedWithFiles = false) ─────────────────────
     public string? FilePath       { get; set; }
+    /// <summary>Optional portable alias form of <see cref="FilePath"/>.</summary>
+    public string? LogicalFilePath { get; set; }
     public int     FileConfidence { get; set; }
     public string  FileSource     { get; set; } = "NONE";
     public string? LaunchArg      { get; set; }
+    /// <summary>Optional portable alias form of <see cref="LaunchArg"/>.</summary>
+    public string? LogicalLaunchArg { get; set; }
 
     // ── Window position ──────────────────────────────────────────────────────
     public WindowRecord Position  { get; set; } = new();

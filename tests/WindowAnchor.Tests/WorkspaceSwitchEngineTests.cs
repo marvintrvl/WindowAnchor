@@ -145,6 +145,24 @@ public class WorkspaceSwitchEngineTests
     }
 
     [Fact]
+    public async Task Protected_global_application_is_not_counted_as_an_unrelated_switch_warning()
+    {
+        var windows = new FakeSwitchWindows(
+            closeCandidates: [new IntPtr(10), new IntPtr(20)],
+            riskCandidates: [new IntPtr(10), new IntPtr(20)])
+        {
+            Alive = _ => false
+        };
+
+        WorkspaceSwitchResult result = await Engine(windows).ExecuteAsync(
+            new HashSet<IntPtr> { new IntPtr(20) },
+            _ => Task.FromResult(Completed()));
+
+        Assert.Equal(1, result.RiskWindowCount);
+        Assert.Equal([new IntPtr(10)], windows.LastRequested.OrderBy(handle => handle.ToInt64()));
+    }
+
+    [Fact]
     public async Task New_switch_cancels_previous_switch_and_serializes_restore_callbacks()
     {
         var windows = new FakeSwitchWindows([], []);

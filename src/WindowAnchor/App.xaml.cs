@@ -23,6 +23,7 @@ public partial class App : System.Windows.Application
     private WorkspaceService?   _workspaceService;
     private StorageService?     _storageService;
     private SettingsService?    _settingsService;
+    private WindowService?      _windowService;
     private HotkeyService?     _hotkeyService;
     private UI.SettingsWindow? _settingsWindow;
     private UI.HelpReferenceWindow? _helpWindow;
@@ -69,6 +70,26 @@ public partial class App : System.Windows.Application
         }
 
         if (e.Args.Length > 0 &&
+            e.Args[0].Equals("--simulate-restore", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (e.Args.Length < 2)
+                    throw new ArgumentException("--simulate-restore requires a fixture path.");
+                RestoreSimulationResult result = RestoreSimulationRunner.Run(
+                    RestoreSimulationRunner.Load(e.Args[1]));
+                Console.Out.WriteLine(result.ToRedactedJson());
+                Shutdown(result.Succeeded ? 0 : 2);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(ex.Message);
+                Shutdown(1);
+            }
+            return;
+        }
+
+        if (e.Args.Length > 0 &&
             (e.Args[0].Equals("--native-messaging", StringComparison.OrdinalIgnoreCase) ||
              e.Args[0].StartsWith("chrome-extension://", StringComparison.OrdinalIgnoreCase)))
         {
@@ -102,6 +123,7 @@ public partial class App : System.Windows.Application
         _settingsService      = new SettingsService(storageService);
         AppLogger.MinimumLevel = _settingsService.Settings.DiagnosticLogLevel;
         var windowService     = new WindowService(_settingsService);
+        _windowService        = windowService;
         var jumpListService   = new JumpListService();
         var webAppService     = new WebAppService();
         var browserSessionBridge = new BrowserSessionBridge();
@@ -180,6 +202,17 @@ public partial class App : System.Windows.Application
 
             if (target != null)
             {
+                DisplayTopologyStabilizationResult stabilization =
+                    await _coordinator!.WaitForStableDisplayTopologyAsync();
+                if (!stabilization.IsStable)
+                {
+                    AppLogger.Info(
+                        "app.startup_restore_topology_timeout",
+                        "Skipped startup restore because the display topology did not settle before the timeout",
+                        LogField.Identifier("monitorFingerprint", stabilization.Snapshot.Fingerprint));
+                    return;
+                }
+
                 AppLogger.Info(
                     "app.startup_restore_started",
                     "Started the configured startup restore",
@@ -312,11 +345,15 @@ public partial class App : System.Windows.Application
         {
             foreach (object item in trayMenu.Items)
             {
-                if (item is System.Windows.Controls.MenuItem menuItem &&
-                    menuItem.Name == "UndoLastRestoreMenuItem")
+                if (item is not System.Windows.Controls.MenuItem menuItem)
+                    continue;
+                if (menuItem.Name == "UndoLastRestoreMenuItem")
                 {
                     menuItem.IsEnabled = _coordinator?.CanUndoLastRestore == true;
-                    break;
+                }
+                else if (menuItem.Name == "CopyLastRestoreDiagnosticsMenuItem")
+                {
+                    menuItem.IsEnabled = RestoreDiagnosticsReportStore.HasLatest;
                 }
             }
         }
@@ -340,6 +377,62 @@ public partial class App : System.Windows.Application
                 "Undo Failed",
                 "The previous desktop state could not be restored.",
                 H.NotifyIcon.Core.NotificationIcon.Warning);
+        }
+    }
+
+    private void OnCopyLastRestoreDiagnosticsClick(object sender, RoutedEventArgs e)
+    {
+        if (!RestoreDiagnosticsReportStore.TryGetLatest(out RestoreDiagnosticsReport? report) ||
+            report is null)
+            return;
+        try
+        {
+            Clipboard.SetText(report.ToRedactedJson());
+            ShowBalloon(
+                "Restore Diagnostics Copied",
+                "The latest redacted restore report is ready to paste.");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn(
+                "restore.diagnostics_copy_failed",
+                "Could not copy the latest restore diagnostics report",
+                ex,
+                LogField.Public("errorCategory", "clipboard"));
+            ShowBalloon(
+                "Diagnostics Not Copied",
+                "WindowAnchor could not copy the latest restore report.",
+                H.NotifyIcon.Core.NotificationIcon.Warning);
+        }
+    }
+
+    private void OnRescueActiveWindowClick(object sender, RoutedEventArgs e)
+    {
+        if (_windowService is null || _monitorService is null || _settingsService is null)
+            return;
+
+        OffScreenWindowRescueResult result = _windowService.RescueForegroundWindow(
+            _monitorService.GetCurrentMonitors(),
+            new OffScreenWindowRescuePolicy
+            {
+                MinimumVisibleAreaRatio = _settingsService.Settings.MinimumVisibleWindowAreaRatio
+            });
+        switch (result.Status)
+        {
+            case OffScreenWindowRescueStatus.Rescued:
+                ShowBalloon("Active Window Rescued", "The active window was moved into a reachable work area.");
+                break;
+            case OffScreenWindowRescueStatus.AlreadyVisible:
+                ShowBalloon("Active Window Is Reachable", "The active window already has enough visible area.");
+                break;
+            case OffScreenWindowRescueStatus.NoActiveWindow:
+                ShowBalloon("No Active Window", "Select an application window, then try again.",
+                    H.NotifyIcon.Core.NotificationIcon.Warning);
+                break;
+            default:
+                ShowBalloon("Window Rescue Needs Attention", "WindowAnchor could not update the active window placement.",
+                    H.NotifyIcon.Core.NotificationIcon.Warning);
+                break;
         }
     }
 

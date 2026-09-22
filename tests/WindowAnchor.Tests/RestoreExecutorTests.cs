@@ -16,7 +16,7 @@ public class RestoreExecutorTests
     {
         WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Notes");
         LiveWindowIdentity live = Live(10, 1010, entry.ExecutablePath, "Notes");
-        RestorePlan plan = Plan(Snapshot(entry), [live]);
+        RestorePlan plan = Plan(Snapshot(entry), [live], mode: RestoreMode.MoveExisting);
         var inventory = Inventory((10, 1010, entry.ExecutablePath, "Notes"));
         var mutation = new RecordingWindowMutation();
 
@@ -26,7 +26,7 @@ public class RestoreExecutorTests
         var restored = Assert.Single(mutation.Restores);
         Assert.Equal(new IntPtr(10), restored.Hwnd);
         Assert.True(restored.Record.CoordinatesAreFinal);
-        Assert.Equal(4, inventory.LiveInventoryCalls);
+        Assert.Equal(3, inventory.LiveInventoryCalls);
         RestoreExecutionEntryResult entryResult = Assert.Single(result.Entries);
         Assert.Equal(RestoreExecutionEntryStatus.Restored, entryResult.Status);
         Assert.Equal(WindowPlacementVerificationState.Applied, entryResult.PlacementVerification);
@@ -37,10 +37,59 @@ public class RestoreExecutorTests
     }
 
     [Fact]
+    public async Task Exact_topology_resume_revalidates_a_no_op_without_mutation_or_waits()
+    {
+        WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Notes");
+        RestorePlan plan = Plan(
+            Snapshot(entry),
+            [Live(19, 1919, entry.ExecutablePath, "Notes")],
+            mode: RestoreMode.Resume,
+            exactTopology: true);
+        var clock = new FakeRestoreClock();
+        var mutation = new RecordingWindowMutation();
+
+        RestoreExecutionResult result = await Executor(
+            Inventory((19, 1919, entry.ExecutablePath, "Notes")),
+            mutation,
+            clock: clock).ExecuteAsync(plan);
+
+        Assert.Empty(plan.Actions);
+        Assert.Equal(RestoreExecutionStatus.Completed, result.Status);
+        Assert.Empty(mutation.Restores);
+        Assert.Empty(clock.Delays);
+        Assert.Equal([19L], result.AssignedWindowHandles);
+        Assert.Equal(RestoreExecutionEntryStatus.Restored, Assert.Single(result.Entries).Status);
+    }
+
+    [Fact]
+    public async Task Exact_topology_resume_no_op_becomes_stale_when_the_reviewed_candidate_changes()
+    {
+        WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Notes");
+        RestorePlan plan = Plan(
+            Snapshot(entry),
+            [Live(20, 2020, entry.ExecutablePath, "Notes")],
+            mode: RestoreMode.Resume,
+            exactTopology: true);
+        var mutation = new RecordingWindowMutation();
+
+        RestoreExecutionResult result = await Executor(
+            Inventory((21, 2121, entry.ExecutablePath, "Notes")),
+            mutation).ExecuteAsync(plan);
+
+        Assert.Empty(plan.Actions);
+        Assert.Equal(RestoreExecutionStatus.StalePlan, result.Status);
+        Assert.Empty(mutation.Restores);
+        Assert.Equal(RestoreExecutionEntryStatus.Stale, Assert.Single(result.Entries).Status);
+    }
+
+    [Fact]
     public async Task Placement_noise_inside_dpi_aware_tolerance_does_not_retry()
     {
         WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Notes");
-        RestorePlan plan = Plan(Snapshot(entry), [Live(11, 1111, entry.ExecutablePath, "Notes")]);
+        RestorePlan plan = Plan(
+            Snapshot(entry),
+            [Live(11, 1111, entry.ExecutablePath, "Notes")],
+            mode: RestoreMode.MoveExisting);
         RestoreTargetPlacement target = Assert.Single(plan.Entries).TargetPlacement;
         var probe = new FakeWindowPlacementProbe { DefaultObservation = Placement(target, 7) };
         var mutation = new RecordingWindowMutation();
@@ -62,7 +111,10 @@ public class RestoreExecutorTests
     public async Task Mismatched_placement_is_retried_on_the_same_assigned_hwnd_and_verified()
     {
         WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Notes");
-        RestorePlan plan = Plan(Snapshot(entry), [Live(12, 1212, entry.ExecutablePath, "Notes")]);
+        RestorePlan plan = Plan(
+            Snapshot(entry),
+            [Live(12, 1212, entry.ExecutablePath, "Notes")],
+            mode: RestoreMode.MoveExisting);
         RestoreTargetPlacement target = Assert.Single(plan.Entries).TargetPlacement;
         var probe = new FakeWindowPlacementProbe
         {
@@ -90,7 +142,10 @@ public class RestoreExecutorTests
     public async Task Rejected_placement_stops_at_the_configured_retry_bound_and_is_reported()
     {
         WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Notes");
-        RestorePlan plan = Plan(Snapshot(entry), [Live(13, 1313, entry.ExecutablePath, "Notes")]);
+        RestorePlan plan = Plan(
+            Snapshot(entry),
+            [Live(13, 1313, entry.ExecutablePath, "Notes")],
+            mode: RestoreMode.MoveExisting);
         RestoreTargetPlacement target = Assert.Single(plan.Entries).TargetPlacement;
         var probe = new FakeWindowPlacementProbe { DefaultObservation = Placement(target, 100) };
         var mutation = new RecordingWindowMutation();
@@ -116,7 +171,10 @@ public class RestoreExecutorTests
     public async Task App_that_moves_an_applied_window_is_distinguished_from_rejection()
     {
         WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Notes");
-        RestorePlan plan = Plan(Snapshot(entry), [Live(14, 1414, entry.ExecutablePath, "Notes")]);
+        RestorePlan plan = Plan(
+            Snapshot(entry),
+            [Live(14, 1414, entry.ExecutablePath, "Notes")],
+            mode: RestoreMode.MoveExisting);
         RestoreTargetPlacement target = Assert.Single(plan.Entries).TargetPlacement;
         var probe = new FakeWindowPlacementProbe
         {
@@ -132,18 +190,22 @@ public class RestoreExecutorTests
             placementProbe: probe,
             placementPolicy: VerificationPolicy(maxRetries: 1)).ExecuteAsync(plan);
 
-        Assert.Equal(RestoreExecutionStatus.CompletedWithFailures, result.Status);
-        Assert.Equal(2, mutation.Restores.Count);
-        RestoreExecutionEntryResult failed = Assert.Single(result.Entries);
-        Assert.Equal(WindowPlacementVerificationState.MovedByApp, failed.PlacementVerification);
-        Assert.Equal(1, failed.PlacementRetryCount);
+        Assert.Equal(RestoreExecutionStatus.Completed, result.Status);
+        Assert.Single(mutation.Restores);
+        RestoreExecutionEntryResult restored = Assert.Single(result.Entries);
+        Assert.Equal(RestoreExecutionEntryStatus.Restored, restored.Status);
+        Assert.Equal(WindowPlacementVerificationState.Applied, restored.PlacementVerification);
+        Assert.Equal(0, restored.PlacementRetryCount);
     }
 
     [Fact]
     public async Task Window_closed_during_verification_is_reported_without_retrying_a_new_handle()
     {
         WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Notes");
-        RestorePlan plan = Plan(Snapshot(entry), [Live(16, 1616, entry.ExecutablePath, "Notes")]);
+        RestorePlan plan = Plan(
+            Snapshot(entry),
+            [Live(16, 1616, entry.ExecutablePath, "Notes")],
+            mode: RestoreMode.MoveExisting);
         var mutation = new RecordingWindowMutation();
         var probe = new FakeWindowPlacementProbe
         {
@@ -207,7 +269,10 @@ public class RestoreExecutorTests
     public async Task Placement_adapter_can_override_generic_tolerance_without_changing_matching()
     {
         WorkspaceEntry entry = Entry(@"C:\Apps\special.exe", "Special");
-        RestorePlan plan = Plan(Snapshot(entry), [Live(15, 1515, entry.ExecutablePath, "Special")]);
+        RestorePlan plan = Plan(
+            Snapshot(entry),
+            [Live(15, 1515, entry.ExecutablePath, "Special")],
+            mode: RestoreMode.MoveExisting);
         RestoreTargetPlacement target = Assert.Single(plan.Entries).TargetPlacement;
         var probe = new FakeWindowPlacementProbe { DefaultObservation = Placement(target, 15) };
         var mutation = new RecordingWindowMutation();
@@ -236,7 +301,8 @@ public class RestoreExecutorTests
         WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Notes");
         RestorePlan plan = Plan(
             Snapshot(entry),
-            [Live(20, 2020, entry.ExecutablePath, "Notes")]);
+            [Live(20, 2020, entry.ExecutablePath, "Notes")],
+            mode: RestoreMode.MoveExisting);
         var inventory = new FakeWindowInventory
         {
             Live = replaceHandle
@@ -369,8 +435,7 @@ public class RestoreExecutorTests
             clock).ExecuteAsync(plan);
 
         Assert.Equal(
-            [TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250),
-             TimeSpan.FromMilliseconds(350)],
+            [TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250)],
             clock.Delays);
         Assert.Equal(RestoreExecutionStatus.Completed, result.Status);
         Assert.Equal(new IntPtr(30), Assert.Single(mutation.Restores).Hwnd);
@@ -447,7 +512,7 @@ public class RestoreExecutorTests
         Assert.Equal(RestoreExecutionActionStatus.Failed, timeout.Status);
         Assert.Equal(AppReadinessState.TimedOut, timeout.ReadinessState);
         Assert.Contains("750 ms", timeout.Explanation);
-        Assert.Equal(4, clock.Delays.Count);
+        Assert.Equal(3, clock.Delays.Count);
     }
 
     [Fact]
@@ -621,7 +686,7 @@ public class RestoreExecutorTests
             readinessProbe: readiness,
             readinessStrategies: [new ImmediateSpecialAppReadinessStrategy()]).ExecuteAsync(plan);
 
-        Assert.Equal([TimeSpan.FromMilliseconds(350)], clock.Delays);
+        Assert.Empty(clock.Delays);
         Assert.Equal(new IntPtr(32), Assert.Single(mutation.Restores).Hwnd);
         RestoreExecutionActionResult wait = Assert.Single(
             result.Actions,
@@ -957,7 +1022,7 @@ public class RestoreExecutorTests
 
         Assert.Equal(RestoreExecutionStatus.Completed, result.Status);
         Assert.Equal(
-            ["inventory", "inventory", "mutation", "verification", "delay", "verification"],
+            ["inventory", "inventory", "mutation", "verification"],
             trace);
         Assert.Equal([90L], result.AssignedWindowHandles);
         Assert.Single(mutation.Restores);
@@ -995,7 +1060,8 @@ public class RestoreExecutorTests
         IReadOnlyList<RestoreResourceObservation>? resources = null,
         BrowserSessionRestoreAvailability browserAvailability =
             BrowserSessionRestoreAvailability.NotAvailable,
-        RestoreMode? mode = null) => RestorePlanner.Build(
+        RestoreMode? mode = null,
+        bool exactTopology = false) => RestorePlanner.Build(
             snapshot,
             new RestoreLiveInventory
             {
@@ -1005,7 +1071,8 @@ public class RestoreExecutorTests
             },
             new RestoreMonitorTopology
             {
-                Monitors = [new RestoreMonitor("primary", 0, 0, 0, 1920, 1080, 96, true)]
+                Monitors = [new RestoreMonitor("primary", 0, 0, 0, 1920, 1080, 96, true)],
+                IsExactMatch = exactTopology
             },
             mode ?? RestoreMode.Standard);
 

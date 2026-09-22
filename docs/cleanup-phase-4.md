@@ -11,7 +11,7 @@ capture/plan and service tests the compatibility gate.
 
 ### Restore observation builder
 
-`Services/RestoreObservationBuilder.cs` now owns the read-only environment boundary used to build a
+`Services/Restore/RestoreObservationBuilder.cs` now owns the read-only environment boundary used to build a
 restore plan:
 
 - conversion of live HWND/PID records into immutable live identities;
@@ -25,21 +25,21 @@ restore plan:
 
 ### Capture and transaction boundaries
 
-`Services/WorkspaceCaptureBuilder.cs` now coordinates snapshot construction, optional browser
+`Services/Capture/WorkspaceCaptureBuilder.cs` now coordinates snapshot construction, optional browser
 enrichment, cancellation, and finalization without persistence. `WorkspaceService` supplies the
 existing snapshot-construction delegate and remains responsible for the public capture façade.
 The detailed entry construction and file-recovery policies intentionally remain in
 `WorkspaceService` and are explicitly scheduled for Phase 6; Phase 4 did not complete that deeper
 move.
 
-`Services/RestoreTransactionCoordinator.cs` owns single-flight checkpoint admission, cancellation
+`Services/Workspace/RestoreTransactionCoordinator.cs` owns single-flight checkpoint admission, cancellation
 mapping, and guaranteed gate release. Checkpoint-specific capture and storage policy remains in
 `WorkspaceService`; switch, restore, and undo callers use the same coordinator path.
 
 ### Pure planner policies and placement geometry
 
-`Services/RestorePlannerPolicies.cs` contains store-app detection, browser-process classification,
-and running-application identity policy. `Services/RestorePlacementGeometry.cs` contains normalized
+`Services/Restore/RestorePlannerPolicies.cs` contains store-app detection, browser-process classification,
+and running-application identity policy. `Services/Restore/RestorePlacementGeometry.cs` contains normalized
 layout adaptation, work-area clamping, and DPI scaling. `RestorePlanner` still owns action ordering,
 candidate assignment, confidence/evidence, and launch decisions.
 
@@ -53,7 +53,7 @@ browser/launch, correlated readiness, mutation, verification/retry, and aggregat
 the event handlers and collections that coordinate those rows, preserving all XAML names, tags,
 keyboard handling, focus behavior, and owner assignment.
 
-`Services/WorkspaceOrderPolicy.cs` owns the pure preferred-order/newest-fallback policy used by the
+`Services/Workspace/WorkspaceOrderPolicy.cs` owns the pure preferred-order/newest-fallback policy used by the
 Settings workspace list.
 
 ## Preservation evidence

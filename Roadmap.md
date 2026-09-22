@@ -5,10 +5,11 @@ dependency-checked ticket graph lives in the companion
 [WindowAnchor-Planning repository](https://github.com/marvintrvl/WindowAnchor-Planning); this file
 is intentionally a product-level view rather than a second issue tracker.
 
-## Current release: v1.5.2 — Restore Control and Update Recovery
+## Current release: v1.6.0 — Diagnostics and Topology
 
-WindowAnchor 1.5.2 keeps the safe restore pipeline while making its routine behavior faster,
-configurable, easier to understand, and resilient to versioned desktop-app updates:
+WindowAnchor 1.6.0 builds on the safe restore pipeline with restore diagnostics, deterministic
+simulation, display-topology stabilization, layout variants, application adapters, and practical
+recovery controls:
 
 - Manual tray and Settings restores show a per-entry plan before changing the desktop.
 - Users can disable entries while keeping the original match evidence and preview immutable.
@@ -52,6 +53,14 @@ configurable, easier to understand, and resilient to versioned desktop-app updat
   composed with persisted per-entry reuse, launch, close, and switch policies.
 - Fresh interactive installs receive one visible tray-app introduction. A permanent Help & Guide
   page in the tray and Settings documents operation, restore variants, policies, privacy, and limits.
+- Restore reports produce structured, privacy-redactable action and entry outcomes, and deterministic
+  simulation fixtures make planner behavior reproducible without mutating the live desktop.
+- Startup and display-change restoration use bounded topology stabilization. Workspaces retain named
+  topology-specific layout variants alongside their shared application context.
+- Logical path aliases, persistent keep-open app identities, and active-window rescue support safer
+  recovery after device, path, or display changes.
+- Chromium PWA, dedicated-browser URL, Explorer-folder, and generic Win32 behavior is owned by
+  independently testable capture and launch adapters.
 
 ## How the restore pipeline now works
 
@@ -71,24 +80,40 @@ configurable, easier to understand, and resilient to versioned desktop-app updat
 7. Verify final state with DPI-aware tolerance and bounded corrections to the assigned HWND.
 8. Return structured per-action and per-entry outcomes for UI and privacy-safe diagnostics.
 
+## Release verification limits
+
+The following v1.6.0 capabilities are covered by the service-level suite. See
+[`docs/implementation-status.md`](docs/implementation-status.md) for explicit verification limits.
+
+- Structured per-entry restore diagnostics, deterministic planner simulation, display-topology
+  stabilization, topology-specific layout variants, persistent application identities, active-window
+  rescue, logical path aliases, and application adapters are implemented.
+- Internal workspace transfer and generic-folder sync foundations are deliberately partial. They do
+  not yet provide a user-facing import/export or synchronization workflow.
+- Real-Windows Restore/Switch/Undo, changed-topology rescue, and warm exact-topology Resume checks
+  remain release gates; service-layer tests do not substitute for those desktop interactions.
+
 ## Next priorities
 
-The current recommended P0 sequence after v1.5.2 is:
+The dependency-checked ready queue is maintained in the companion planning repository. Its current
+order is:
 
-1. **Structured restore report** — turn executor results into clear per-item user diagnostics.
-2. **Display topology stabilization** — debounce transient docking states before automatic restore.
-3. **Layout variants** — select a saved arrangement for each stable monitor topology without adding
-   work to ordinary exact-topology restores.
-4. **Non-mutating workspace diff** — compare saved intent with the current desktop before restore.
-5. **App-adapter architecture** — add specialized identity and launch strategies without bypassing
-   shared matching, HWND ownership, readiness, or verification boundaries.
+1. **WA-017 VS Code workspace tracking** — capture and reopen `.code-workspace` and folder context.
+2. **WA-019 Browser profile awareness and tab deduplication** — retain profile identity and avoid
+   duplicate browser restoration.
+3. **WA-020 File Explorer adapter** — capture and restore folders through a dedicated adapter.
+4. **WA-021 Windows Terminal adapter** — capture and restore shells and profiles safely.
+5. **WA-030B/WA-031 display recovery** — temporary-resolution and RDP-aware restoration.
+6. **WA-036A/WA-036D portability resolution** — cross-device display mapping and moved-resource
+   resolution above the existing path-alias foundation.
+7. **WA-040A/WA-042A catalog and template foundations** — stable workspace metadata and templates.
 
 ## Later themes
 
-- Layout variants per workspace and display topology stabilization.
+- Non-mutating workspace health/diff views.
 - Automatic checkpoint triggers, quick temporary captures, and recovery-timeline UX.
-- Workspace health scans, deterministic simulations, and manual off-screen rescue.
-- Logical path aliases, import/export, generic-folder sync, and cross-device monitor identity.
+- Complete portable import/export, conflict preview, transfer-schema migration, staging validation,
+  manifests, device identity, and conflict-copy orchestration.
 - Stable workspace catalog metadata, desk profiles, templates, and broader ecosystem integrations.
 
 ## Release quality bar

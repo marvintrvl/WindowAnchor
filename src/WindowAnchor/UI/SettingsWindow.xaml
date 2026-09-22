@@ -238,6 +238,48 @@
                     </StackPanel>
                 </Border>
 
+                <!-- ══════════════════ PATH PORTABILITY ══════════════════ -->
+
+                <StackPanel Orientation="Horizontal" Margin="4,16,0,8">
+                    <ui:SymbolIcon Symbol="FolderArrowRight24" FontSize="18"
+                                   Foreground="{DynamicResource SystemAccentColorPrimaryBrush}"
+                                   VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <TextBlock Text="Path Portability"
+                               FontSize="15" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="8"
+                        Padding="16,14" Margin="0,0,0,8">
+                    <StackPanel>
+                        <TextBlock Text="Logical path aliases"
+                                   FontSize="13" FontWeight="Medium"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                        <TextBlock x:Name="LogicalPathAliasSummaryText"
+                                   TextWrapping="Wrap" FontSize="12" Margin="0,3,0,12"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="130"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="LogicalPathAliasNameTextBox" Grid.Column="0"
+                                     Margin="0,0,8,0" ToolTip="Alias name, for example PROJECTS"/>
+                            <TextBox x:Name="LogicalPathAliasRootTextBox" Grid.Column="1"
+                                     Margin="0,0,8,0" ToolTip="Absolute local directory"/>
+                            <ui:Button Grid.Column="2" Content="Save" Icon="{ui:SymbolIcon Save24}"
+                                       Margin="0,0,8,0" Click="OnSaveLogicalPathAlias"/>
+                            <ui:Button Grid.Column="3" Content="Remove" Appearance="Secondary"
+                                       Icon="{ui:SymbolIcon Delete24}" Click="OnRemoveLogicalPathAlias"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
                 <!-- ══════════════════ WINDOW MATCHING ══════════════════ -->
 
                 <StackPanel Orientation="Horizontal" Margin="4,8,0,8">
@@ -273,6 +315,36 @@
                                    VerticalAlignment="Center"
                                    Click="OnClearRememberedMatches"/>
                     </Grid>
+                </Border>
+
+                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="8"
+                        Padding="16,14" Margin="0,0,0,8">
+                    <Expander x:Name="PersistentApplicationsExpander"
+                              IsExpanded="False">
+                        <Expander.Header>
+                            <StackPanel Margin="0,0,16,0">
+                                <TextBlock Text="Keep open during workspace switches"
+                                           FontSize="13" FontWeight="Medium"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                <TextBlock x:Name="PersistentApplicationSummaryText"
+                                           TextWrapping="Wrap" FontSize="12" Margin="0,3,0,0"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            </StackPanel>
+                        </Expander.Header>
+                        <StackPanel Margin="0,14,0,0">
+                            <StackPanel x:Name="PersistentApplicationsPanel"/>
+                            <TextBlock x:Name="PersistentApplicationsEmptyText"
+                                       Text="No apps are currently preserved."
+                                       FontSize="12" Margin="0,0,0,10"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <ui:Button Content="Add open app" Appearance="Secondary"
+                                       Icon="{ui:SymbolIcon Add24}"
+                                       HorizontalAlignment="Left"
+                                       Click="OnAddPersistentApplication"/>
+                        </StackPanel>
+                    </Expander>
                 </Border>
 
                 <!-- ══════════════════ RESTORE WORKFLOW ══════════════════ -->
@@ -320,10 +392,10 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <StackPanel VerticalAlignment="Center" Margin="0,0,18,0">
-                                <TextBlock Text="Create recovery checkpoints"
+                                <TextBlock Text="Checkpoint routine restores"
                                            FontSize="13" FontWeight="Medium"
                                            Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                <TextBlock Text="Capture the current desktop before changes so Undo Last Restore can recover it. Turning this off speeds up restores but creates no new undo point."
+                                <TextBlock Text="Capture the current desktop before routine restores so they create a new undo point. Workspace switches and Undo always keep their recovery checkpoint."
                                            FontSize="12" TextWrapping="Wrap"
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                             </StackPanel>
@@ -332,6 +404,30 @@
                                              VerticalAlignment="Center"
                                              Checked="OnRestoreWorkflowToggleChanged"
                                              Unchecked="OnRestoreWorkflowToggleChanged"/>
+                        </Grid>
+
+                        <Separator Margin="0,14,0,14" Opacity="0.4"/>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center" Margin="0,0,18,0">
+                                <TextBlock Text="Window rescue visibility threshold"
+                                           FontSize="13" FontWeight="Medium"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                <TextBlock Text="Rescue Active Window only moves the active window when less than this area is reachable."
+                                           FontSize="12" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            </StackPanel>
+                            <ComboBox x:Name="RescueVisibilityThresholdCombo"
+                                      Grid.Column="1" MinWidth="120" VerticalAlignment="Center"
+                                      SelectionChanged="OnRescueVisibilityThresholdChanged">
+                                <ComboBoxItem Content="10%" Tag="0.10"/>
+                                <ComboBoxItem Content="25%" Tag="0.25"/>
+                                <ComboBoxItem Content="50%" Tag="0.50"/>
+                            </ComboBox>
                         </Grid>
                     </StackPanel>
                 </Border>

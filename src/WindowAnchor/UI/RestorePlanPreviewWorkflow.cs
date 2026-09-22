@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,16 +24,20 @@ internal static class RestorePlanPreviewWorkflow
             : RunAsync(coordinator, snapshot, mode, owner, cancellationToken);
     }
 
-    internal static Task<RestoreExecutionResult?> RunUndoAsync(
+    internal static async Task<RestoreExecutionResult?> RunUndoAsync(
         LayoutCoordinator coordinator,
         Window? owner = null,
-        CancellationToken cancellationToken = default) =>
-        RunWithProgressAsync(
+        CancellationToken cancellationToken = default)
+    {
+        RestoreExecutionResult? result = await RunWithProgressAsync(
             "previous desktop",
             isSwitch: false,
             owner,
             cancellationToken,
             (token, progress) => coordinator.UndoLastRestoreAsync(token, progress));
+        ShowLatestDiagnosticsWhenNeeded(result, "Undo Needs Attention", owner);
+        return result;
+    }
 
     internal static async Task<RestoreExecutionResult?> RunSwitchAsync(
         LayoutCoordinator coordinator,
@@ -51,12 +56,18 @@ internal static class RestorePlanPreviewWorkflow
                 Array.Empty<WindowMatchHint>();
             if (RestorePreviewPolicy.ShouldShow(preview, coordinator.RestorePreviewEnabled))
             {
+                Stopwatch preparationTimer = Stopwatch.StartNew();
                 var dialog = new RestorePlanPreviewDialog(preview, isWorkspaceSwitch: true);
+                preparationTimer.Stop();
                 if (owner is not null)
                     dialog.Owner = owner;
                 if (dialog.ShowDialog() != true || dialog.ApprovedPlan is null)
                     return null;
-                approvedPlan = dialog.ApprovedPlan;
+                approvedPlan = dialog.ApprovedPlan with
+                {
+                    PreviewPreparationDuration = preview.PreviewPreparationDuration +
+                        preparationTimer.Elapsed
+                };
                 approvedHints = dialog.ApprovedMatchHints;
             }
 
@@ -72,26 +83,7 @@ internal static class RestorePlanPreviewWorkflow
                     progress));
             if (result?.Status == RestoreExecutionStatus.Completed)
                 RememberApprovedMatches(coordinator, approvedHints);
-            if (result?.HasStalePlan == true)
-            {
-                ShowMessage(
-                    owner,
-                    "The switch preview became stale while unrelated windows were closing. " +
-                    "Nothing stale was applied; reopen the preview and try again.",
-                    "Switch Preview Is Stale",
-                    MessageBoxImage.Warning);
-            }
-            else if (result?.Status is RestoreExecutionStatus.Rejected or
-                     RestoreExecutionStatus.CompletedWithFailures)
-            {
-                string placementDetails = FormatPlacementFailures(result);
-                ShowMessage(
-                    owner,
-                    "The approved switch plan could not be completed." + placementDetails +
-                    " Reopen the preview to review current status.",
-                    "Switch Needs Attention",
-                    MessageBoxImage.Warning);
-            }
+            ShowDiagnosticsWhenNeeded(result, approvedPlan, "Switch Needs Attention", owner);
             return result;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -135,7 +127,9 @@ internal static class RestorePlanPreviewWorkflow
             bool previewOnly = mode.Kind == RestoreModeKind.PreviewOnly;
             if (previewOnly || RestorePreviewPolicy.ShouldShow(preview, coordinator.RestorePreviewEnabled))
             {
+                Stopwatch preparationTimer = Stopwatch.StartNew();
                 var dialog = new RestorePlanPreviewDialog(preview);
+                preparationTimer.Stop();
                 if (owner is not null)
                     dialog.Owner = owner;
                 bool approved = dialog.ShowDialog() == true && dialog.ApprovedPlan is not null;
@@ -143,7 +137,11 @@ internal static class RestorePlanPreviewWorkflow
                     return null;
                 if (!approved)
                     return null;
-                approvedPlan = dialog.ApprovedPlan!;
+                approvedPlan = dialog.ApprovedPlan! with
+                {
+                    PreviewPreparationDuration = preview.PreviewPreparationDuration +
+                        preparationTimer.Elapsed
+                };
                 approvedHints = dialog.ApprovedMatchHints;
             }
 
@@ -159,34 +157,7 @@ internal static class RestorePlanPreviewWorkflow
                     progress));
             if (result.Status == RestoreExecutionStatus.Completed)
                 RememberApprovedMatches(coordinator, approvedHints);
-            if (result.HasStalePlan)
-            {
-                string reasons = string.Join(
-                    Environment.NewLine,
-                    result.Actions
-                        .Where(action => action.Status == RestoreExecutionActionStatus.Stale)
-                        .Select(action => $"• {action.Explanation}")
-                        .Distinct(StringComparer.Ordinal)
-                        .Take(5));
-                ShowMessage(
-                    owner,
-                    "The restore preview is stale because the desktop or a required resource " +
-                    "changed after it was shown. Stale actions were not applied. Review a fresh " +
-                    $"preview before retrying.{Environment.NewLine}{Environment.NewLine}{reasons}",
-                    "Restore Preview Is Stale",
-                    MessageBoxImage.Warning);
-            }
-            else if (result.Status is RestoreExecutionStatus.Rejected or
-                     RestoreExecutionStatus.CompletedWithFailures)
-            {
-                string placementDetails = FormatPlacementFailures(result);
-                ShowMessage(
-                    owner,
-                    "The approved plan could not be completed." + placementDetails +
-                    " Reopen the restore preview to review blocking errors and current entry status.",
-                    "Restore Needs Attention",
-                    MessageBoxImage.Warning);
-            }
+            ShowDiagnosticsWhenNeeded(result, approvedPlan, "Restore Needs Attention", owner);
             return result;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -246,22 +217,31 @@ internal static class RestorePlanPreviewWorkflow
         }
     }
 
-    private static string FormatPlacementFailures(RestoreExecutionResult result)
+    private static void ShowDiagnosticsWhenNeeded(
+        RestoreExecutionResult? result,
+        RestorePlan plan,
+        string title,
+        Window? owner)
     {
-        if (result.PlacementFailures.Count == 0)
-            return "";
+        if (result is null || !RestoreDiagnosticsPresentationPolicy.ShouldShowFailureSummary(result))
+            return;
+        RestoreDiagnosticsReport report = RestoreDiagnosticsReportBuilder.Build(plan, result);
+        RestoreDiagnosticsReportStore.Record(report);
+        new RestoreDiagnosticsDialog(report, title, owner).ShowDialog();
+    }
 
-        string details = string.Join(
-            Environment.NewLine,
-            result.PlacementFailures
-                .Take(5)
-                .Select(entry =>
-                    $"• Entry {entry.EntryIndex + 1}: {entry.PlacementVerification} after " +
-                    $"{entry.PlacementRetryCount} " +
-                    $"retr{(entry.PlacementRetryCount == 1 ? "y" : "ies")}"));
-        return Environment.NewLine + Environment.NewLine +
-               "Post-restore placement verification:" + Environment.NewLine + details +
-               Environment.NewLine;
+    private static void ShowLatestDiagnosticsWhenNeeded(
+        RestoreExecutionResult? result,
+        string title,
+        Window? owner)
+    {
+        if (!RestoreDiagnosticsPresentationPolicy.ShouldShowFailureSummary(result) ||
+            !RestoreDiagnosticsReportStore.TryGetLatest(out RestoreDiagnosticsReport? report) ||
+            report is null)
+        {
+            return;
+        }
+        new RestoreDiagnosticsDialog(report, title, owner).ShowDialog();
     }
 
     private static void ShowMessage(
