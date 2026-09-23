@@ -2,7 +2,7 @@
 
 **WindowAnchor** is a modern, Fluent-designed window management utility for Windows 11. It allows you to capture your entire workspace — including window positions, sizes, and even open files — and restore them with a single click or automatically when your monitor configuration changes.
 
-[![GitHub release](https://img.shields.io/github/v/release/marvintrvl/WindowAnchor)](../../releases/latest)
+[![GitHub release](https://img.shields.io/github/v/release/marvintrvl/WindowAnchor)](https://github.com/marvintrvl/WindowAnchor/releases/tag/v1.6.0)
 
 This README describes the current development tree. Use the changelog and release notes to
 distinguish unreleased behavior from the latest packaged release.
@@ -102,7 +102,7 @@ distinguish unreleased behavior from the latest packaged release.
 
 WindowAnchor operates silently in your system tray, watching your display configuration. Using **Monitor Fingerprinting**, it identifies your current setup (e.g., "Home Office" vs. "Travel") and restores your preferred layout instantly.
 
-1. **Download**: Get the latest Windows executable from the [Releases](../../releases) page.
+1. **Download**: Get the Windows executable from the [v1.6.0 release](https://github.com/marvintrvl/WindowAnchor/releases/tag/v1.6.0) page.
 2. **Get oriented**: On the first interactive launch, use the in-app guide to save a workspace or
    open Settings. Reopen it later with **Help & Guide** from the tray or Settings.
 3. **Save**: Right-click the tray icon and select "Save Workspace...".
@@ -131,8 +131,7 @@ Customize global keyboard shortcuts and assign recognizable names to connected m
 Install the [WindowAnchor Browser Connector from the Chrome Web Store](https://chromewebstore.google.com/detail/windowanchor-browser-conn/liiklnjpifhhmjncifbjjfgplonkkinh). In WindowAnchor, open **Settings > Browser Integration > Set Up Chrome**: the app registers its current-user native host and opens this store listing in Chrome.
 
 ### Local desktop app install
-1. Download the latest versioned `WindowAnchor-v*.exe` from the GitHub release page and verify it
-   against `SHA256SUMS.txt`.
+1. Download `WindowAnchor-v1.6.0.exe` from the [v1.6.0 GitHub release](https://github.com/marvintrvl/WindowAnchor/releases/tag/v1.6.0) and verify it against `SHA256SUMS.txt`.
 2. Run the executable once to confirm the app starts correctly.
 3. If Windows prompts for security permissions, allow the app to run.
 
