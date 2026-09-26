@@ -175,6 +175,13 @@ internal static class RestoreExecutionSupport
 
     internal static BrowserSession ToBrowserSession(RestoreBrowserSession session) => new()
     {
+        BrowserSessionId = session.BrowserSessionId,
+        ProfileKey = session.ProfileKey,
+        ProfileLabel = session.ProfileLabel,
+        BrowserWindowId = session.BrowserWindowId,
+        LinkedEntryId = session.LinkedEntryId,
+        MonitorId = session.MonitorId,
+        RestorePolicy = session.RestorePolicy,
         Browser = session.Browser,
         ActiveTitle = session.ActiveTitle,
         WindowIndex = session.WindowIndex,

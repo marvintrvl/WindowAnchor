@@ -17,8 +17,17 @@ native task-window style/cloaking policy, background-only running processes, ses
 multiplicity, constrained Squirrel version-path rebinding, optional preview/checkpoint policy,
 visible-frame edge alignment, explicit restore-mode behavior, per-entry policy overrides,
 fresh-window correlation, preview-only non-mutation, and readiness waits correlated to their own
-successful launch activity.
-These tests do not move or launch real desktop windows.
+successful launch activity. The default suite does not move or launch real desktop windows.
+
+The opt-in Windows 11 File Explorer integration gate creates and closes one temporary Explorer
+window, restores three folder tabs, verifies the active tab, and repeats the restore to prove it
+does not add duplicates:
+
+```powershell
+$env:WINDOWANCHOR_LIVE_EXPLORER_SMOKE = "1"
+dotnet test tests/WindowAnchor.Tests/WindowAnchor.Tests.csproj -c Release `
+  --filter "FullyQualifiedName~Live_windows_11_explorer_tab_restore_smoke_when_enabled"
+```
 
 ## Complete Fresh Build (Debug)
 
@@ -76,10 +85,17 @@ Remove-Item -Recurse -Force src\WindowAnchor\bin, src\WindowAnchor\obj -ErrorAct
 $tag = "v<release-version>"
 Copy-Item src/WindowAnchor/bin/Release/net8.0-windows/win-x64/publish/WindowAnchor.exe "WindowAnchor-$tag.exe"
 Compress-Archive browser-extension/* "WindowAnchor-Browser-Connector-$tag.zip"
-Get-FileHash -Algorithm SHA256 "WindowAnchor-$tag.exe", "WindowAnchor-Browser-Connector-$tag.zip"
+Push-Location firefox-extension
+npx --yes web-ext@10.7.0 lint
+npx --yes web-ext@10.7.0 build --filename "windowanchor-firefox-connector-amo-$tag.zip" --artifacts-dir ..
+Pop-Location
+Move-Item "windowanchor-firefox-connector-amo-$tag.zip" "WindowAnchor-Firefox-Connector-AMO-$tag.zip"
+Get-FileHash -Algorithm SHA256 "WindowAnchor-$tag.exe", "WindowAnchor-Browser-Connector-$tag.zip", "WindowAnchor-Firefox-Connector-AMO-$tag.zip"
 ```
 
 The GitHub release workflow repeats the Release test and publish process from the tagged commit,
-packages the browser connector, and uploads both versioned assets plus `SHA256SUMS.txt`. Keep
+packages the Chromium connector, validates/builds the Firefox AMO submission ZIP, and uploads all
+three versioned assets plus `SHA256SUMS.txt`. The Firefox ZIP is not installable in normal
+Release/Beta Firefox until Mozilla signs it through AMO. Keep
 `Version`, `AssemblyVersion`, and `FileVersion` synchronized in
 `src/WindowAnchor/WindowAnchor.csproj` before tagging.

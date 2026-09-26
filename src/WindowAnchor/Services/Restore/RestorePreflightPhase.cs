@@ -98,7 +98,9 @@ internal sealed class RestorePreflightPhase
                 continue;
             }
 
-            if (firstAction is null && entry.SelectedMatch is not null)
+            bool onlyExplorerPostAction = entryActions.Length > 0 && entryActions.All(action =>
+                action.Action.Kind == RestoreActionKind.RestoreExplorerTabs);
+            if ((firstAction is null || onlyExplorerPostAction) && entry.SelectedMatch is not null)
             {
                 IntPtr handle = new(entry.SelectedMatch.WindowHandle);
                 state.Status = RestoreExecutionEntryStatus.Restored;

@@ -1,69 +1,135 @@
 # Browser Integration
 
-WindowAnchor's browser connector is a Manifest V3 extension in `browser-extension/`. The first supported browsers are Chrome, Edge, Brave, and Opera because they expose the Chromium Tabs, Windows, and tab-groups APIs.
+WindowAnchor has separate browser connector packages:
+
+- `browser-extension/` is the Chromium Manifest V3 connector for Chrome, Edge, Brave, and Opera.
+- `firefox-extension/` is the Firefox connector for Firefox Desktop 142 and later.
+
+Both implement protocol v2, but they are packaged separately because Firefox uses a Gecko add-on
+ID, `allowed_extensions`, Mozilla's registry location, and `background.scripts`. The Firefox add-on
+uses a persistent Manifest V2 background page deliberately: Firefox MV3 event pages may unload and
+close a native-messaging port while WindowAnchor is waiting to initiate a desktop-side request.
+Mozilla continues to support Manifest V2 extensions.
 
 ## Data captured
 
-The extension captures only normal browser windows and supported `http`, `https`, and `file` tabs selected by the WindowAnchor save dialog. It stores tab URL, title, order, active state, pinned state, browser-window bounds/state, and tab-group metadata. Incognito windows and tabs are excluded. Cookies, passwords, page contents, form data, and browsing history are never requested or transferred.
+Connectors capture only normal browser windows and supported `http`, `https`, and exposed `file`
+tabs selected by the WindowAnchor save dialog. They transfer tab URL, title, order, active and
+pinned state, browser-window bounds/state, tab-group metadata, a runtime window ID, and a locally
+generated opaque connector-profile key. WindowAnchor assigns a stable saved session ID and records
+desktop-entry/monitor linkage only when title and geometry identify one entry uniquely.
+
+Incognito and Firefox private windows are excluded. The connectors do not request cookies,
+passwords, general browsing history, page bodies, form data, downloads, bookmarks, browser account
+identity, or profile names. Firefox container identity is not requested or restored.
+
+Mozilla treats data passed to a native application as transmitted outside the add-on even when it
+never leaves the PC. The Firefox manifest therefore declares `browsingActivity`, `websiteContent`,
+and `personallyIdentifyingInfo` for URLs, titles/group labels, and the opaque profile key. It does
+not falsely declare `none`.
 
 ## Communication design
 
-The extension service worker maintains a persistent `runtime.connectNative()` connection to `com.windowanchor.browser`. WindowAnchor uses the `WindowAnchor.BrowserBridge` named pipe to ask the host for a capture or restore operation. The host forwards the request over Chromium's native-messaging channel and returns the correlated JSON response.
+Each extension opens `runtime.connectNative("com.windowanchor.browser")`. The native host routes
+Chromium and Firefox through separate named pipes:
 
-Chromium native messaging frames each UTF-8 JSON message with a 32-bit native-endian length prefix. The host limits messages to 1 MiB, writes protocol data only to stdout, and uses stderr/logging for diagnostics. Requests include `requestId` and `protocolVersion` so timeouts and incompatible messages are handled safely.
+- `WindowAnchor.BrowserBridge` (the existing Chromium endpoint)
+- `WindowAnchor.BrowserBridge.Firefox`
+
+WindowAnchor captures only from the connector families represented by selected desktop windows,
+then combines their sessions. Restore groups sessions by browser and sends each group back through
+the matching pipe, so Chrome and Firefox can participate in one workspace without crossing native
+hosts.
+
+Native messaging frames each UTF-8 JSON message with a 32-bit native-endian length prefix. The host
+limits messages to 1 MiB, writes protocol data only to stdout, and uses logs/stderr for diagnostics.
+Requests carry `requestId` and `protocolVersion`; incompatible responses fail safely. A missing
+browser family reports unavailable without preventing unrelated desktop applications from
+restoring.
+
+## Profile-aware restore
+
+`storage.local` contains an opaque random key scoped to the installed connector. It is not an
+account, profile-directory name, or display label. Restore never reuses a tab from a different key.
+**Reuse matching tab** focuses exact `http`/`https` URL matches in the same profile, **Always
+reopen** creates new tabs, and **Ask before reuse** returns a structured conflict for WindowAnchor
+to resolve. `file://` and legacy profile-unknown sessions are duplicate-only.
+
+Firefox restore is isolated per tab. One URL failure produces a partial browser result while other
+valid tabs, browser windows, and workspace applications continue. Pinned/active state, tab groups,
+and normal/maximized/minimized/fullscreen state are restored where Firefox accepts them.
 
 ## Restore planning and fallback
 
-Browser restoration participates in the same immutable restore plan as desktop windows. Planning
-records connector availability and adds an explicit browser-session action; it does not contact the
-extension or create windows. A manual preview shows that action before approval.
+Browser restoration participates in the immutable restore plan. Planning records connector
+availability and adds an explicit browser-session action without creating windows. Immediately
+before execution, `RestoreExecutor` verifies that capability still matches the preview. If session
+restore is unavailable, only a fallback already declared by the plan may launch an ordinary
+browser. Disabling the linked browser entry removes its session action and protects it from launch,
+placement, and terminal minimize behavior.
 
-Immediately before execution, `RestoreExecutor` checks that the connector capability still matches
-the preview. If the saved session cannot be restored, only a fallback already described by the plan
-may launch an ordinary browser. Disabling the relevant browser entry removes the global session
-action and protects that entry from fallback launch, placement, and terminal minimize behavior.
+Browser work uses the same checkpoint, progress, cancellation, readiness, and structured-result
+boundaries as desktop restoration.
 
-Browser work is covered by the same transactional and progress boundaries as desktop restoration.
-The current desktop checkpoint is durable before a connector restore can create a browser window;
-the progress UI names the browser stage and remains cancellable. A successful connector action
-starts readiness only for its related saved entries, so an unrelated browser or process action
-cannot trigger another entry's timeout.
+## Store setup
 
-## Chrome Web Store setup
+The Chromium connector is published in the
+[Chrome Web Store](https://chromewebstore.google.com/detail/windowanchor-browser-conn/liiklnjpifhhmjncifbjjfgplonkkinh)
+with ID `liiklnjpifhhmjncifbjjfgplonkkinh`. **Set up Chrome** registers the current-user host with
+that exact allowed origin and opens the listing.
 
-The published [WindowAnchor Browser Connector](https://chromewebstore.google.com/detail/windowanchor-browser-conn/liiklnjpifhhmjncifbjjfgplonkkinh) uses extension ID `liiklnjpifhhmjncifbjjfgplonkkinh`. Choosing **Set Up Chrome** in WindowAnchor registers a current-user native-host manifest with that exact allowed origin, then opens the Chrome Web Store listing in Chrome. Install the extension there and return to WindowAnchor; no Developer Mode or unpacked install is required for normal Chrome use.
+The Firefox package is AMO-ready but does not yet have a public listing. **Set up Firefox** registers
+the current-user Mozilla native host and opens an AMO search for the connector. Once Mozilla
+publishes the listing, replace `FirefoxAddOnSearchUrl` with the exact listing URL so setup opens it
+directly. Release/Beta Firefox accepts only Mozilla-signed add-ons.
 
-## Installing the host for local testing
+Desktop applications cannot silently install either extension. The browser/store remains in
+control of installation.
 
-1. Publish WindowAnchor and place the executable at the path used by `browser-extension/native-host-manifest.json`.
-2. Copy `native-host-manifest.template.json` to `native-host-manifest.json` and replace the extension ID placeholder with the unpacked development ID. Published Chrome Web Store and Microsoft Edge Add-ons IDs may differ, so both IDs must be listed if both stores are used.
-3. Register the manifest's absolute path under the current-user native-host key. For local testing, `browser-extension/register-native-host.ps1` creates the manifest and these keys:
-   `powershell -ExecutionPolicy Bypass -File .\register-native-host.ps1 -ExtensionId <id> -WindowAnchorPath <path-to-exe>`
-   - Chrome: `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.windowanchor.browser`
-   - Edge: `HKCU\Software\Microsoft\Edge\NativeMessagingHosts\com.windowanchor.browser`
-   The registry default value is the absolute path to `native-host-manifest.json`.
-   For a production installer, perform the same per-user registration during install and replace the placeholder with the published extension ID.
-   Edge also documents Chromium and Chrome fallback locations.
-4. Load `browser-extension/` unpacked from `chrome://extensions` or `edge://extensions` with Developer mode enabled.
-5. Reload the extension after code changes. Use the browser extension error page and `%AppData%\WindowAnchor\app.log` for diagnostics.
+## Local Firefox testing and AMO submission
 
-The local-development manifest remains a template because the browser requires the exact unpacked extension origin in `allowed_origins`; wildcards are not valid for this allow-list.
+1. Run **Set up Firefox** in WindowAnchor, or execute
+   `firefox-extension/register-native-host.ps1` with the WindowAnchor executable path.
+2. Open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select
+   `firefox-extension/manifest.json`.
+3. Run `web-ext lint` and `web-ext build` from `firefox-extension/`.
+4. For a first listed submission, use `web-ext sign --channel=listed` with
+   `amo-metadata.json` and AMO JWT credentials. Mozilla signs the package after validation/review.
 
-## Installation model
+The fixed ID `windowanchor-browser-connector@windowanchor.app` appears in the add-on manifest,
+native-host allow-list, registration script, and desktop routing tests. Firefox starts a native
+host with the manifest path and add-on ID as command-line arguments; WindowAnchor recognizes only
+that exact ID as its Firefox connector.
 
-WindowAnchor may detect supported browser executables and offer setup for selected browsers, but normal desktop software cannot silently install a Chrome or Edge extension. Production Chrome users install the connector from the Chrome Web Store after WindowAnchor registers the native host. Developer Mode and Load unpacked are only for local testing. The extension ID is generated by the browser for unpacked development builds, while the published Chrome ID is fixed and must be placed in `allowed_origins`.
+## Local Chromium testing
 
-When the extension is loaded before the native host is registered, the service worker treats `Specified native messaging host not found` as an expected setup state, consumes the browser runtime error, and stops retrying. After registration, reload the extension from the browser's extensions page.
+1. Publish WindowAnchor and choose the executable used by the native host.
+2. Run `browser-extension/register-native-host.ps1` with the unpacked extension ID and executable
+   path.
+3. Load `browser-extension/` unpacked from `chrome://extensions` or `edge://extensions`.
+4. Reload the extension after code changes.
+
+Unpacked Chromium builds have generated IDs, so their exact origin must replace the template value;
+wildcards are not valid in `allowed_origins`.
 
 ## Limitations
 
-Browser window IDs are session-scoped and are not persisted as identities. Restore recreates windows from saved metadata and reports per-window failures. Browser content that is not a supported URL scheme, incognito content, and browser-internal pages are skipped by design. A preview that becomes stale is rejected instead of silently targeting a different browser window.
+Runtime browser window IDs are session-scoped metadata; `BrowserSessionId` is WindowAnchor's stable
+saved identity. Browser-internal/extension URLs are skipped. Firefox container identities are not
+preserved because the connector intentionally does not request contextual-identity or cookie
+access. A `file://` tab is captured only when the browser exposes its URL and is never reused as an
+existing match. A stale approved preview is rejected rather than silently targeting a changed
+browser window.
 
 ## Official references
 
-- Chrome Tabs API: https://developer.chrome.com/docs/extensions/reference/api/tabs
-- Chrome Windows API: https://developer.chrome.com/docs/extensions/reference/api/windows
-- Chrome tab groups: https://developer.chrome.com/docs/extensions/reference/api/tabGroups
+- Firefox background scripts: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/background
+- Firefox native messaging: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Native_messaging
+- Firefox native manifests: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Native_manifests
+- Firefox tabs: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/tabs
+- Firefox tab groups: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/tabGroups
+- Firefox data consent: https://extensionworkshop.com/documentation/develop/firefox-builtin-data-consent/
+- Firefox signing: https://extensionworkshop.com/documentation/publish/signing-and-distribution-overview/
+- `web-ext`: https://extensionworkshop.com/documentation/develop/getting-started-with-web-ext/
 - Chrome native messaging: https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging
-- Microsoft Edge native messaging: https://learn.microsoft.com/en-us/microsoft-edge/extensions-chromium/developer-guide/native-messaging
-- Microsoft Edge sideloading: https://learn.microsoft.com/en-us/microsoft-edge/extensions-chromium/getting-started/extension-sideloading
+- Edge native messaging: https://learn.microsoft.com/en-us/microsoft-edge/extensions-chromium/developer-guide/native-messaging

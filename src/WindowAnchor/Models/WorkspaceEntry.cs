@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
 namespace WindowAnchor.Models;
@@ -67,6 +68,22 @@ public class WorkspaceEntry
     /// <summary>Optional portable alias form of <see cref="LaunchArg"/>.</summary>
     public string? LogicalLaunchArg { get; set; }
 
+    /// <summary>
+    /// Identifies whether <see cref="LaunchArg"/> is a VS Code folder workspace or a
+    /// <c>.code-workspace</c> file. The path itself remains in LaunchArg so existing resource,
+    /// alias, and privacy handling continues to apply.
+    /// </summary>
+    public EditorWorkspaceKind EditorWorkspaceKind { get; set; } = EditorWorkspaceKind.None;
+
+    /// <summary>
+    /// Ordered File Explorer folder tabs captured for this top-level Explorer window. Empty for
+    /// non-Explorer entries and when file/folder capture was disabled.
+    /// </summary>
+    public List<string> ExplorerTabPaths { get; set; } = new();
+
+    /// <summary>Index of the tab that was active when the Explorer window was captured.</summary>
+    public int ExplorerActiveTabIndex { get; set; }
+
     // ── Window position ──────────────────────────────────────────────────────
     public WindowRecord Position  { get; set; } = new();
 
@@ -86,4 +103,12 @@ public class WorkspaceEntry
     // ── Runtime-only ─────────────────────────────────────────────────────────
     [JsonIgnore]
     public bool WasRestored { get; set; } = false;
+}
+
+/// <summary>Persisted shape of a VS Code workspace target when one was captured safely.</summary>
+public enum EditorWorkspaceKind
+{
+    None,
+    Folder,
+    WorkspaceFile
 }

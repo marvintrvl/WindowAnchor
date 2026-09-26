@@ -17,7 +17,7 @@ internal static class RestorePlannerPolicies
         entry.ExecutablePath.Contains(@"\WindowsApps\", StringComparison.OrdinalIgnoreCase);
 
     internal static bool IsBrowserProcess(string? processName) =>
-        ProcessIdentityNormalizer.Normalize(processName) is "chrome" or "msedge" or "opera" or "brave";
+        ProcessIdentityNormalizer.Normalize(processName) is "chrome" or "msedge" or "opera" or "brave" or "firefox";
 
     internal static bool IsApplicationRunning(
         WorkspaceEntry entry,

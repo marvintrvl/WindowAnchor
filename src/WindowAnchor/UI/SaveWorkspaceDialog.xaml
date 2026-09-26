@@ -75,7 +75,7 @@
                     <StackPanel VerticalAlignment="Center" Margin="0,0,8,0">
                         <TextBlock Text="Save open files" FontSize="13" FontWeight="Medium"
                                    Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                        <TextBlock Text="Detect and relaunch currently open documents on restore"
+                        <TextBlock Text="Save documents, editor workspaces, and File Explorer folder tabs"
                                    FontSize="11" TextWrapping="Wrap"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                    Margin="0,2,0,0"/>

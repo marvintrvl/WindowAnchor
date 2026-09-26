@@ -137,7 +137,7 @@ public class SettingsServiceTests
         Assert.Equal("11111111-1111-4111-8111-111111111111", service.Settings.DefaultWorkspaceId);
         Assert.True(service.Settings.OnboardingCompleted);
         Assert.Equal(AppSettings.CurrentSchemaVersion, service.Settings.SchemaVersion);
-        Assert.Contains("\"schemaVersion\": 8", File.ReadAllText(settingsPath));
+        Assert.Contains($"\"schemaVersion\": {AppSettings.CurrentSchemaVersion}", File.ReadAllText(settingsPath));
     }
 
     [Fact]
@@ -151,7 +151,7 @@ public class SettingsServiceTests
         Assert.Equal(AppSettings.CurrentSchemaVersion, service.Settings.SchemaVersion);
         Assert.True(service.Settings.OnboardingCompleted);
         string migrated = File.ReadAllText(settingsPath);
-        Assert.Contains("\"schemaVersion\": 8", migrated);
+        Assert.Contains($"\"schemaVersion\": {AppSettings.CurrentSchemaVersion}", migrated);
         Assert.Contains("\"onboardingCompleted\": true", migrated);
     }
 
@@ -169,7 +169,7 @@ public class SettingsServiceTests
         Assert.False(service.Settings.ShowRestorePreview);
         Assert.False(service.Settings.CreateRestoreCheckpoints);
         Assert.True(service.Settings.OnboardingCompleted);
-        Assert.Contains("\"schemaVersion\": 8", File.ReadAllText(settingsPath));
+        Assert.Contains($"\"schemaVersion\": {AppSettings.CurrentSchemaVersion}", File.ReadAllText(settingsPath));
     }
 
     [Fact]

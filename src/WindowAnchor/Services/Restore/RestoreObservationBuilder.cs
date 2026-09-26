@@ -72,7 +72,9 @@ internal sealed class RestoreObservationBuilder
                 ? BrowserSessionRestoreAvailability.NotAvailable
                 : _browserSessionConnector is null
                     ? BrowserSessionRestoreAvailability.Unavailable
-                    : BrowserSessionRestoreAvailability.Available
+                    : BrowserSessionRestoreAvailability.Available,
+            BrowserTabRestorePolicy = _settingsService?.Settings.BrowserTabRestorePolicy ??
+                BrowserTabRestorePolicy.ReuseMatchingTab
         };
 
         RestoreObservation observation = new RestoreObservation(

@@ -1,7 +1,11 @@
 # Implemented Ticket Verification
 
-**Audit date:** 2026-09-22
-**Automated gate:** `dotnet test .\WindowAnchor.sln --configuration Release --no-restore` — 292 passed, 0 failed, 0 skipped
+**Audit date:** 2026-09-26
+**Automated gate:** `dotnet test .\WindowAnchor.sln --configuration Release --no-restore` — 326 passed, 0 failed, 0 skipped
+**Explorer live gate:** `WINDOWANCHOR_LIVE_EXPLORER_SMOKE=1` isolated Windows 11 25H2
+three-tab restore — passed, including active-tab selection and zero duplicate tabs on rerun
+**Firefox behavior gate:** `node --test .\firefox-extension\tests\background.test.cjs` — 4 passed, 0 failed
+**Firefox add-on gate:** `web-ext 10.7.0 lint` — 0 errors, 0 notices, 0 warnings
 **Simulation smoke:** `single-monitor.json` and the published-artifact run of
 `adversarial-topology.json` — exit code 0, no expectation failures
 **Dependency audit:** no known vulnerable direct or transitive packages from the configured NuGet sources
@@ -21,6 +25,10 @@ application-launch, browser, or multi-monitor smoke pass.
 | WA-012 | Verified in automation | Stable executable/AUMID identities persist, apply across workspace IDs, do not use titles, are excluded from switch risk, and can be removed. |
 | WA-014 | Verified in automation | Typed reports survive partial failure, serialize redacted diagnostics, expose timings/per-item outcomes, avoid new observation waits, and keep routine success quiet. |
 | WA-016 | Verified in automation | Adapter registry/contracts plus separate Chromium PWA, dedicated-browser, Explorer-folder, and generic Win32 adapters preserve launch characterization and fallback behavior without third-party loading. |
+| WA-017 | Verified in automation | The VS Code adapter captures high-confidence `.code-workspace` and folder context, distinguishes multiple project windows, migrates existing saved Code targets, uses documented new/reuse-window CLI flags, and leaves Cursor on its established fallback path. Live remote authority is not inferred from a title because the capture boundary has no supported source for it. |
+| WA-018 | Implemented and AMO-lint clean; publication/live smoke open | A separately packaged Firefox Desktop 142+ add-on captures/restores normal windows, tabs, pinned/active state, groups, bounds, and profile-scoped exact-URL reuse. Browser-family pipes allow Chromium and Firefox to coexist; registration uses Mozilla's `allowed_extensions` manifest and exact Gecko ID. Per-tab failures are isolated, private/internal content and cookies/history/container identity are excluded, and Mozilla data categories are declared. AMO signing/publication and a live Firefox round trip remain external gates. |
+| WA-019 | Verified in automation; browser-store smoke open | Protocol v2 captures an opaque extension-local profile key, window/session and unique desktop-entry/monitor linkage; the planner propagates the selected reuse/reopen/review policy. Exact URLs, including query/path, are considered only within the same profile; `file://` and profile-unknown legacy sessions are duplicate-only. Tests cover v7 migration, payload propagation, redaction, timeout/unavailable outcomes, and protocol mismatch. A live multi-profile browser smoke is still required before a release claim. |
+| #15 | Verified in automation and Windows 11 25H2 live smoke | File Explorer captures every folder tab and active selection per top-level window when file/folder capture is enabled. Restore revalidates the assigned HWND, adds only missing tab occurrences, preserves unrelated tabs, and reselects the saved active tab. Workspace v8 migration seeds the legacy active folder; portable-redacted export removes tab paths. The isolated three-folder smoke passed and its second restore opened zero tabs. |
 | WA-030A | Verified in automation | Deterministic geometry covers sufficiently visible, fully off-screen, negative-origin, and maximized cases. The foreground-window command is wired through the native boundary and tray; live desktop behavior remains part of release smoke testing. |
 | WA-032 | Verified in automation | Most-specific alias capture, per-device persistence, exact-path-first resolution, mapped fallback, and unresolved-alias handling are covered while retaining the absolute path. |
 | WA-033 | Partial | The internal transfer service has atomic exact/portable export, bounded schema validation, redaction, and collision-safe clone/reject behavior. User-facing export/import, configurable inclusion, conflict preview, and old transfer-schema migration are missing. |
@@ -44,3 +52,5 @@ focused collaborators.
 3. Record the warm exact-topology Resume benchmark requested by WA-005A.
 4. Expand WA-046 to the fixture matrix listed in `restore-simulation.md`.
 5. Keep WA-033 and WA-034 out of shipped-feature claims until their missing workflows are built.
+6. Submit/sign the Firefox connector on AMO, replace the search URL with its exact listing URL, and
+   record a live Firefox capture/restore smoke including a partial tab failure.

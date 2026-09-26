@@ -5,11 +5,12 @@ dependency-checked ticket graph lives in the companion
 [WindowAnchor-Planning repository](https://github.com/marvintrvl/WindowAnchor-Planning); this file
 is intentionally a product-level view rather than a second issue tracker.
 
-## Current release: v1.6.0 — Diagnostics and Topology
+## Current release: v1.6.1 — Session Fidelity
 
-WindowAnchor 1.6.0 builds on the safe restore pipeline with restore diagnostics, deterministic
-simulation, display-topology stabilization, layout variants, application adapters, and practical
-recovery controls:
+WindowAnchor 1.6.1 extends the safe restore pipeline with Windows 11 File Explorer multi-tab
+capture/restore and profile-aware Chromium/Firefox session handling. It also includes the v1.6.0
+diagnostics, deterministic simulation, display-topology stabilization, layout variants,
+application adapters, and practical recovery controls:
 
 - Manual tray and Settings restores show a per-entry plan before changing the desktop.
 - Users can disable entries while keeping the original match evidence and preview immutable.
@@ -61,6 +62,11 @@ recovery controls:
   recovery after device, path, or display changes.
 - Chromium PWA, dedicated-browser URL, Explorer-folder, and generic Win32 behavior is owned by
   independently testable capture and launch adapters.
+- Explorer windows retain every saved folder tab plus the active tab; restore adds only missing
+  tabs to the revalidated window, preserves unrelated tabs, and is idempotent on repeat runs.
+- Firefox Desktop has a separate AMO-ready connector with native-host registration, profile-aware
+  URL reuse, tab-group parity, private-window exclusion, and per-tab restore isolation. Publication
+  and a live signed-add-on smoke remain release gates.
 
 ## How the restore pipeline now works
 
@@ -74,15 +80,18 @@ recovery controls:
    preview.
 5. Persist a complete pre-mutation recovery checkpoint; reject the operation with zero mutation if
    the durability gate fails.
-6. Execute only approved, predeclared actions through isolated process, browser, resource, clock,
+6. Execute only approved, predeclared actions through isolated process, browser, Explorer-tab,
+   resource, clock,
    readiness, inventory, and window-mutation boundaries. Position each entry when its matched
    window becomes responsive and stable; never wait forever.
-7. Verify final state with DPI-aware tolerance and bounded corrections to the assigned HWND.
+7. Verify final placement with DPI-aware tolerance and bounded corrections to the assigned HWND,
+   then reconcile any saved Explorer tabs and active-tab selection.
 8. Return structured per-action and per-entry outcomes for UI and privacy-safe diagnostics.
 
 ## Release verification limits
 
-The following v1.6.0 capabilities are covered by the service-level suite. See
+The following v1.6.1 capabilities are covered by the service-level suite and the isolated live
+Explorer smoke. See
 [`docs/implementation-status.md`](docs/implementation-status.md) for explicit verification limits.
 
 - Structured per-entry restore diagnostics, deterministic planner simulation, display-topology
@@ -98,15 +107,11 @@ The following v1.6.0 capabilities are covered by the service-level suite. See
 The dependency-checked ready queue is maintained in the companion planning repository. Its current
 order is:
 
-1. **WA-017 VS Code workspace tracking** — capture and reopen `.code-workspace` and folder context.
-2. **WA-019 Browser profile awareness and tab deduplication** — retain profile identity and avoid
-   duplicate browser restoration.
-3. **WA-020 File Explorer adapter** — capture and restore folders through a dedicated adapter.
-4. **WA-021 Windows Terminal adapter** — capture and restore shells and profiles safely.
-5. **WA-030B/WA-031 display recovery** — temporary-resolution and RDP-aware restoration.
-6. **WA-036A/WA-036D portability resolution** — cross-device display mapping and moved-resource
+1. **WA-021 Windows Terminal adapter** — capture and restore shells and profiles safely.
+2. **WA-030B/WA-031 display recovery** — temporary-resolution and RDP-aware restoration.
+3. **WA-036A/WA-036D portability resolution** — cross-device display mapping and moved-resource
    resolution above the existing path-alias foundation.
-7. **WA-040A/WA-042A catalog and template foundations** — stable workspace metadata and templates.
+4. **WA-040A/WA-042A catalog and template foundations** — stable workspace metadata and templates.
 
 ## Later themes
 

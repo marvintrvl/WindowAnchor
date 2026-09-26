@@ -24,17 +24,26 @@ If the host is not registered, the extension reports an informational message an
 
 Developer Mode and Load unpacked are for local development only. Chrome users install the published connector from the Chrome Web Store; a desktop app cannot silently install a consumer browser extension.
 
-The extension requires the `tabs`, `tabGroups`, and `nativeMessaging` permissions. The native host protocol is JSON framed by Chromium and carries only session metadata; it must never log or persist credentials, cookies, or page contents.
+The extension requires the `tabs`, `tabGroups`, `storage`, and `nativeMessaging` permissions. Local
+extension storage holds one opaque random profile key so sessions are never deduplicated across
+browser profiles; it does not read a profile name, browser account, cookies, passwords, page
+contents, or browsing history.
 
 ## Supported protocol messages
 
-The persistent native port uses request/response messages with `protocolVersion: 1`:
+The persistent native port uses request/response messages with `protocolVersion: 2`:
 
 - `capture`: returns browser sessions.
-- `restore`: creates browser windows and restores supported tabs and groups.
+- `restore`: restores supported tabs and groups, reusing only exact matching normal tabs from the
+  same opaque profile when the selected policy permits it. `file://` URLs and legacy
+  profile-unknown sessions always open separately. An `Ask` conflict is returned to WindowAnchor
+  for an explicit reuse/open/skip decision.
 - `ping`: checks host connectivity.
 
-WindowAnchor sends app requests to the host through the `WindowAnchor.BrowserBridge` named pipe. The extension ID must be explicitly allow-listed in the native host manifest; wildcard origins are not valid for production.
+WindowAnchor sends Chromium requests to the host through the
+`WindowAnchor.BrowserBridge` named pipe. Firefox uses a separate pipe and package, so both
+families can be connected without competing for the same local endpoint. The extension ID must be
+explicitly allow-listed in the native host manifest; wildcard origins are not valid for production.
 
 The desktop app represents browser restore as an explicit action in its immutable restore plan.
 Manual restores show the action before approval, recheck connector availability before mutation,

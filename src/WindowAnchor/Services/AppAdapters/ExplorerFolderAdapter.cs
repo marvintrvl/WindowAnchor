@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using WindowAnchor.Models;
 
 namespace WindowAnchor.Services;
@@ -24,6 +25,23 @@ internal sealed class ExplorerFolderAdapter : IAppAdapter
         entry.FileConfidence = context.SaveFiles ? 95 : 0;
         entry.FileSource = context.SaveFiles ? "EXPLORER_FOLDER" : "NONE";
         entry.LaunchArg = context.SaveFiles ? context.Window.FolderPath : null;
+        if (context.SaveFiles)
+        {
+            entry.ExplorerTabPaths = context.Window.ExplorerTabPaths
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .ToList();
+            if (entry.ExplorerTabPaths.Count == 0 &&
+                !string.IsNullOrWhiteSpace(context.Window.FolderPath))
+            {
+                entry.ExplorerTabPaths.Add(context.Window.FolderPath);
+            }
+            entry.ExplorerActiveTabIndex = entry.ExplorerTabPaths.Count == 0
+                ? 0
+                : Math.Clamp(
+                    context.Window.ExplorerActiveTabIndex,
+                    0,
+                    entry.ExplorerTabPaths.Count - 1);
+        }
         return entry;
     }
 

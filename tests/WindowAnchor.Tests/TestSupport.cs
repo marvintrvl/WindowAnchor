@@ -143,6 +143,7 @@ internal sealed class FakeBrowserSessionConnector : IBrowserSessionConnector
     internal Exception? CaptureException { get; set; }
     internal int CaptureCalls { get; private set; }
     internal List<string> SelectedTitles { get; private set; } = new();
+    internal List<BrowserCaptureTarget> SelectedBrowserWindows { get; private set; } = new();
     internal bool RestoreResult { get; set; } = true;
     internal Exception? RestoreException { get; set; }
     internal int RestoreCalls { get; private set; }
@@ -150,11 +151,12 @@ internal sealed class FakeBrowserSessionConnector : IBrowserSessionConnector
 
     public Task<BrowserCaptureResult> CaptureAsync(
         string workspaceName,
-        IEnumerable<string> selectedBrowserTitles,
+        IEnumerable<BrowserCaptureTarget> selectedBrowserWindows,
         CancellationToken cancellationToken = default)
     {
         CaptureCalls++;
-        SelectedTitles = selectedBrowserTitles.ToList();
+        SelectedBrowserWindows = selectedBrowserWindows.ToList();
+        SelectedTitles = SelectedBrowserWindows.Select(window => window.Title).ToList();
         if (CaptureException != null)
             throw CaptureException;
         return Task.FromResult(CaptureResult);
@@ -169,6 +171,28 @@ internal sealed class FakeBrowserSessionConnector : IBrowserSessionConnector
         RestoredSessions = sessions;
         if (RestoreException != null) throw RestoreException;
         return Task.FromResult(RestoreResult);
+    }
+}
+
+internal sealed class FakeExplorerTabSessionRestorer : IExplorerTabSessionRestorer
+{
+    internal List<(IntPtr WindowHandle, RestoreExplorerSession Session)> Calls { get; } = new();
+    internal ExplorerTabRestoreResult Result { get; set; } = new(0, 0, 0, 0, true);
+    internal Exception? Exception { get; set; }
+
+    public Task<ExplorerTabRestoreResult> RestoreAsync(
+        IntPtr windowHandle,
+        RestoreExplorerSession session,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Calls.Add((windowHandle, session));
+        if (Exception is not null)
+            throw Exception;
+        ExplorerTabRestoreResult result = Result.RequestedTabCount == 0
+            ? Result with { RequestedTabCount = session.TabPaths.Count }
+            : Result;
+        return Task.FromResult(result);
     }
 }
 

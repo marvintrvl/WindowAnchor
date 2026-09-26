@@ -2,7 +2,7 @@
 
 **WindowAnchor** is a modern, Fluent-designed window management utility for Windows 11. It allows you to capture your entire workspace — including window positions, sizes, and even open files — and restore them with a single click or automatically when your monitor configuration changes.
 
-[![GitHub release](https://img.shields.io/github/v/release/marvintrvl/WindowAnchor)](https://github.com/marvintrvl/WindowAnchor/releases/tag/v1.6.0)
+[![GitHub release](https://img.shields.io/github/v/release/marvintrvl/WindowAnchor)](https://github.com/marvintrvl/WindowAnchor/releases/tag/v1.6.1)
 
 This README describes the current development tree. Use the changelog and release notes to
 distinguish unreleased behavior from the latest packaged release.
@@ -54,6 +54,12 @@ distinguish unreleased behavior from the latest packaged release.
 - **Layout Variants**: One logical workspace can retain multiple topology-specific placement sets
   without copying its shared application, file, or browser context. Exact topology wins, then the
   variant with the strongest current-monitor overlap supplies adaptive placement.
+- **VS Code Workspace Context**: A high-confidence `.code-workspace` file or project folder is
+  captured separately from an open document. Restore uses VS Code's supported new-window or
+  reuse-window CLI behavior, while Cursor retains its existing registered-handler fallback.
+- **Windows 11 File Explorer Tabs**: When file/folder capture is enabled, each Explorer window
+  retains all of its folder tabs and the active tab. Restore reconciles only missing tabs in the
+  assigned Explorer window, preserves unrelated open tabs, and avoids duplicates on repeat runs.
 - **Default Workspace & Startup Restore**: Set a default workspace to auto-restore on launch, restore the last-used one, or choose from a picker dialog.
 - **Global Keyboard Shortcuts**: Customisable hotkeys for quick save, restore, workspace switching (Ctrl+Alt+1/2/3), switch workspace (Ctrl+Alt+Shift+1/2/3) and settings.
 - **Workspace Ordering**: Reorder workspaces with Move Up/Down — the first three map to the hotkey slots.
@@ -81,9 +87,9 @@ distinguish unreleased behavior from the latest packaged release.
   can satisfy only one entry, and an unavailable duplicate is reported rather than silently
   collapsed. Cross-process hosted windows match only through shared Windows identity such as an
   exact AppUserModelID within the same package family—not a process-name or title exception.
-- **Browser Session Restore**: The optional Chromium connector captures and restores supported tabs,
-  groups, pinned/active state, and browser-window geometry; ordinary browser launch remains the
-  graceful fallback when the connector is unavailable.
+- **Browser Session Restore**: Optional, separately packaged Chromium and Firefox connectors
+  capture and restore supported tabs, groups, pinned/active state, and browser-window geometry;
+  ordinary browser launch remains the graceful fallback when a connector is unavailable.
 - **Save Progress Transparency**: A dedicated progress window tracks the discovery of file paths and jump-lists during the save process.
 - **Restore Progress Transparency**: Restore, switch, and undo show the active checkpoint,
   resource detection, browser, launch, readiness, close-wait, and placement-verification stage,
@@ -102,7 +108,7 @@ distinguish unreleased behavior from the latest packaged release.
 
 WindowAnchor operates silently in your system tray, watching your display configuration. Using **Monitor Fingerprinting**, it identifies your current setup (e.g., "Home Office" vs. "Travel") and restores your preferred layout instantly.
 
-1. **Download**: Get the Windows executable from the [v1.6.0 release](https://github.com/marvintrvl/WindowAnchor/releases/tag/v1.6.0) page.
+1. **Download**: Get the Windows executable from the [v1.6.1 release](https://github.com/marvintrvl/WindowAnchor/releases/tag/v1.6.1) page.
 2. **Get oriented**: On the first interactive launch, use the in-app guide to save a workspace or
    open Settings. Reopen it later with **Help & Guide** from the tray or Settings.
 3. **Save**: Right-click the tray icon and select "Save Workspace...".
@@ -130,8 +136,18 @@ Customize global keyboard shortcuts and assign recognizable names to connected m
 
 Install the [WindowAnchor Browser Connector from the Chrome Web Store](https://chromewebstore.google.com/detail/windowanchor-browser-conn/liiklnjpifhhmjncifbjjfgplonkkinh). In WindowAnchor, open **Settings > Browser Integration > Set Up Chrome**: the app registers its current-user native host and opens this store listing in Chrome.
 
+Firefox Desktop 142+ is supported by the separate AMO-ready package in
+[`firefox-extension/`](firefox-extension/). **Set Up Firefox** registers Mozilla's current-user
+native host and opens the AMO search page while the public listing is pending. Local testing and
+the exact AMO validation/signing workflow are documented in the package README; normal Firefox
+Release/Beta installations require Mozilla's signed add-on.
+
+Browser sessions stay profile-aware: an opaque local connector key keeps matching-tab reuse inside
+the same browser profile. Settings lets you reuse exact matching tabs, always reopen them, or leave
+matches for review; `file://` tabs always reopen separately.
+
 ### Local desktop app install
-1. Download `WindowAnchor-v1.6.0.exe` from the [v1.6.0 GitHub release](https://github.com/marvintrvl/WindowAnchor/releases/tag/v1.6.0) and verify it against `SHA256SUMS.txt`.
+1. Download `WindowAnchor-v1.6.1.exe` from the [v1.6.1 GitHub release](https://github.com/marvintrvl/WindowAnchor/releases/tag/v1.6.1) and verify it against `SHA256SUMS.txt`.
 2. Run the executable once to confirm the app starts correctly.
 3. If Windows prompts for security permissions, allow the app to run.
 
@@ -177,8 +193,9 @@ The development ID differs from the published Chrome Web Store ID.
    readiness against a 45-second real wall-clock limit instead of sleeping for fixed intervals,
    and starts a wait only when a successful launch/browser action is related to that entry. It applies final DPI-aware positions/states as
    each entry becomes ready, then verifies the observed placement and performs at most two
-   same-HWND corrections. Structured per-item outcomes include readiness, verification, retry
-   count, tolerance, and final failure state.
+   same-HWND corrections. A dedicated final Explorer phase restores missing saved folder tabs in
+   the revalidated assigned window and reselects the saved active tab. Structured per-item outcomes
+   include readiness, verification, retry count, tolerance, and final failure state.
 
 ## Docs & Architecture
 
@@ -204,7 +221,8 @@ dotnet publish src/WindowAnchor/WindowAnchor.csproj -c Release -r win-x64 --self
 ```
 
 See [build.md](build.md) for clean builds, Release tests, packaging, and checksum generation. Each
-published release includes `SHA256SUMS.txt` for its executable and browser connector.
+published release includes `SHA256SUMS.txt` for its executable, Chromium connector, and AMO
+submission package.
 
 ## Star History
 
@@ -212,7 +230,11 @@ published release includes `SHA256SUMS.txt` for its executable and browser conne
 
 ##  Roadmap
 
-### v1.6.0 (Current Release) — *Diagnostics and Topology* ✅
+### v1.6.1 (Current Release) — *Session Fidelity* ✅
+- **Explorer Multi-Tab Restore**: Windows 11 folder tabs and the active tab round-trip per Explorer
+  window without duplicating tabs on repeated restores.
+- **Cross-Browser Session Fidelity**: Chromium sessions are profile-aware, and the separately
+  packaged Firefox connector reaches feature parity for supported tab/window metadata.
 - **Explainable Matching**: Confidence classes, ambiguity choices, and optional stable learned hints replace destructive guessing.
 - **Responsive Restore**: Correlated readiness signals replace fixed sleeps, expose progress, and keep every wait cancellable and bounded.
 - **Adaptive Layouts**: Semantic, normalized, DPI-aware placement keeps windows visible when monitors, work areas, or orientation change.

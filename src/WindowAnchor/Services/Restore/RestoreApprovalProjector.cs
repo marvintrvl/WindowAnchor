@@ -164,6 +164,22 @@ internal static class RestoreApprovalProjector
             false,
             entry.TargetPlacement,
             "Assign the candidate explicitly selected in Restore Preview and apply its target placement.");
+        RestoreAction[] resolvedActions = entry.ExplorerSession is null ||
+            !entry.RestorePolicy.LaunchIfMissing
+            ? [placementAction]
+            :
+            [
+                placementAction,
+                new RestoreAction(
+                    entryIndex,
+                    RestoreActionKind.RestoreExplorerTabs,
+                    selected.WindowHandle,
+                    Target: "",
+                    Arguments: "",
+                    UseShellExecute: false,
+                    TargetPlacement: null,
+                    "Reconcile the saved File Explorer tabs after the target window is ready.")
+            ];
         RestorePlanEntry resolvedEntry = entry with
         {
             Outcome = RestorePlanEntryOutcome.Matched,
@@ -171,7 +187,7 @@ internal static class RestoreApprovalProjector
             SelectedMatch = selected,
             LaunchRequirement = RestoreLaunchRequirement.None(
                 "The selected live window is the user-confirmed target for this entry."),
-            Actions = [placementAction],
+            Actions = resolvedActions,
             Warnings = entry.Warnings
                 .Where(issue => issue.Code != RestorePlanIssueCode.AmbiguousMatch)
                 .ToArray()
@@ -185,9 +201,9 @@ internal static class RestoreApprovalProjector
         int terminalMinimize = actions.FindIndex(action =>
             action.Kind == RestoreActionKind.MinimizeOtherWindows);
         if (terminalMinimize >= 0)
-            actions.Insert(terminalMinimize, placementAction);
+            actions.InsertRange(terminalMinimize, resolvedActions);
         else
-            actions.Add(placementAction);
+            actions.AddRange(resolvedActions);
 
         var currentEntryHandles = entry.Candidates
             .Where(item => item.IsWithinAmbiguityMargin)

@@ -93,14 +93,28 @@ public class RestoreLaunchCharacterizationTests
         Assert.Equal(window.FolderPath, entry.LaunchArg);
     }
 
-    [Theory]
-    [InlineData("Code", false)]
-    [InlineData("Cursor", true)]
-    public void Workspace_launches_preserve_current_editor_specific_behavior(
-        string processName,
-        bool usesRegisteredHandler)
+    [Fact]
+    public void VsCode_workspace_launches_in_a_new_window_when_no_editor_window_is_assigned()
     {
-        WorkspaceEntry entry = Entry($@"C:\Apps\{processName}.exe", processName);
+        WorkspaceEntry entry = Entry(@"C:\Apps\Code.exe", "Code");
+        entry.LaunchArg = @"C:\Projects\WindowAnchor\WindowAnchor.code-workspace";
+        entry.EditorWorkspaceKind = EditorWorkspaceKind.WorkspaceFile;
+
+        RestoreAction action = LaunchAction(entry,
+            new(0, RestoreResourceKind.LaunchTarget, RestoreResourceAvailability.Available, entry.LaunchArg),
+            new RestoreResourceObservation(0, RestoreResourceKind.Executable,
+                RestoreResourceAvailability.Available, entry.ExecutablePath));
+
+        Assert.Equal(RestoreActionKind.OpenResource, action.Kind);
+        Assert.False(action.UseShellExecute);
+        Assert.Equal(entry.ExecutablePath, action.Target);
+        Assert.Equal($"--new-window \"{entry.LaunchArg}\"", action.Arguments);
+    }
+
+    [Fact]
+    public void Cursor_workspace_launches_keep_the_registered_handler_fallback()
+    {
+        WorkspaceEntry entry = Entry(@"C:\Apps\Cursor.exe", "Cursor");
         entry.LaunchArg = @"C:\Projects\WindowAnchor\WindowAnchor.code-workspace";
 
         RestoreAction action = LaunchAction(entry,
@@ -109,9 +123,79 @@ public class RestoreLaunchCharacterizationTests
                 RestoreResourceAvailability.Available, entry.ExecutablePath));
 
         Assert.Equal(RestoreActionKind.OpenResource, action.Kind);
-        Assert.Equal(usesRegisteredHandler, action.UseShellExecute);
-        Assert.Equal(usesRegisteredHandler ? entry.LaunchArg : entry.ExecutablePath, action.Target);
-        Assert.Equal(usesRegisteredHandler ? "" : $"\"{entry.LaunchArg}\"", action.Arguments);
+        Assert.True(action.UseShellExecute);
+        Assert.Equal(entry.LaunchArg, action.Target);
+        Assert.Equal("", action.Arguments);
+    }
+
+    [Fact]
+    public void Missing_vs_code_workspace_is_reported_without_a_launch_action()
+    {
+        WorkspaceEntry entry = Entry(@"C:\Apps\Code.exe", "Code");
+        entry.LaunchArg = @"Z:\Unavailable\Billing.code-workspace";
+        entry.EditorWorkspaceKind = EditorWorkspaceKind.WorkspaceFile;
+
+        RestorePlan plan = Plan(entry,
+            new RestoreResourceObservation(0, RestoreResourceKind.LaunchTarget, RestoreResourceAvailability.Missing),
+            new RestoreResourceObservation(0, RestoreResourceKind.Executable,
+                RestoreResourceAvailability.Available, entry.ExecutablePath));
+
+        RestorePlanEntry planned = Assert.Single(plan.Entries);
+        Assert.Equal(RestorePlanEntryOutcome.Blocked, planned.Outcome);
+        Assert.Contains(planned.BlockingErrors, issue => issue.Code == RestorePlanIssueCode.MissingResource);
+        Assert.DoesNotContain(planned.Actions, action => action.Kind == RestoreActionKind.OpenResource);
+    }
+
+    [Fact]
+    public void VsCode_workspace_reuses_an_assigned_editor_window_unless_fresh_launch_is_requested()
+    {
+        WorkspaceEntry entry = Entry(@"C:\Apps\Code.exe", "Code");
+        entry.LaunchArg = @"C:\Projects\Billing\Billing.code-workspace";
+        entry.EditorWorkspaceKind = EditorWorkspaceKind.WorkspaceFile;
+        entry.Position.TitleSnippet = "Billing - Visual Studio Code";
+        var live = new LiveWindowIdentity
+        {
+            Hwnd = (IntPtr)55,
+            ExecutablePath = WindowIdentityExtractor.NormalizePath(entry.ExecutablePath),
+            ProcessName = "code",
+            WindowClassName = entry.WindowClassName,
+            Title = "Untitled - Visual Studio Code"
+        };
+
+        RestorePlan reuse = RestorePlanner.Build(
+            new WorkspaceSnapshot { Name = "Code", Entries = [entry] },
+            new RestoreLiveInventory
+            {
+                Windows = [live],
+                Resources =
+                [
+                    new(0, RestoreResourceKind.LaunchTarget, RestoreResourceAvailability.Available, entry.LaunchArg),
+                    new(0, RestoreResourceKind.Executable, RestoreResourceAvailability.Available, entry.ExecutablePath)
+                ]
+            },
+            new RestoreMonitorTopology { Monitors = [new RestoreMonitor("primary", 0, 0, 0, 1920, 1080, 96, true)] },
+            RestoreMode.Standard);
+
+        RestoreAction action = Assert.Single(reuse.Entries[0].Actions, item => item.Kind == RestoreActionKind.OpenResource);
+        Assert.Equal($"--reuse-window \"{entry.LaunchArg}\"", action.Arguments);
+
+        entry.RestorePolicy = EntryRestorePolicy.AlwaysLaunchNew;
+        RestorePlan fresh = RestorePlanner.Build(
+            new WorkspaceSnapshot { Name = "Code", Entries = [entry] },
+            new RestoreLiveInventory
+            {
+                Windows = [live],
+                Resources =
+                [
+                    new(0, RestoreResourceKind.LaunchTarget, RestoreResourceAvailability.Available, entry.LaunchArg),
+                    new(0, RestoreResourceKind.Executable, RestoreResourceAvailability.Available, entry.ExecutablePath)
+                ]
+            },
+            new RestoreMonitorTopology { Monitors = [new RestoreMonitor("primary", 0, 0, 0, 1920, 1080, 96, true)] },
+            RestoreMode.Standard);
+
+        RestoreAction freshAction = Assert.Single(fresh.Entries[0].Actions, item => item.Kind == RestoreActionKind.OpenResource);
+        Assert.Equal($"--new-window \"{entry.LaunchArg}\"", freshAction.Arguments);
     }
 
     [Fact]

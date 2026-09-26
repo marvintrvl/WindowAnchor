@@ -1,0 +1,9 @@
+{
+  "name": "com.windowanchor.browser",
+  "description": "WindowAnchor Firefox session native messaging host",
+  "path": "C:\\Program Files\\WindowAnchor\\WindowAnchor.exe",
+  "type": "stdio",
+  "allowed_extensions": [
+    "windowanchor-browser-connector@windowanchor.app"
+  ]
+}

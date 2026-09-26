@@ -5,7 +5,7 @@ using System.Text.Json;
 
 namespace WindowAnchor.Services;
 
-/// <summary>Length-prefixed Chromium native-messaging framing with no stream ownership.</summary>
+/// <summary>Length-prefixed browser native-messaging framing with no stream ownership.</summary>
 internal static class NativeMessagingFraming
 {
     internal const int MaxMessageBytes = 1024 * 1024;

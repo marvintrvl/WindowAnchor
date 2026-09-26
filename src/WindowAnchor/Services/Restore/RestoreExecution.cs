@@ -52,6 +52,7 @@ public enum RestoreProgressStage
     ClosingWindows,
     LaunchingApplications,
     WaitingForApplications,
+    RestoringExplorerTabs,
     VerifyingPlacements,
     ObservingAndPlanning,
     PreparingPreview

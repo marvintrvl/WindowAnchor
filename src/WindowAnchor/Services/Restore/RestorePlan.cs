@@ -139,6 +139,9 @@ public sealed record RestoreLiveInventory
     public BrowserSessionRestoreAvailability BrowserSessionRestore { get; init; } =
         BrowserSessionRestoreAvailability.NotAvailable;
 
+    public BrowserTabRestorePolicy BrowserTabRestorePolicy { get; init; } =
+        BrowserTabRestorePolicy.ReuseMatchingTab;
+
     public IReadOnlyList<WindowMatchHint> MatchHints { get; init; } =
         Array.Empty<WindowMatchHint>();
 }
@@ -207,7 +210,21 @@ public sealed record RestoreBrowserSession(
     int Height,
     string State,
     IReadOnlyList<RestoreBrowserTab> Tabs,
-    IReadOnlyList<RestoreBrowserTabGroup> Groups);
+    IReadOnlyList<RestoreBrowserTabGroup> Groups)
+{
+    public string BrowserSessionId { get; init; } = "";
+    public string ProfileKey { get; init; } = "";
+    public string ProfileLabel { get; init; } = "";
+    public string BrowserWindowId { get; init; } = "";
+    public string LinkedEntryId { get; init; } = "";
+    public string MonitorId { get; init; } = "";
+    public BrowserTabRestorePolicy RestorePolicy { get; init; } = BrowserTabRestorePolicy.ReuseMatchingTab;
+}
+
+/// <summary>Immutable File Explorer tab payload carried by an approved restore plan.</summary>
+public sealed record RestoreExplorerSession(
+    IReadOnlyList<string> TabPaths,
+    int ActiveTabIndex);
 
 /// <summary>How a saved monitor assignment maps to the current topology.</summary>
 public enum RestoreMonitorMappingKind
@@ -346,6 +363,7 @@ public enum RestoreActionKind
     LaunchWebApp,
     ActivatePackagedApplication,
     RestoreBrowserSession,
+    RestoreExplorerTabs,
     AwaitWindowAppearance,
     MinimizeOtherWindows
 }
@@ -412,6 +430,9 @@ public sealed record RestorePlanEntry(
     /// </summary>
     public IReadOnlySet<long> ReadinessExcludedWindowHandles { get; init; } =
         new HashSet<long>();
+
+    /// <summary>Saved File Explorer tabs to reconcile after the target window is ready.</summary>
+    public RestoreExplorerSession? ExplorerSession { get; init; }
 }
 
 /// <summary>
@@ -420,7 +441,7 @@ public sealed record RestorePlanEntry(
 /// </summary>
 public sealed record RestorePlan
 {
-    public const int CurrentSchemaVersion = 4;
+    public const int CurrentSchemaVersion = 5;
 
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
     public string WorkspaceId { get; init; } = "";
@@ -492,6 +513,12 @@ public sealed record RestorePlan
         SelectedMatch = entry.SelectedMatch is null ? null : RedactCandidate(entry.SelectedMatch),
         TargetPlacement = RedactPlacement(entry.TargetPlacement),
         LaunchRequirement = RedactLaunch(entry.LaunchRequirement),
+        ExplorerSession = entry.ExplorerSession is null
+            ? null
+            : entry.ExplorerSession with
+            {
+                TabPaths = entry.ExplorerSession.TabPaths.Select(RedactPath).ToArray()
+            },
         Actions = entry.Actions.Select(RedactAction).ToArray()
     };
 
@@ -579,6 +606,12 @@ public sealed record RestorePlan
     private static RestoreBrowserSession RedactBrowserSession(RestoreBrowserSession session) =>
         session with
         {
+            BrowserSessionId = RedactIdentifier(session.BrowserSessionId),
+            ProfileKey = RedactIdentifier(session.ProfileKey),
+            ProfileLabel = RedactIdentifier(session.ProfileLabel),
+            BrowserWindowId = RedactIdentifier(session.BrowserWindowId),
+            LinkedEntryId = RedactIdentifier(session.LinkedEntryId),
+            MonitorId = RedactIdentifier(session.MonitorId),
             ActiveTitle = LogRedactor.RedactValue(
                 session.ActiveTitle,
                 LogSensitivity.Title,

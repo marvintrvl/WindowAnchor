@@ -714,6 +714,40 @@ public class RestorePlannerTests
     }
 
     [Fact]
+    public void Browser_session_restore_carries_profile_identity_linkage_and_selected_dedup_policy()
+    {
+        WorkspaceEntry entry = Entry(@"C:\Apps\brave.exe", "Browser", "primary");
+        entry.ProcessName = "brave";
+        WorkspaceSnapshot snapshot = Snapshot(entry);
+        snapshot.BrowserSessions.Add(new BrowserSession
+        {
+            BrowserSessionId = "a4b1d7cc-1b27-4c45-b8cf-518dd612e4b4",
+            ProfileKey = "opaque-profile-key",
+            BrowserWindowId = "42",
+            LinkedEntryId = entry.EntryId,
+            MonitorId = "primary",
+            Browser = "brave",
+            Tabs = [new BrowserTab { Url = "https://example.test/path?x=1" }]
+        });
+
+        RestorePlan plan = RestorePlanner.Build(
+            snapshot,
+            new RestoreLiveInventory
+            {
+                BrowserSessionRestore = BrowserSessionRestoreAvailability.Available,
+                BrowserTabRestorePolicy = BrowserTabRestorePolicy.OpenDuplicate
+            },
+            Topology(Monitor("primary", 0, 96, primary: true)),
+            RestoreMode.Standard);
+
+        RestoreBrowserSession session = Assert.Single(plan.BrowserSessions);
+        Assert.Equal("opaque-profile-key", session.ProfileKey);
+        Assert.Equal("42", session.BrowserWindowId);
+        Assert.Equal(entry.EntryId, session.LinkedEntryId);
+        Assert.Equal(BrowserTabRestorePolicy.OpenDuplicate, session.RestorePolicy);
+    }
+
+    [Fact]
     public void Redacted_plan_json_removes_workspace_paths_titles_identifiers_and_secrets()
     {
         WorkspaceEntry entry = Entry(
@@ -729,6 +763,9 @@ public class RestorePlannerTests
         snapshot.Name = "Alice private workspace";
         snapshot.BrowserSessions.Add(new BrowserSession
         {
+            BrowserSessionId = "f1a51e84-4ba6-4849-84cd-fdd4e863dc84",
+            ProfileKey = "opaque-profile-key",
+            BrowserWindowId = "99",
             Browser = "brave",
             ActiveTitle = "Alice banking dashboard",
             Tabs =
@@ -766,6 +803,8 @@ public class RestorePlannerTests
         Assert.DoesNotContain("browser-secret", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Alice account balance", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Private finances", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("opaque-profile-key", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("f1a51e84-4ba6-4849-84cd-fdd4e863dc84", json, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(
             "<workspace:redacted>",
             parsed.RootElement.GetProperty("workspaceName").GetString());

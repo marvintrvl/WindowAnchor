@@ -89,11 +89,10 @@ public partial class App : System.Windows.Application
             return;
         }
 
-        if (e.Args.Length > 0 &&
-            (e.Args[0].Equals("--native-messaging", StringComparison.OrdinalIgnoreCase) ||
-             e.Args[0].StartsWith("chrome-extension://", StringComparison.OrdinalIgnoreCase)))
+        string? nativeMessagingPipe = BrowserIntegrationService.ResolveNativeMessagingPipe(e.Args);
+        if (nativeMessagingPipe != null)
         {
-            NativeMessagingHost.Run();
+            NativeMessagingHost.Run(nativeMessagingPipe);
             Shutdown(0);
             return;
         }

@@ -7,6 +7,59 @@ namespace WindowAnchor.Tests;
 public class StorageServiceTests
 {
     [Fact]
+    public void V7_workspace_migration_assigns_stable_browser_session_metadata()
+    {
+        var snapshot = new WorkspaceSnapshot
+        {
+            SchemaVersion = 7,
+            Name = "Browser",
+            BrowserSessions = [new BrowserSession { Browser = "chrome", WindowIndex = 3 }]
+        };
+        snapshot.EnsureLayoutVariants();
+        var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
+        MigratedDocument<WorkspaceSnapshot> migrated = WorkspaceSchemaMigrator.Migrate(
+            JsonSerializer.Serialize(snapshot, options),
+            "v7-browser.workspace.json",
+            options);
+
+        BrowserSession session = Assert.Single(migrated.Value.BrowserSessions);
+        Assert.True(migrated.WasMigrated);
+        Assert.True(Guid.TryParse(session.BrowserSessionId, out _));
+        Assert.Equal("3", session.BrowserWindowId);
+        Assert.Equal(WorkspaceSnapshot.CurrentSchemaVersion, migrated.Value.SchemaVersion);
+    }
+
+    [Fact]
+    public void V6_workspace_migration_classifies_existing_vs_code_workspace_targets()
+    {
+        var snapshot = new WorkspaceSnapshot
+        {
+            SchemaVersion = 6,
+            Name = "Code",
+            Entries =
+            [
+                new WorkspaceEntry
+                {
+                    ProcessName = "Code",
+                    LaunchArg = @"C:\Projects\Billing\Billing.code-workspace"
+                }
+            ]
+        };
+        snapshot.EnsureLayoutVariants();
+        var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
+        MigratedDocument<WorkspaceSnapshot> migrated = WorkspaceSchemaMigrator.Migrate(
+            JsonSerializer.Serialize(snapshot, options),
+            "v6-code.workspace.json",
+            options);
+
+        Assert.True(migrated.WasMigrated);
+        Assert.Equal(WorkspaceSnapshot.CurrentSchemaVersion, migrated.Value.SchemaVersion);
+        Assert.Equal(EditorWorkspaceKind.WorkspaceFile, Assert.Single(migrated.Value.Entries).EditorWorkspaceKind);
+    }
+
+    [Fact]
     public void V5_workspace_migration_creates_a_default_layout_variant()
     {
         string json = File.ReadAllText(TestDirectory.FixturePath("current-v3.workspace.json"));

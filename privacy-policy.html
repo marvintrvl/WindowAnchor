@@ -38,7 +38,8 @@
       <li>tab titles</li>
       <li>tab URLs</li>
       <li>tab group information</li>
-      <li>browser session state needed to restore the current workflow</li>
+      <li>browser-window bounds and session state needed to restore the current workflow</li>
+      <li>an opaque random connector-profile key used to keep tab reuse inside the capturing profile</li>
     </ul>
     <p>This data is used only to:</p>
     <ul>
@@ -49,7 +50,8 @@
 
     <h2>Where the data goes</h2>
     <p>The extension communicates with the user’s local WindowAnchor desktop application through native messaging.</p>
-    <p>The data is used locally on the user’s device to support saving and restoring workspace browser state. It is not sent to a remote server for tracking, advertising, analytics, or any unrelated purpose.</p>
+    <p>The data is used locally on the user’s device and may be retained in the local WindowAnchor workspace the user saves. It is not sent to a remote server by the connector for tracking, advertising, analytics, or any unrelated purpose. Data leaves the device only when the user explicitly exports it or configures a separate WindowAnchor synchronization destination.</p>
+    <p>Mozilla classifies native-messaging transfer as transmission outside the add-on. The Firefox package therefore declares browsing activity, website content, and personally identifying information for URLs, titles/group labels, and the opaque profile key, even though the connector does not send that data off the user’s PC.</p>
 
     <h2>No remote code</h2>
     <p>This extension does not use remote code execution. It does not download or execute code from a remote source. It runs locally in the browser and communicates with the local WindowAnchor application installed on the user’s device.</p>
@@ -57,13 +59,14 @@
     <h2>No data collection for advertising or analytics</h2>
     <p>This extension does not:</p>
     <ul>
-      <li>collect personal identifiers</li>
+      <li>request browser account identity, a profile name, or a device identifier</li>
       <li>track browsing activity for advertising purposes</li>
       <li>sell user data</li>
       <li>share data with third parties</li>
       <li>use analytics or advertisement networks</li>
       <li>use location tracking, account data, or payment data</li>
     </ul>
+    <p>Private/incognito windows are excluded. The connectors do not request cookies, passwords, general browsing history, page bodies, form data, downloads, bookmarks, or Firefox container identity.</p>
 
     <h2>Data retention</h2>
     <p>The extension stores browser session data only as needed for the user’s local WindowAnchor workspace save and restore functionality. Data is not retained for marketing, profiling, or unrelated business purposes.</p>
@@ -72,6 +75,6 @@
     <p>This privacy policy may be updated from time to time. Continued use of the extension after an update means the user accepts the revised policy.</p>
 
     <h2>Contact</h2>
-    <p>For privacy questions or support, contact the publisher through the contact email listed in the Chrome Web Store item settings.</p>
+    <p>For privacy questions or support, contact the publisher through the store listing or the WindowAnchor repository.</p>
   </body>
 </html>

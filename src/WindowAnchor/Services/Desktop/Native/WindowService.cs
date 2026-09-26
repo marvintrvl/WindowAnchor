@@ -16,6 +16,7 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
 {
     private readonly SettingsService? _settingsService;
     private readonly IRawWindowInventory _rawInventory;
+    private readonly IExplorerTabSessionCapture _explorerTabs;
 
     /// <param name="settingsService">
     ///   Optional. Supplies <see cref="Models.AppSettings.DedicatedBrowserUrlPatterns"/>; when
@@ -29,10 +30,12 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
     /// <summary>Creates a window service over an explicit raw inventory.</summary>
     internal WindowService(
         IRawWindowInventory rawInventory,
-        SettingsService? settingsService = null)
+        SettingsService? settingsService = null,
+        IExplorerTabSessionCapture? explorerTabs = null)
     {
         _rawInventory = rawInventory;
         _settingsService = settingsService;
+        _explorerTabs = explorerTabs ?? new ExplorerTabSessionService();
     }
 
     /// <summary>
@@ -48,16 +51,17 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
         RequirePolicy(policy, WindowCandidatePolicy.CaptureCandidate);
         var records = new List<WindowRecord>();
 
-        // Build Explorer folder map once before iterating — uses Shell.Application COM to
-        // get the folder open in each File Explorer window, keyed by HWND.
-        var explorerFolderMap = BuildExplorerFolderMap();
+        // Build the Explorer session map once before iterating. Shell.Application exposes one
+        // automation object per tab, while the raw inventory exposes one top-level window.
+        IReadOnlyDictionary<IntPtr, ExplorerWindowSession> explorerSessions =
+            _explorerTabs.CaptureOpenWindows();
 
         foreach (var observed in _rawInventory.EnumerateWindows())
         {
             if (!WindowPolicyEvaluator.Includes(observed, policy))
                 continue;
 
-            var record = CaptureWindowRecord(observed, explorerFolderMap);
+            var record = CaptureWindowRecord(observed, explorerSessions);
             if (record != null)
             {
                 // Tag with monitor while HWND is still valid
@@ -82,56 +86,10 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
         return records;
     }
 
-    /// <summary>
-    /// Uses the Shell.Application COM object (always available on Windows, no extra reference
-    /// required) to enumerate all open File Explorer windows and return a map of
-    /// HWND → folder path. Only windows where <c>win.Name == "File Explorer"</c> are included.
-    /// Failures are silently swallowed so a COM error never breaks a snapshot.
-    /// </summary>
-    private static Dictionary<IntPtr, string> BuildExplorerFolderMap()
-    {
-        var map = new Dictionary<IntPtr, string>();
-        try
-        {
-            var shellType = Type.GetTypeFromProgID("Shell.Application");
-            if (shellType == null) return map;
-            dynamic shell = Activator.CreateInstance(shellType)!;
-            dynamic windows = shell.Windows();
-            int count = (int)windows.Count;
-            for (int i = 0; i < count; i++)
-            {
-                try
-                {
-                    dynamic win = windows.Item(i);
-                    if (win == null) continue;
-
-                    // Filter to File Explorer windows only (not Internet Explorer)
-                    string winName = (win.Name as string) ?? "";
-                    if (!winName.Equals("File Explorer", StringComparison.OrdinalIgnoreCase) &&
-                        !winName.Equals("Windows Explorer", StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    // LocationURL is a file:/// URI — convert to a local path
-                    string locationUrl = (win.LocationURL as string) ?? "";
-                    if (string.IsNullOrEmpty(locationUrl)) continue;
-
-                    if (!Uri.TryCreate(locationUrl, UriKind.Absolute, out var uri)) continue;
-                    string folderPath = Uri.UnescapeDataString(uri.LocalPath);
-
-                    // HWND comes back as int from the COM automation layer
-                    IntPtr hwnd = new IntPtr((int)win.HWND);
-                    map[hwnd] = folderPath;
-                }
-                catch { /* Skip any individual window that fails */ }
-            }
-        }
-        catch { /* COM unavailable — return empty map, caller degrades gracefully */ }
-        return map;
-    }
-
+    /// <summary>Builds the enriched record for one raw top-level window.</summary>
     private WindowRecord? CaptureWindowRecord(
         ObservedWindow observed,
-        Dictionary<IntPtr, string>? explorerFolderMap = null)
+        IReadOnlyDictionary<IntPtr, ExplorerWindowSession>? explorerSessions = null)
     {
         IntPtr hWnd = observed.Hwnd;
         var placement = new NativeMethodsWindow.WindowPlacement();
@@ -214,11 +172,17 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
 
         // For File Explorer windows, resolve the open folder via the pre-built COM map
         string folderPath = "";
-        if (explorerFolderMap != null &&
+        ExplorerWindowSession? explorerSession = null;
+        if (explorerSessions != null &&
             processName.Equals("explorer", StringComparison.OrdinalIgnoreCase) &&
-            explorerFolderMap.TryGetValue(hWnd, out string? fp))
+            explorerSessions.TryGetValue(hWnd, out explorerSession) &&
+            explorerSession.TabPaths.Count > 0)
         {
-            folderPath = fp ?? "";
+            int activeIndex = Math.Clamp(
+                explorerSession.ActiveTabIndex,
+                0,
+                explorerSession.TabPaths.Count - 1);
+            folderPath = explorerSession.TabPaths[activeIndex];
         }
 
         return new WindowRecord
@@ -234,6 +198,8 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
             NormalBottom = placement.RcNormalPosition.Bottom,
             SavedDpi = NativeMethodsWindow.GetDpiForWindow(hWnd),
             FolderPath = folderPath,
+            ExplorerTabPaths = explorerSession?.TabPaths.ToList() ?? new List<string>(),
+            ExplorerActiveTabIndex = explorerSession?.ActiveTabIndex ?? 0,
             AppUserModelId = appUserModelId,
             BrowserUrl = browserUrl,
         };
@@ -334,13 +300,15 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
     {
         RequirePolicy(policy, WindowCandidatePolicy.RestoreMatchCandidate);
         var result = new Dictionary<IntPtr, (uint Pid, WindowRecord Record)>();
+        IReadOnlyDictionary<IntPtr, ExplorerWindowSession> explorerSessions =
+            _explorerTabs.CaptureOpenWindows();
 
         foreach (var observed in _rawInventory.EnumerateWindows())
         {
             if (!WindowPolicyEvaluator.Includes(observed, policy))
                 continue;
 
-            var record = CaptureWindowRecord(observed);
+            var record = CaptureWindowRecord(observed, explorerSessions);
             if (record == null)
                 continue;
 

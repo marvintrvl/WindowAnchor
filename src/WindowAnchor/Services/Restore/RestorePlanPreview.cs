@@ -245,6 +245,8 @@ public static class RestorePlanPreviewBuilder
                 (RestorePreviewActionKind.Launch, "Activate packaged application", false),
             RestoreActionKind.RestoreBrowserSession =>
                 (RestorePreviewActionKind.Browser, "Restore browser session", false),
+            RestoreActionKind.RestoreExplorerTabs =>
+                (RestorePreviewActionKind.Launch, "Restore File Explorer tabs", false),
             RestoreActionKind.AwaitWindowAppearance =>
                 (RestorePreviewActionKind.Wait, "Wait for window and position it", false),
             RestoreActionKind.MinimizeOtherWindows =>

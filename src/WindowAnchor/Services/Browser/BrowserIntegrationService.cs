@@ -7,47 +7,69 @@ using Microsoft.Win32;
 
 namespace WindowAnchor.Services;
 
-/// <summary>Detects supported Chromium browsers and manages their native-host registration.</summary>
+internal enum BrowserConnectorKind
+{
+    Chromium,
+    Firefox,
+}
+
+/// <summary>Detects supported browsers and manages their browser-specific native-host registration.</summary>
 public static class BrowserIntegrationService
 {
-    private const string HostName = "com.windowanchor.browser";
+    internal const string HostName = "com.windowanchor.browser";
     public const string ChromeExtensionId = "liiklnjpifhhmjncifbjjfgplonkkinh";
+    public const string FirefoxExtensionId = "windowanchor-browser-connector@windowanchor.app";
     public const string ChromeWebStoreUrl =
         "https://chromewebstore.google.com/detail/windowanchor-browser-conn/liiklnjpifhhmjncifbjjfgplonkkinh";
+    public const string FirefoxAddOnSearchUrl =
+        "https://addons.mozilla.org/firefox/search/?q=WindowAnchor%20Browser%20Connector";
 
-    private static readonly (string Name, string[] Paths, string RegistryRoot, string ManagementUrl)[] Browsers =
-    {
-        ("Google Chrome", new[]
-        {
+    private sealed record BrowserDefinition(
+        string Name,
+        string[] Paths,
+        string RegistryRoot,
+        string ManagementUrl,
+        BrowserConnectorKind ConnectorKind);
+
+    private static readonly BrowserDefinition[] Browsers =
+    [
+        new("Google Chrome",
+        [
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Google", "Chrome", "Application", "chrome.exe"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Google", "Chrome", "Application", "chrome.exe"),
-        }, @"Software\Google\Chrome\NativeMessagingHosts\", "chrome://extensions/"),
-        ("Microsoft Edge", new[]
-        {
+        ], @"Software\Google\Chrome\NativeMessagingHosts\", ChromeWebStoreUrl, BrowserConnectorKind.Chromium),
+        new("Microsoft Edge",
+        [
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft", "Edge", "Application", "msedge.exe"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Microsoft", "Edge", "Application", "msedge.exe"),
-        }, @"Software\Microsoft\Edge\NativeMessagingHosts\", "edge://extensions/"),
-        ("Brave", new[]
-        {
+        ], @"Software\Microsoft\Edge\NativeMessagingHosts\", "edge://extensions/", BrowserConnectorKind.Chromium),
+        new("Brave",
+        [
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
-        }, @"Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\", "brave://extensions/"),
-        ("Opera", new[]
-        {
+        ], @"Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\", "brave://extensions/", BrowserConnectorKind.Chromium),
+        new("Opera",
+        [
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Opera", "launcher.exe"),
-        }, @"Software\Opera Software\NativeMessagingHosts\", "opera://extensions/"),
-    };
+        ], @"Software\Opera Software\NativeMessagingHosts\", "opera://extensions/", BrowserConnectorKind.Chromium),
+        new("Mozilla Firefox",
+        [
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Mozilla Firefox", "firefox.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Mozilla Firefox", "firefox.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Mozilla Firefox", "firefox.exe"),
+        ], @"Software\Mozilla\NativeMessagingHosts\", FirefoxAddOnSearchUrl, BrowserConnectorKind.Firefox),
+    ];
 
     public static IReadOnlyList<string> GetInstalledBrowserNames()
     {
         var result = new List<string>();
-        foreach (var browser in Browsers)
+        foreach (BrowserDefinition browser in Browsers)
             if (Array.Exists(browser.Paths, File.Exists)) result.Add(browser.Name);
         return result;
     }
 
     public static void OpenManagementPage(string browserName)
     {
-        foreach (var browser in Browsers)
+        foreach (BrowserDefinition browser in Browsers)
         {
             if (!browser.Name.Equals(browserName, StringComparison.OrdinalIgnoreCase)) continue;
             string? executable = Array.Find(browser.Paths, File.Exists);
@@ -55,15 +77,13 @@ public static class BrowserIntegrationService
 
             try
             {
-                string destination = browser.Name.Equals("Google Chrome", StringComparison.OrdinalIgnoreCase)
-                    ? ChromeWebStoreUrl
-                    : browser.ManagementUrl;
-                if (browser.Name.Equals("Google Chrome", StringComparison.OrdinalIgnoreCase))
-                    RegisterChromeNativeHost();
+                RegisterNativeHost(browser);
                 Process.Start(new ProcessStartInfo
                 {
                     FileName = executable,
-                    Arguments = $"--new-tab \"{destination}\"",
+                    Arguments = browser.ConnectorKind == BrowserConnectorKind.Firefox
+                        ? $"-new-tab \"{browser.ManagementUrl}\""
+                        : $"--new-tab \"{browser.ManagementUrl}\"",
                     UseShellExecute = false,
                 });
             }
@@ -80,7 +100,46 @@ public static class BrowserIntegrationService
         }
     }
 
-    private static void RegisterChromeNativeHost()
+    internal static string? ResolveNativeMessagingPipe(IReadOnlyList<string> arguments)
+    {
+        if (arguments.Count == 0) return null;
+        foreach (string argument in arguments)
+        {
+            if (argument.Equals(FirefoxExtensionId, StringComparison.OrdinalIgnoreCase))
+                return BrowserSessionBridge.FirefoxPipeName;
+        }
+        string origin = arguments[0];
+        if (origin.Equals("--native-messaging", StringComparison.OrdinalIgnoreCase) ||
+            origin.StartsWith("chrome-extension://", StringComparison.OrdinalIgnoreCase))
+        {
+            return BrowserSessionBridge.ChromiumPipeName;
+        }
+        return null;
+    }
+
+    internal static string CreateNativeHostManifest(string executablePath, BrowserConnectorKind connectorKind)
+    {
+        object manifest = connectorKind == BrowserConnectorKind.Firefox
+            ? new
+            {
+                name = HostName,
+                description = "WindowAnchor Firefox session native messaging host",
+                path = executablePath,
+                type = "stdio",
+                allowed_extensions = new[] { FirefoxExtensionId }
+            }
+            : new
+            {
+                name = HostName,
+                description = "WindowAnchor Chromium session native messaging host",
+                path = executablePath,
+                type = "stdio",
+                allowed_origins = new[] { $"chrome-extension://{ChromeExtensionId}/" }
+            };
+        return JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private static void RegisterNativeHost(BrowserDefinition browser)
     {
         string? executablePath = Environment.ProcessPath;
         if (string.IsNullOrWhiteSpace(executablePath) || !File.Exists(executablePath))
@@ -90,19 +149,12 @@ public static class BrowserIntegrationService
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "WindowAnchor");
         Directory.CreateDirectory(hostDirectory);
-        string manifestPath = Path.Combine(hostDirectory, "native-host-manifest.json");
-        string manifest = JsonSerializer.Serialize(new
-        {
-            name = HostName,
-            description = "WindowAnchor browser-session native messaging host",
-            path = executablePath,
-            type = "stdio",
-            allowed_origins = new[] { $"chrome-extension://{ChromeExtensionId}/" }
-        }, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(manifestPath, manifest);
+        string family = browser.ConnectorKind == BrowserConnectorKind.Firefox ? "firefox" : "chromium";
+        string manifestPath = Path.Combine(hostDirectory, $"native-host-manifest-{family}.json");
+        File.WriteAllText(manifestPath, CreateNativeHostManifest(executablePath, browser.ConnectorKind));
 
         using RegistryKey key = Registry.CurrentUser.CreateSubKey(
-            @"Software\Google\Chrome\NativeMessagingHosts\" + HostName,
+            browser.RegistryRoot + HostName,
             writable: true);
         key.SetValue("", manifestPath);
     }
@@ -110,7 +162,7 @@ public static class BrowserIntegrationService
     public static int RemoveNativeHostRegistrations()
     {
         int removed = 0;
-        foreach (var browser in Browsers)
+        foreach (BrowserDefinition browser in Browsers)
         {
             try
             {

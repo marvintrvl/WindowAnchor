@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-09-26
+
+### Added
+- **Windows 11 File Explorer tab sessions (#15)** — Named workspaces now save every folder tab
+  associated with one Explorer window, restore missing tabs into that same revalidated window,
+  reselect the saved active tab, and avoid opening duplicate tabs on repeated restores. Explorer
+  tab paths remain opt-in with file/folder capture and are removed from portable-redacted exports.
+- **VS Code workspace tracking (WA-017)** — High-confidence `.code-workspace` files and project
+  folders are captured as explicit editor context, matched before generic title fallback, and
+  restored through VS Code's supported new-window or reuse-window CLI behavior. Cursor keeps its
+  established registered-handler fallback.
+- **Firefox session restoration (WA-018)** — Added a separately packaged Firefox Desktop 142+
+  connector with normal-window/tab capture, pinned and active state, tab groups, geometry,
+  profile-scoped exact-URL reuse, private-window exclusion, and per-tab failure isolation. The
+  package has a fixed Gecko ID, Mozilla native-host registration, explicit data-consent metadata,
+  AMO listing metadata, and a warning-free `web-ext` validation path. Public AMO signing and a
+  live signed-add-on smoke remain open.
+- **Browser profile-aware restore (WA-019)** — Browser sessions now retain an opaque extension-local
+  profile key, stable saved session/window linkage, and safe monitor/desktop-entry linkage. Restore
+  can reuse an exact matching normal tab only within that profile, always reopen, or leave a
+  matching tab untouched for review. `file://` URLs and legacy sessions without profile identity
+  always open separately.
+
+### Changed
+- **Browser connector protocol v2** — The extension stores only a local opaque profile key, checks
+  version compatibility, returns structured profile/conflict outcomes, and never requests account,
+  cookie, password, page-content, or browsing-history access.
+
 ## [1.6.0] - 2026-09-22
 
 ### Added

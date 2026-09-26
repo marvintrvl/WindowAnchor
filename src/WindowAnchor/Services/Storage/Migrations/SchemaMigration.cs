@@ -91,7 +91,10 @@ internal static class WorkspaceSchemaMigrator
             [LegacyWorkspaceVersion] = node => MigrateV2ToV3(node, sourceIdentity),
             [3] = _ => { },
             [4] = MigrateV4ToV5,
-            [5] = MigrateV5ToV6
+            [5] = MigrateV5ToV6,
+            [6] = MigrateV6ToV7,
+            [7] = MigrateV7ToV8,
+            [8] = MigrateV8ToV9
         };
         bool migrated = JsonMigrationPipeline.Apply(
             root,
@@ -119,6 +122,7 @@ internal static class WorkspaceSchemaMigrator
             throw new InvalidDataException("WorkspaceId must be a GUID.");
         if (snapshot.Entries == null)
             throw new InvalidDataException("Workspace entries cannot be null.");
+        EnsureBrowserSessionMetadata(snapshot);
         if (snapshot.LayoutVariants is null || snapshot.LayoutVariants.Count == 0)
             throw new InvalidDataException("Every workspace must contain a default layout variant.");
         if (!Enum.IsDefined(snapshot.DefaultRestoreMode) ||
@@ -156,11 +160,33 @@ internal static class WorkspaceSchemaMigrator
                 throw new InvalidDataException($"Duplicate EntryId '{entry.EntryId}'.");
             if (!Enum.IsDefined(entry.RestorePolicy))
                 throw new InvalidDataException("Every entry RestorePolicy must be valid.");
+            if (!Enum.IsDefined(entry.EditorWorkspaceKind))
+                throw new InvalidDataException("Every entry EditorWorkspaceKind must be valid.");
+            if (entry.ExplorerTabPaths is null)
+                throw new InvalidDataException("Explorer tab paths cannot be null.");
+            if (entry.ExplorerTabPaths.Any(string.IsNullOrWhiteSpace))
+                throw new InvalidDataException("Explorer tab paths cannot contain empty values.");
+            if (entry.ExplorerActiveTabIndex < 0 ||
+                (entry.ExplorerTabPaths.Count == 0 && entry.ExplorerActiveTabIndex != 0) ||
+                (entry.ExplorerTabPaths.Count > 0 &&
+                    entry.ExplorerActiveTabIndex >= entry.ExplorerTabPaths.Count))
+            {
+                throw new InvalidDataException("Explorer active tab index is outside the saved tab list.");
+            }
             if (entry.Position?.NormalizedLayout is { } layout &&
                 !WindowLayoutGeometry.IsValid(layout))
             {
                 throw new InvalidDataException("Normalized window geometry must contain finite positive dimensions.");
             }
+        }
+
+        var browserSessionIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (BrowserSession session in snapshot.BrowserSessions)
+        {
+            if (!Guid.TryParse(session.BrowserSessionId, out _))
+                throw new InvalidDataException("Every browser session must persist a GUID BrowserSessionId.");
+            if (!browserSessionIds.Add(session.BrowserSessionId))
+                throw new InvalidDataException($"Duplicate browser session ID '{session.BrowserSessionId}'.");
         }
 
         var variantIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -301,6 +327,105 @@ internal static class WorkspaceSchemaMigrator
         });
     }
 
+    private static void MigrateV6ToV7(JsonObject root)
+    {
+        if (root["entries"] is not JsonArray entries)
+            return;
+
+        foreach (JsonNode? node in entries)
+        {
+            if (node is not JsonObject entry ||
+                !string.Equals(GetString(entry, "processName"), "Code", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string launchTarget = GetString(entry, "launchArg");
+            if (!Path.IsPathRooted(launchTarget))
+                continue;
+
+            entry["editorWorkspaceKind"] = launchTarget.EndsWith(
+                ".code-workspace",
+                StringComparison.OrdinalIgnoreCase)
+                ? (int)EditorWorkspaceKind.WorkspaceFile
+                : (int)EditorWorkspaceKind.Folder;
+        }
+    }
+
+    private static void MigrateV7ToV8(JsonObject root)
+    {
+        if (root["browserSessions"] is not JsonArray sessions)
+            return;
+
+        string workspaceId = GetString(root, "workspaceId");
+        for (int index = 0; index < sessions.Count; index++)
+        {
+            if (sessions[index] is not JsonObject session)
+                continue;
+
+            string browserWindowId = GetString(session, "browserWindowId");
+            if (string.IsNullOrWhiteSpace(browserWindowId))
+                browserWindowId = GetString(session, "windowIndex");
+            session["browserWindowId"] = browserWindowId;
+            session["browserSessionId"] = GetValidGuid(session, "browserSessionId") ??
+                StableDocumentId.Create(
+                    "browser-session-v1",
+                    workspaceId,
+                    GetString(session, "profileKey"),
+                    GetString(session, "browser"),
+                    browserWindowId,
+                    index.ToString(CultureInfo.InvariantCulture));
+        }
+    }
+
+    private static void MigrateV8ToV9(JsonObject root)
+    {
+        if (root["entries"] is not JsonArray entries)
+            return;
+
+        foreach (JsonNode? node in entries)
+        {
+            if (node is not JsonObject entry)
+                continue;
+
+            var tabPaths = new JsonArray();
+            if (string.Equals(
+                    GetString(entry, "processName"),
+                    "explorer",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                string activePath = GetString(entry, "launchArg");
+                if (string.IsNullOrWhiteSpace(activePath))
+                    activePath = GetString(entry["position"] as JsonObject, "folderPath");
+                if (!string.IsNullOrWhiteSpace(activePath))
+                    tabPaths.Add(activePath);
+            }
+
+            entry["explorerTabPaths"] = tabPaths;
+            entry["explorerActiveTabIndex"] = 0;
+        }
+    }
+
+    internal static void EnsureBrowserSessionMetadata(WorkspaceSnapshot snapshot)
+    {
+        for (int index = 0; index < snapshot.BrowserSessions.Count; index++)
+        {
+            BrowserSession session = snapshot.BrowserSessions[index];
+            if (string.IsNullOrWhiteSpace(session.BrowserWindowId))
+                session.BrowserWindowId = session.WindowIndex.ToString(CultureInfo.InvariantCulture);
+            if (!Guid.TryParse(session.BrowserSessionId, out _))
+            {
+                session.BrowserSessionId = StableDocumentId.Create(
+                    "browser-session-v1",
+                    snapshot.WorkspaceId,
+                    session.ProfileKey,
+                    session.Browser,
+                    session.BrowserWindowId,
+                    index.ToString(CultureInfo.InvariantCulture));
+            }
+        }
+    }
+
     private static void ValidatePersistedIdentities(JsonObject root)
     {
         if (!Guid.TryParse(GetString(root, "workspaceId"), out _))
@@ -373,7 +498,8 @@ internal static class SettingsSchemaMigrator
             [4] = MigrateV4ToV5,
             [5] = _ => { },
             [6] = _ => { },
-            [7] = _ => { }
+            [7] = _ => { },
+            [8] = _ => { }
         };
         bool migrated = JsonMigrationPipeline.Apply(
             root,
@@ -397,6 +523,8 @@ internal static class SettingsSchemaMigrator
             throw new InvalidDataException("DefaultWorkspaceId must be a GUID when set.");
         if (!Enum.IsDefined(settings.DiagnosticLogLevel))
             throw new InvalidDataException("DiagnosticLogLevel is invalid.");
+        if (!Enum.IsDefined(settings.BrowserTabRestorePolicy))
+            throw new InvalidDataException("BrowserTabRestorePolicy is invalid.");
         if (settings.MinimumVisibleWindowAreaRatio is < 0 or > 1)
             throw new InvalidDataException("MinimumVisibleWindowAreaRatio must be between 0 and 1.");
         foreach ((string alias, string localRoot) in settings.LogicalPathAliases ?? [])

@@ -209,6 +209,7 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
                             <ui:Button x:Name="ChromeExtensionButton" Grid.Row="0" Grid.Column="0"
                                        Content="Set up Chrome" Icon="{ui:SymbolIcon Globe24}"
@@ -226,6 +227,11 @@
                                        Content="Set up Opera" Icon="{ui:SymbolIcon Globe24}"
                                        HorizontalAlignment="Stretch" Margin="6,0,0,0"
                                        Click="OnOperaExtensionSetup"/>
+                            <ui:Button x:Name="FirefoxExtensionButton" Grid.Row="2" Grid.Column="0"
+                                       Grid.ColumnSpan="2"
+                                       Content="Set up Firefox" Icon="{ui:SymbolIcon Globe24}"
+                                       HorizontalAlignment="Stretch" Margin="0,6,0,0"
+                                       Click="OnFirefoxExtensionSetup"/>
                         </Grid>
                         <TextBlock Text="The extension must be installed by your browser. WindowAnchor can open the correct setup page and remove its native connection."
                                    FontSize="11" TextWrapping="Wrap" Margin="0,12,0,8"
@@ -404,6 +410,30 @@
                                              VerticalAlignment="Center"
                                              Checked="OnRestoreWorkflowToggleChanged"
                                              Unchecked="OnRestoreWorkflowToggleChanged"/>
+                        </Grid>
+
+                        <Separator Margin="0,14,0,14" Opacity="0.4"/>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center" Margin="0,0,18,0">
+                                <TextBlock Text="Matching browser tabs"
+                                           FontSize="13" FontWeight="Medium"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                <TextBlock Text="Choose whether a matching tab in the same browser profile is reused, reopened, or left for review."
+                                           FontSize="12" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            </StackPanel>
+                            <ComboBox x:Name="BrowserTabRestorePolicyCombo"
+                                      Grid.Column="1" MinWidth="160" VerticalAlignment="Center"
+                                      SelectionChanged="OnBrowserTabRestorePolicyChanged">
+                                <ComboBoxItem Content="Reuse matching tab" Tag="ReuseMatchingTab"/>
+                                <ComboBoxItem Content="Always reopen" Tag="OpenDuplicate"/>
+                                <ComboBoxItem Content="Ask before reuse" Tag="Ask"/>
+                            </ComboBox>
                         </Grid>
 
                         <Separator Margin="0,14,0,14" Opacity="0.4"/>

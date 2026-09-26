@@ -37,6 +37,9 @@ public sealed record WorkspaceCaptureResult(
     WorkspaceSnapshot Snapshot,
     BrowserCaptureResult BrowserCapture);
 
+/// <summary>One selected desktop browser window used to scope connector capture.</summary>
+public sealed record BrowserCaptureTarget(string Browser, string Title);
+
 /// <summary>Policy applied when optional browser capture did not complete.</summary>
 public enum IncompleteBrowserCapturePolicy
 {
@@ -49,7 +52,7 @@ public interface IBrowserSessionConnector
 {
     Task<BrowserCaptureResult> CaptureAsync(
         string workspaceName,
-        IEnumerable<string> selectedBrowserTitles,
+        IEnumerable<BrowserCaptureTarget> selectedBrowserWindows,
         CancellationToken cancellationToken = default);
 
     Task<bool> RestoreAsync(

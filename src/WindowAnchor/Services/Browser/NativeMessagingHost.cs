@@ -10,18 +10,18 @@ using WindowAnchor.Models;
 
 namespace WindowAnchor.Services;
 
-/// <summary>Implements the Chromium native-messaging host and local app bridge.</summary>
+/// <summary>Implements a browser native-messaging host and its family-specific local app bridge.</summary>
 public static class NativeMessagingHost
 {
     private static readonly ConcurrentDictionary<string, TaskCompletionSource<JsonDocument>> Pending = new();
 
-    public static void Run()
+    public static void Run(string pipeName)
     {
 #pragma warning disable CA2000 // Chromium owns these process-lifetime standard streams.
         Stream input = Console.OpenStandardInput();
         Stream output = Console.OpenStandardOutput();
 #pragma warning restore CA2000
-        _ = Task.Run(() => PipeServerLoop(output));
+        _ = Task.Run(() => PipeServerLoop(output, pipeName));
         while (true)
         {
             using JsonDocument? request = NativeMessagingFraming.ReadMessage(input);
@@ -38,7 +38,12 @@ public static class NativeMessagingHost
 
         if (type == "response" && !string.IsNullOrWhiteSpace(requestId) && Pending.TryRemove(requestId, out var waiter))
         {
-            waiter.SetResult(JsonDocument.Parse(root.GetRawText()));
+            bool compatible = root.TryGetProperty("protocolVersion", out var version) &&
+                version.ValueKind == JsonValueKind.Number &&
+                version.TryGetInt32(out int value) && value == BrowserSessionBridge.ProtocolVersion;
+            waiter.SetResult(JsonDocument.Parse(compatible
+                ? root.GetRawText()
+                : "{\"ok\":false,\"error\":\"Browser extension protocol version is incompatible.\"}"));
             return;
         }
 
@@ -52,14 +57,14 @@ public static class NativeMessagingHost
             });
     }
 
-    private static async Task PipeServerLoop(Stream output)
+    private static async Task PipeServerLoop(Stream output, string pipeName)
     {
         while (true)
         {
             try
             {
                 using var server = new NamedPipeServerStream(
-                    BrowserSessionBridge.PipeName, PipeDirection.InOut, 1,
+                    pipeName, PipeDirection.InOut, 1,
                     PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
                 await server.WaitForConnectionAsync().ConfigureAwait(false);
 #pragma warning disable CA2000 // Both wrappers are disposed by using declarations; the pipe owns the stream.

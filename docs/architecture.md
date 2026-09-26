@@ -1,7 +1,7 @@
 # WindowAnchor — Architecture
 
 This document describes the current development architecture of WindowAnchor for contributors and
-maintainers. The latest released baseline is v1.6.0; implementation status is tracked in
+maintainers. The latest released baseline is v1.6.1; implementation status is tracked in
 [`implementation-status.md`](implementation-status.md).
 
 ---
@@ -35,7 +35,7 @@ Service source is organized by ownership rather than kept in one flat folder:
 | Folder | Responsibility |
 |---|---|
 | `Services/AppAdapters` | Application-specific capture, identity, launch, readiness, and verification strategies. |
-| `Services/Browser` | Chromium connector, URL, PWA, and native-messaging integration. |
+| `Services/Browser` | Chromium/Firefox connectors, family routing, URL, PWA, and native-messaging integration. |
 | `Services/Capture` | Snapshot construction, resource discovery, title parsing, and Jump Lists. |
 | `Services/Desktop` | Monitor topology, window inventory/mutation, placement geometry, and rescue. |
 | `Services/Restore` | Pure planning, matching, execution phases, diagnostics projection, and simulation. |
@@ -117,7 +117,9 @@ resource validation, and mutation remain shared boundaries.
 
 - `ChromiumWebAppAdapter` captures installed PWA shortcut/fallback metadata and plans its launch.
 - `DedicatedBrowserWindowAdapter` plans a saved URL as an explicit new browser window.
-- `ExplorerFolderAdapter` captures and restores the folder target.
+- `ExplorerFolderAdapter` captures the active folder plus the ordered multi-tab session when
+  file/folder capture is enabled. `ExplorerTabSessionService` performs Shell automation on one
+  dedicated STA thread and reconciles missing tabs only after the assigned Explorer HWND is ready.
 - `GenericWindowsAppAdapter` preserves generic executable, document/workspace, MSIX activation,
   and ordinary Win32 fallback behavior when no specialized adapter accepts the entry.
 
@@ -207,10 +209,11 @@ is embedded in the immutable plan and revalidated immediately before launch.
 
 ### Semantic and monitor-relative placement
 
-Workspace schema v6 retains the legacy absolute normal rectangle and separate `ShowCmd`, source
-monitor bounds/work area/DPI, and `NormalizedWindowLayout`, while adding topology-specific layout
-variants. Capture derives X/Y/W/H relative to the work area, horizontal and vertical anchors, and
-recognizable full, left/right half, top/bottom half, thirds, centered, or custom layouts.
+Workspace schema v7 retains the legacy absolute normal rectangle and separate `ShowCmd`, source
+monitor bounds/work area/DPI, `NormalizedWindowLayout`, topology-specific layout variants, and an
+explicit VS Code workspace kind. Capture derives X/Y/W/H relative to the work area, horizontal and
+vertical anchors, and recognizable full, left/right half, top/bottom half, thirds, centered, or
+custom layouts.
 
 `RestoreMonitorTopology.IsExactMatch` requires the same ordered stable IDs, virtual bounds, work
 areas, and DPI. The pure planner preserves exact pixels only for that case. Any geometry, work-area,
@@ -309,6 +312,22 @@ the restore invocation and never becomes a background layout guard, so later use
 fought. Entry/action execution results carry final state, retry count, strategy, and tolerance;
 failed verification changes the overall result to `CompletedWithFailures` and is summarized in the
 user-facing restore warning and privacy-safe structured log.
+
+### File Explorer tab reconciliation
+
+Windows 11 exposes Explorer tabs through `Shell.Application` automation but no public supported
+session-restore API. `ExplorerTabSessionService` groups the per-tab Shell browser objects by their
+top-level `CabinetWClass` HWND, obtains each `ShellTabWindowClass` handle through `IShellBrowser`,
+and records all folder locations plus the active tab. Capture and restore COM work is serialized on
+one background STA thread so UI, test, and worker callers observe the same tab handles.
+
+After launch readiness and placement verification, the executor revalidates the assigned Explorer
+HWND. It consumes matching locations as a multiset, opens only missing occurrences, navigates each
+new tab through its Shell browser object, and reselects the saved active occurrence. It does not
+close unrelated tabs. Missing folders or a changed/replaced HWND produce a typed partial failure
+instead of global keyboard input or destructive reconciliation. Tab paths are included only when
+the user enables file/folder capture, are redacted from diagnostic plans, and are removed from
+portable-redacted exports.
 
 ### Restore preview and approval
 
@@ -473,10 +492,11 @@ boundaries.
   observation and capture construction behind the façade.
 
 ### `StorageService`
-Atomic, versioned JSON persistence and migration. Workspace schema v6 combines stable identities,
-semantic layout, Resume-compatible mode/per-entry policy, and topology-specific layout variants;
-v2-v5 and legacy profile documents migrate without inventing unavailable geometry or changing
-restore behavior.
+Atomic, versioned JSON persistence and migration. Workspace schema v9 combines stable identities,
+semantic layout, Resume-compatible mode/per-entry policy, topology-specific layout variants, the
+persisted VS Code workspace target kind, stable browser-session metadata, and per-window Explorer
+tab sessions; v2-v8 and legacy
+profile documents migrate without inventing unavailable geometry or changing restore behavior.
 When a same-name recapture replaces a named workspace, its default mode is retained and stable IDs
 and entry policies are carried across only for identities that are unique in both snapshots.
 `StorageService` remains the application-facing
@@ -490,7 +510,8 @@ from being mixed.
     - `temporary-captures/{workspaceId}.temporary.json` — short-lived captures.
     - `settings.json` — versioned application settings (schema v8) with ID-based workspace
       references, composite learned window-match hints, preview/checkpoint preferences, persistent
-      app identities, logical path aliases, rescue threshold, and first-run completion flag. The
+      app identities, logical path aliases, rescue threshold, browser-tab restore preference, and
+      first-run completion flag. The
       v4-to-v5 migration marks existing installations complete so an upgrade is never
       misrepresented as a first launch.
     - `last_fingerprint.txt` — persists the last-known fingerprint across restarts.
@@ -567,7 +588,8 @@ User clicks "Save Workspace"
             → WindowService.SnapshotWindows(CaptureCandidate, monitors)
             → CaptureResourceResolver uses TitleParser + bounded Jump List/folder discovery
             → CapturedWindowEntryFactory creates WorkspaceEntry variants
-        → IBrowserSessionConnector captures optional browser sessions
+        → IBrowserSessionConnector captures optional browser sessions, opaque profile identity,
+          runtime window IDs, and safe unique desktop-entry/monitor links
         → WorkspaceCaptureResult records browser outcome and complete snapshot
     → WorkspaceService.PersistCapture(result, NamedWorkspace, SavePartialWorkspace)
         → one atomic named-workspace commit
@@ -588,7 +610,7 @@ Manual tray/Settings/hotkey request
         → when enabled, CheckpointRepository atomically commits + bounds recovery history
         → RestoreExecutor
             → preflight approved external references
-            → browser/existing-window/launch mutations
+            → profile-scoped browser tab reuse or duplicate/conflict handling, then existing-window/launch mutations
             → correlated readiness
             → placement verification and bounded retry
             → final minimization and ordered result aggregation

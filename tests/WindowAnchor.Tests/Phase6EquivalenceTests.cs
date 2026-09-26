@@ -274,7 +274,7 @@ public class Phase6EquivalenceTests
             RestoreMode.AlignAndMinimize);
 
         Assert.Equal(
-            "F4880FB8CAF84ECBB7038D98468059D866ADC55DB2394F9360BFC0D640210DB8",
+            "C642EED2CE57EDCF74312519A08B16E8AFB79BD2A0A8403B0DE750D367ECA88B",
             Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(plan.ToRedactedJson()))));
     }
 
@@ -373,7 +373,7 @@ public class Phase6EquivalenceTests
 
         public Task<BrowserCaptureResult> CaptureAsync(
             string workspaceName,
-            IEnumerable<string> selectedBrowserTitles,
+            IEnumerable<BrowserCaptureTarget> selectedBrowserWindows,
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();

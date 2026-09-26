@@ -18,6 +18,11 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+
       - name: Run service-layer tests
         run: dotnet test WindowAnchor.sln --configuration Release
 
@@ -36,12 +41,27 @@ jobs:
             -p:DebugSymbols=false `
             --output ./publish
 
+      - name: Validate and package Firefox connector
+        shell: pwsh
+        working-directory: ./firefox-extension
+        run: |
+          $tag = "${{ github.event.release.tag_name }}"
+          node --test ./tests/background.test.cjs
+          npx --yes web-ext@10.7.0 lint
+          npx --yes web-ext@10.7.0 build `
+            --filename "windowanchor-firefox-connector-amo-$tag.zip" `
+            --artifacts-dir ../publish
+          Move-Item `
+            "../publish/windowanchor-firefox-connector-amo-$tag.zip" `
+            "../publish/WindowAnchor-Firefox-Connector-AMO-$tag.zip"
+
       - name: Package release assets
         shell: pwsh
         run: |
           $tag = "${{ github.event.release.tag_name }}"
           $executable = "./publish/WindowAnchor-$tag.exe"
           $browserConnector = "./publish/WindowAnchor-Browser-Connector-$tag.zip"
+          $firefoxConnector = "./publish/WindowAnchor-Firefox-Connector-AMO-$tag.zip"
           Copy-Item `
             ./publish/WindowAnchor.exe `
             $executable
@@ -49,7 +69,7 @@ jobs:
             -Path ./browser-extension/* `
             -DestinationPath $browserConnector `
             -CompressionLevel Optimal
-          $checksums = @($executable, $browserConnector) | ForEach-Object {
+          $checksums = @($executable, $browserConnector, $firefoxConnector) | ForEach-Object {
             $hash = (Get-FileHash -Algorithm SHA256 $_).Hash
             "$hash  $(Split-Path -Leaf $_)"
           }
@@ -68,6 +88,7 @@ jobs:
             $tag `
             "./publish/WindowAnchor-$tag.exe" `
             "./publish/WindowAnchor-Browser-Connector-$tag.zip" `
+            "./publish/WindowAnchor-Firefox-Connector-AMO-$tag.zip" `
             ./publish/SHA256SUMS.txt `
             --repo "${{ github.repository }}" `
             --clobber

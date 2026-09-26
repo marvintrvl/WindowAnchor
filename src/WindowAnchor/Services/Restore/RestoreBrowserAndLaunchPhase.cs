@@ -13,6 +13,7 @@ internal sealed class RestoreBrowserAndLaunchPhase
     private readonly IRestoreProcessLauncher _processLauncher;
     private readonly IRestoreResourceBoundary _resources;
     private readonly IBrowserSessionConnector? _browserConnector;
+    private readonly IExplorerTabSessionRestorer _explorerTabs;
     private readonly RestoreWindowRevalidator _revalidator;
 
     internal RestoreBrowserAndLaunchPhase(
@@ -20,12 +21,14 @@ internal sealed class RestoreBrowserAndLaunchPhase
         IRestoreProcessLauncher processLauncher,
         IRestoreResourceBoundary resources,
         IBrowserSessionConnector? browserConnector,
+        IExplorerTabSessionRestorer explorerTabs,
         RestoreWindowRevalidator revalidator)
     {
         _windowMutation = windowMutation;
         _processLauncher = processLauncher;
         _resources = resources;
         _browserConnector = browserConnector;
+        _explorerTabs = explorerTabs;
         _revalidator = revalidator;
     }
 
@@ -110,6 +113,114 @@ internal sealed class RestoreBrowserAndLaunchPhase
                 staleReason: null,
                 "Minimized windows outside the final approved assignment set.");
         }
+    }
+
+    internal async Task<bool> RestoreExplorerTabsAsync(
+        RestoreExecutionContext context,
+        CancellationToken cancellationToken,
+        IProgress<RestoreProgressReport>? progress)
+    {
+        IndexedRestoreAction[] actions = context.IndexedActions
+            .Where(item => item.Action.Kind == RestoreActionKind.RestoreExplorerTabs &&
+                !context.Results.ContainsKey(item.Index))
+            .ToArray();
+        for (int actionIndex = 0; actionIndex < actions.Length; actionIndex++)
+        {
+            IndexedRestoreAction item = actions[actionIndex];
+            if (item.Action.EntryIndex is not int entryIndex ||
+                !context.Entries.TryGetValue(entryIndex, out RestoreEntryExecutionState? state) ||
+                state.PlanEntry.ExplorerSession is not { } session)
+            {
+                context.Results[item.Index] = RestoreExecutionSupport.Result(
+                    item,
+                    RestoreExecutionActionStatus.Failed,
+                    staleReason: null,
+                    "The approved File Explorer tab action is incomplete.");
+                continue;
+            }
+
+            long? handle = state.AssignedWindowHandle ?? item.Action.WindowHandle;
+            if (handle is null)
+            {
+                state.Status = RestoreExecutionEntryStatus.Failed;
+                state.Explanation = "The target File Explorer window did not become ready.";
+                context.Results[item.Index] = RestoreExecutionSupport.Result(
+                    item,
+                    RestoreExecutionActionStatus.Failed,
+                    staleReason: null,
+                    state.Explanation);
+                continue;
+            }
+
+            uint expectedPid = state.PlanEntry.SelectedMatch?.WindowHandle == handle
+                ? state.PlanEntry.SelectedMatch.ProcessId
+                : 0;
+            RestorePlanStaleReason? stale = _revalidator.Revalidate(
+                state.PlanEntry,
+                new IntPtr(handle.Value),
+                expectedPid);
+            if (stale is not null)
+            {
+                RestoreExecutionSupport.MarkStale(item, state, context.Results, stale.Value);
+                continue;
+            }
+
+            progress?.Report(new RestoreProgressReport(
+                RestoreProgressStage.RestoringExplorerTabs,
+                $"Restoring File Explorer tabs ({actionIndex + 1}/{actions.Length})",
+                $"{session.TabPaths.Count} saved tabs",
+                actionIndex + 1,
+                actions.Length));
+            try
+            {
+                ExplorerTabRestoreResult result = await _explorerTabs.RestoreAsync(
+                    new IntPtr(handle.Value),
+                    session,
+                    cancellationToken).ConfigureAwait(false);
+                bool succeeded = result.Succeeded;
+                state.Status = succeeded
+                    ? RestoreExecutionEntryStatus.Restored
+                    : RestoreExecutionEntryStatus.Failed;
+                state.AssignedWindowHandle = handle;
+                context.AssignedHwnds.Add(new IntPtr(handle.Value));
+                state.Explanation = succeeded
+                    ? $"Restored {session.TabPaths.Count} saved File Explorer tabs."
+                    : $"Restored {result.OpenedTabCount} File Explorer tabs; " +
+                      $"{result.FailedTabCount} could not be restored.";
+                context.Results[item.Index] = RestoreExecutionSupport.Result(
+                    item,
+                    succeeded
+                        ? RestoreExecutionActionStatus.Succeeded
+                        : RestoreExecutionActionStatus.Failed,
+                    staleReason: null,
+                    state.Explanation,
+                    handle);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                state.Status = RestoreExecutionEntryStatus.Cancelled;
+                state.Explanation = "File Explorer tab restoration was cancelled.";
+                context.Results[item.Index] = RestoreExecutionSupport.Result(
+                    item,
+                    RestoreExecutionActionStatus.Cancelled,
+                    staleReason: null,
+                    state.Explanation,
+                    handle);
+                return false;
+            }
+            catch (Exception ex)
+            {
+                state.Status = RestoreExecutionEntryStatus.Failed;
+                state.Explanation = $"File Explorer tab restoration failed ({ex.GetType().Name}).";
+                context.Results[item.Index] = RestoreExecutionSupport.Result(
+                    item,
+                    RestoreExecutionActionStatus.Failed,
+                    staleReason: null,
+                    state.Explanation,
+                    handle);
+            }
+        }
+        return true;
     }
 
     private async Task<bool> ExecuteBrowserActionAsync(

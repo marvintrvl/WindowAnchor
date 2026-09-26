@@ -20,6 +20,12 @@ public class WorkspaceTransferAndSyncTests
         entry.AppUserModelId = "Private.Package!App";
         entry.Position.TitleSnippet = "Secret document";
         entry.Position.FolderPath = @"C:\Users\Alice\Secret";
+        entry.ExplorerTabPaths =
+        [
+            @"C:\Users\Alice\Secret",
+            @"C:\Users\Alice\Other secret"
+        ];
+        entry.ExplorerActiveTabIndex = 1;
         workspace.MonitorFingerprint = "private-fingerprint";
         workspace.Monitors = [Monitor("private-monitor")];
         workspace.EnsureLayoutVariants();

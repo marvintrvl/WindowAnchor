@@ -257,6 +257,79 @@ public class Phase4ExtractionTests
         Assert.Equal(1, connector.CaptureCalls);
     }
 
+    [Fact]
+    public async Task Capture_builder_assigns_stable_browser_session_and_unique_desktop_linkage()
+    {
+        var connector = new FakeBrowserSessionConnector
+        {
+            CaptureResult = BrowserCaptureResult.Captured(
+            [
+                new BrowserSession
+                {
+                    ProfileKey = "opaque-profile-key",
+                    BrowserWindowId = "42",
+                    Browser = "chrome",
+                    ActiveTitle = "Research",
+                    Left = 10,
+                    Top = 20,
+                    Width = 1200,
+                    Height = 800
+                }
+            ])
+        };
+        var builder = new WorkspaceCaptureBuilder(connector);
+        WorkspaceSnapshot snapshot = Snapshot("capture", DateTimeOffset.UtcNow);
+        var entry = new WorkspaceEntry
+        {
+            ProcessName = "chrome",
+            MonitorId = "monitor-a",
+            Position = new WindowRecord
+            {
+                TitleSnippet = "Research",
+                NormalLeft = 10,
+                NormalTop = 20,
+                NormalRight = 1210,
+                NormalBottom = 820
+            }
+        };
+        snapshot.Entries.Add(entry);
+
+        WorkspaceCaptureResult result = await builder.CaptureAsync(
+            new WorkspaceCaptureRequest(
+                snapshot.Name, false, null, null, null, true, false, null,
+                CancellationToken.None, false),
+            _ => snapshot);
+
+        BrowserSession session = Assert.Single(result.Snapshot.BrowserSessions);
+        Assert.True(Guid.TryParse(session.BrowserSessionId, out _));
+        Assert.Equal("opaque-profile-key", session.ProfileKey);
+        Assert.Equal(entry.EntryId, session.LinkedEntryId);
+        Assert.Equal("monitor-a", session.MonitorId);
+    }
+
+    [Fact]
+    public async Task Capture_builder_routes_firefox_windows_to_the_firefox_connector_family()
+    {
+        var connector = new FakeBrowserSessionConnector();
+        var builder = new WorkspaceCaptureBuilder(connector);
+        WorkspaceSnapshot snapshot = Snapshot("capture", DateTimeOffset.UtcNow);
+        snapshot.Entries.Add(new WorkspaceEntry
+        {
+            ProcessName = "firefox.exe",
+            Position = new WindowRecord { TitleSnippet = "Mozilla documentation" }
+        });
+
+        await builder.CaptureAsync(
+            new WorkspaceCaptureRequest(
+                snapshot.Name, false, null, null, null, true, false, null,
+                CancellationToken.None, false),
+            _ => snapshot);
+
+        BrowserCaptureTarget target = Assert.Single(connector.SelectedBrowserWindows);
+        Assert.Equal("firefox", target.Browser);
+        Assert.Equal("Mozilla documentation", target.Title);
+    }
+
     private static WorkspaceSnapshot Snapshot(string id, DateTimeOffset savedAt) => new()
     {
         WorkspaceId = id,
@@ -278,7 +351,7 @@ public class Phase4ExtractionTests
 
         public Task<BrowserCaptureResult> CaptureAsync(
             string workspaceName,
-            IEnumerable<string> selectedBrowserTitles,
+            IEnumerable<BrowserCaptureTarget> selectedBrowserWindows,
             CancellationToken cancellationToken = default)
         {
             CaptureCalls++;

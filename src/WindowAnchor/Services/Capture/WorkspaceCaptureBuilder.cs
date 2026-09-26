@@ -50,7 +50,7 @@ internal sealed class WorkspaceCaptureBuilder
             : BrowserCaptureResult.Empty(
                 BrowserCaptureStatus.Skipped,
                 "Browser capture was disabled by the caller.");
-        snapshot.BrowserSessions = browserCapture.Sessions.ToList();
+        snapshot.BrowserSessions = AttachSessionMetadata(snapshot, browserCapture.Sessions);
         request.Progress?.Report(new SaveProgressReport(
             snapshot.Entries.Count,
             snapshot.Entries.Count,
@@ -64,14 +64,16 @@ internal sealed class WorkspaceCaptureBuilder
         WorkspaceCaptureRequest request,
         WorkspaceSnapshot snapshot)
     {
-        List<string> browserTitles = snapshot.Entries
+        List<BrowserCaptureTarget> browserWindows = snapshot.Entries
             .Where(entry => IsBrowserProcess(entry.ProcessName))
-            .Select(entry => entry.Position.TitleSnippet)
-            .Where(title => !string.IsNullOrWhiteSpace(title))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(entry => new BrowserCaptureTarget(
+                ProcessIdentityNormalizer.Normalize(entry.ProcessName),
+                entry.Position.TitleSnippet))
+            .Where(window => !string.IsNullOrWhiteSpace(window.Title))
+            .Distinct()
             .ToList();
 
-        if (browserTitles.Count == 0)
+        if (browserWindows.Count == 0)
         {
             return BrowserCaptureResult.Empty(
                 BrowserCaptureStatus.Skipped,
@@ -90,11 +92,11 @@ internal sealed class WorkspaceCaptureBuilder
                 snapshot.Entries.Count,
                 snapshot.Entries.Count,
                 "Capturing browser session…",
-                $"{browserTitles.Count} browser window{(browserTitles.Count == 1 ? "" : "s")}",
+                $"{browserWindows.Count} browser window{(browserWindows.Count == 1 ? "" : "s")}",
                 WorkspaceCaptureProgressStage.CapturingBrowserSession));
             Task<BrowserCaptureResult> capture = _browserSessionConnector.CaptureAsync(
                 request.Name,
-                browserTitles,
+                browserWindows,
                 request.CancellationToken);
             if (request.BrowserCaptureBudget is not { } budget || budget <= TimeSpan.Zero)
                 return await capture.ConfigureAwait(false);
@@ -128,7 +130,45 @@ internal sealed class WorkspaceCaptureBuilder
     }
 
     private static bool IsBrowserProcess(string processName) =>
-        ProcessIdentityNormalizer.Normalize(processName) is "chrome" or "msedge" or "opera" or "brave";
+        ProcessIdentityNormalizer.Normalize(processName) is "chrome" or "msedge" or "opera" or "brave" or "firefox";
+
+    private static List<BrowserSession> AttachSessionMetadata(
+        WorkspaceSnapshot snapshot,
+        IReadOnlyList<BrowserSession> sessions)
+    {
+        for (int sessionIndex = 0; sessionIndex < sessions.Count; sessionIndex++)
+        {
+            BrowserSession session = sessions[sessionIndex];
+            session.BrowserSessionId = Guid.TryParse(session.BrowserSessionId, out _)
+                ? session.BrowserSessionId
+                : StableDocumentId.Create(
+                    "browser-session-v1",
+                    snapshot.WorkspaceId,
+                    session.ProfileKey,
+                    session.Browser,
+                    session.BrowserWindowId,
+                    sessionIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+            WorkspaceEntry[] matches = snapshot.Entries.Where(entry =>
+                BrowserProcessMatches(entry.ProcessName, session.Browser) &&
+                entry.Position.TitleSnippet.Equals(session.ActiveTitle, StringComparison.OrdinalIgnoreCase) &&
+                entry.Position.NormalLeft == session.Left &&
+                entry.Position.NormalTop == session.Top &&
+                entry.Position.NormalRight - entry.Position.NormalLeft == session.Width &&
+                entry.Position.NormalBottom - entry.Position.NormalTop == session.Height).ToArray();
+            if (matches.Length == 1)
+            {
+                session.LinkedEntryId = matches[0].EntryId;
+                session.MonitorId = matches[0].MonitorId;
+            }
+        }
+        return sessions.ToList();
+    }
+
+    private static bool BrowserProcessMatches(string processName, string browser) =>
+        ProcessIdentityNormalizer.Normalize(processName) ==
+        (ProcessIdentityNormalizer.Normalize(browser) == "edge" ? "msedge" :
+            ProcessIdentityNormalizer.Normalize(browser));
 
     private static async Task ObserveLateFailureAsync(Task<BrowserCaptureResult> capture)
     {

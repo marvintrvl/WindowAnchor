@@ -100,7 +100,7 @@ public sealed record PersistentApplicationCandidate(
 public class AppSettings
 {
     /// <summary>Current persisted settings schema version.</summary>
-    public const int CurrentSchemaVersion = 8;
+    public const int CurrentSchemaVersion = 9;
 
     /// <summary>Schema version used to serialize this settings document.</summary>
     [JsonInclude]
@@ -202,6 +202,10 @@ public class AppSettings
     /// </para>
     /// </summary>
     public List<string>? DedicatedBrowserUrlPatterns { get; set; }
+
+    /// <summary>How browser-session restore handles an already-open matching tab in the same profile.</summary>
+    public BrowserTabRestorePolicy BrowserTabRestorePolicy { get; set; } =
+        BrowserTabRestorePolicy.ReuseMatchingTab;
 
     // ── Global switch preservation ───────────────────────────────────────
     /// <summary>

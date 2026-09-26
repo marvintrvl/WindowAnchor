@@ -88,6 +88,7 @@ public partial class SettingsWindow : FluentWindow
         EdgeExtensionButton.IsEnabled = installed.Contains("Microsoft Edge");
         BraveExtensionButton.IsEnabled = installed.Contains("Brave");
         OperaExtensionButton.IsEnabled = installed.Contains("Opera");
+        FirefoxExtensionButton.IsEnabled = installed.Contains("Mozilla Firefox");
     }
 
     private static void OpenBrowserExtensionSetup(string browserName)
@@ -104,6 +105,9 @@ public partial class SettingsWindow : FluentWindow
 
     private void OnOperaExtensionSetup(object sender, RoutedEventArgs e)
         => OpenBrowserExtensionSetup("Opera");
+
+    private void OnFirefoxExtensionSetup(object sender, RoutedEventArgs e)
+        => OpenBrowserExtensionSetup("Mozilla Firefox");
 
     private void OnRemoveBrowserConnection(object sender, RoutedEventArgs e)
     {

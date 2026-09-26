@@ -20,6 +20,7 @@ internal sealed record AppAdapterLaunchContext(
     WorkspaceEntry Entry,
     bool HasSelectedMatch,
     bool CorrectResourceMatched,
+    bool PreferFreshInstance,
     bool BrowserSessionScheduled,
     IReadOnlyList<RunningApplicationIdentity> RunningApplications,
     IReadOnlySet<string> PendingDocumentExecutables,

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text.Json.Serialization;
 namespace WindowAnchor.Models;
 
@@ -84,6 +85,18 @@ public class WindowRecord
     /// Populated via Shell.Application COM. Empty for non-Explorer windows.
     /// </summary>
     public string FolderPath { get; set; } = "";
+
+    /// <summary>
+    /// Runtime-only File Explorer tab locations associated with this top-level window. The
+    /// application adapter copies these into <see cref="WorkspaceEntry.ExplorerTabPaths"/> only
+    /// when file/folder capture is enabled.
+    /// </summary>
+    [JsonIgnore]
+    public List<string> ExplorerTabPaths { get; set; } = new();
+
+    /// <summary>Runtime-only index of the active item in <see cref="ExplorerTabPaths"/>.</summary>
+    [JsonIgnore]
+    public int ExplorerActiveTabIndex { get; set; }
 
     // ── Monitor assignment (populated during snapshot, empty in old saves) ───
     /// <summary>Stable EDID-based monitor ID, e.g. "A1B2:C3D4:0".</summary>

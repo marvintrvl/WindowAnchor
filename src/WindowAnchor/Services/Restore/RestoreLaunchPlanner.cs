@@ -16,6 +16,7 @@ internal static class RestoreLaunchPlanner
         WorkspaceEntry entry,
         bool hasSelectedMatch,
         bool correctResourceMatched,
+        bool preferFreshInstance,
         bool browserSessionScheduled,
         IReadOnlyList<RunningApplicationIdentity> runningApplications,
         IReadOnlySet<string> pendingDocumentExecutables,
@@ -43,6 +44,7 @@ internal static class RestoreLaunchPlanner
                 entry,
                 hasSelectedMatch,
                 correctResourceMatched,
+                preferFreshInstance,
                 browserSessionScheduled,
                 runningApplications,
                 pendingDocumentExecutables,
@@ -99,36 +101,6 @@ internal static class RestoreLaunchPlanner
                 return Blocked(errors, warnings, "The saved document, folder, or resource is unavailable.");
             AddUnknownAvailabilityWarning(warnings, resource);
             string target = FirstNonEmpty(resource?.ResolvedTarget, entry.LaunchArg);
-
-            if (entry.ProcessName.Equals("Code", StringComparison.OrdinalIgnoreCase))
-            {
-                RestoreResourceObservation? executable = GetResource(
-                    resources,
-                    entryIndex,
-                    RestoreResourceKind.Executable);
-                if (string.IsNullOrWhiteSpace(entry.ExecutablePath))
-                {
-                    errors.Add(Error(
-                        RestorePlanIssueCode.MissingExecutable,
-                        "The project entry has no executable path."));
-                    return Blocked(errors, warnings, "The project application executable is missing.");
-                }
-                if (IsUnavailable(executable, errors))
-                    return Blocked(errors, warnings, "The project application executable is unavailable.");
-                return Launch(
-                    entryIndex,
-                    RestoreLaunchKind.Resource,
-                    RestoreActionKind.OpenResource,
-                    FirstNonEmpty(executable?.ResolvedTarget, entry.ExecutablePath),
-                    $"\"{target}\"",
-                    useShellExecute: false,
-                    resource?.Availability ?? RestoreResourceAvailability.Unknown,
-                    "Open the saved project or folder through the application CLI.",
-                    LogSensitivity.Path,
-                    LogSensitivity.CommandLine,
-                    warnings,
-                    errors);
-            }
 
             return Launch(
                 entryIndex,

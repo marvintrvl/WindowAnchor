@@ -343,6 +343,7 @@ public static class RestorePlanner
             bool correctResourceMatched = selectedMatch?.Evidence.Any(evidence =>
                 evidence.Matched && evidence.Kind is
                     WindowMatchEvidenceKind.DocumentNameInTitle or
+                    WindowMatchEvidenceKind.FolderPathExact or
                     WindowMatchEvidenceKind.PwaIdentityExact or
                     WindowMatchEvidenceKind.DedicatedBrowserSiteExact) == true;
             RestoreLaunchDecision launch = policy.LaunchIfMissing
@@ -351,6 +352,7 @@ public static class RestorePlanner
                     entry,
                     selectedMatch is not null,
                     correctResourceMatched,
+                    policy.PreferFreshInstance,
                     browserSessionScheduled,
                     runningApplications,
                     pendingDocumentExecutables,
@@ -400,6 +402,22 @@ public static class RestorePlanner
                     UseShellExecute: false,
                     placement,
                     "Wait for the launched application to create an eligible window."));
+            }
+
+            RestoreExplorerSession? explorerSession = ToRestoreExplorerSession(entry);
+            if (explorerSession is not null &&
+                policy.LaunchIfMissing &&
+                (selectedMatch is not null || launch.Requirement.IsRequired))
+            {
+                entryActions.Add(new RestoreAction(
+                    entryIndex,
+                    RestoreActionKind.RestoreExplorerTabs,
+                    selectedMatch?.Hwnd.ToInt64(),
+                    Target: "",
+                    Arguments: "",
+                    UseShellExecute: false,
+                    TargetPlacement: null,
+                    "Reconcile the saved File Explorer tabs after the target window is ready."));
             }
 
             RestorePlanEntryOutcome outcome;
@@ -485,7 +503,9 @@ public static class RestorePlanner
             SnapshotSavedAt = snapshot.SavedAt,
             Mode = mode.Kind,
             SelectedMonitorIds = selectedMonitorIds,
-            BrowserSessions = snapshot.BrowserSessions.Select(ToRestoreBrowserSession).ToArray(),
+            BrowserSessions = snapshot.BrowserSessions
+                .Select(session => ToRestoreBrowserSession(session, liveInventory.BrowserTabRestorePolicy))
+                .ToArray(),
             ProtectedWindowHandles = assignmentPlanner.ProtectedWindowHandles
                 .Concat(policyProtectedWindowHandles)
                 .Concat(persistentApplicationWindowHandles)
@@ -544,8 +564,21 @@ public static class RestorePlanner
         {
             RestorePolicy = policy,
             ReadinessExcludedWindowHandles = readinessExcludedWindowHandles?.ToHashSet() ??
-                new HashSet<long>()
+                new HashSet<long>(),
+            ExplorerSession = ToRestoreExplorerSession(entry)
         };
+
+    private static RestoreExplorerSession? ToRestoreExplorerSession(WorkspaceEntry entry)
+    {
+        string[] tabPaths = (entry.ExplorerTabPaths ?? [])
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .ToArray();
+        return tabPaths.Length > 1
+            ? new RestoreExplorerSession(
+                tabPaths,
+                Math.Clamp(entry.ExplorerActiveTabIndex, 0, tabPaths.Length - 1))
+            : null;
+    }
 
     private static bool IncludedByMode(
         WorkspaceEntry entry,
@@ -576,7 +609,9 @@ public static class RestorePlanner
                Math.Abs(current.Bounds.Bottom - target.Bottom) > tolerance;
     }
 
-    private static RestoreBrowserSession ToRestoreBrowserSession(BrowserSession session) => new(
+    private static RestoreBrowserSession ToRestoreBrowserSession(
+        BrowserSession session,
+        BrowserTabRestorePolicy restorePolicy) => new(
         session.Browser,
         session.ActiveTitle,
         session.WindowIndex,
@@ -596,7 +631,16 @@ public static class RestorePlanner
             group.Index,
             group.Title,
             group.Color,
-            group.Collapsed)).ToArray());
+            group.Collapsed)).ToArray())
+    {
+        BrowserSessionId = session.BrowserSessionId,
+        ProfileKey = session.ProfileKey,
+        ProfileLabel = session.ProfileLabel,
+        BrowserWindowId = session.BrowserWindowId,
+        LinkedEntryId = session.LinkedEntryId,
+        MonitorId = session.MonitorId,
+        RestorePolicy = restorePolicy
+    };
 
     private static Dictionary<(int EntryIndex, RestoreResourceKind Kind), RestoreResourceObservation>
         IndexResources(IEnumerable<RestoreResourceObservation> resources)

@@ -29,7 +29,8 @@ public sealed class RestoreExecutor
         IEnumerable<IAppReadinessStrategy>? readinessStrategies = null,
         IWindowPlacementProbe? placementProbe = null,
         WindowPlacementVerificationPolicy? placementPolicy = null,
-        IEnumerable<IWindowPlacementVerificationStrategy>? placementStrategies = null)
+        IEnumerable<IWindowPlacementVerificationStrategy>? placementStrategies = null,
+        IExplorerTabSessionRestorer? explorerTabRestorer = null)
     {
         ArgumentNullException.ThrowIfNull(windowInventory);
         ArgumentNullException.ThrowIfNull(windowMutation);
@@ -55,6 +56,7 @@ public sealed class RestoreExecutor
             processLauncher,
             resources,
             browserConnector,
+            explorerTabRestorer ?? new ExplorerTabSessionService(),
             revalidator);
         _readiness = new RestoreReadinessPhase(
             windowMutation,
@@ -190,6 +192,28 @@ public sealed class RestoreExecutor
                 context.Results,
                 RestoreExecutionActionStatus.Cancelled,
                 "Cancellation interrupted post-restore placement verification.");
+            return RestoreResultAggregator.Complete(
+                context,
+                RestoreExecutionStatus.Cancelled,
+                wasCancelled: true);
+        }
+
+
+        bool explorerTabsComplete;
+        using (context.Timing.Measure(RestoreProgressStage.RestoringExplorerTabs))
+        {
+            explorerTabsComplete = await _browserAndLaunch.RestoreExplorerTabsAsync(
+                context,
+                cancellationToken,
+                progress).ConfigureAwait(false);
+        }
+        if (!explorerTabsComplete)
+        {
+            RestoreExecutionSupport.MarkRemaining(
+                context.IndexedActions,
+                context.Results,
+                RestoreExecutionActionStatus.Cancelled,
+                "Cancellation interrupted File Explorer tab restoration.");
             return RestoreResultAggregator.Complete(
                 context,
                 RestoreExecutionStatus.Cancelled,

@@ -201,7 +201,19 @@
                         <Border Style="{StaticResource SectionCard}">
                             <StackPanel>
                                 <TextBlock Text="Browser connection" Style="{StaticResource SectionTitle}"/>
-                                <TextBlock Style="{StaticResource BodyText}" Text="The browser extension and native connection are optional. They add metadata-based Chromium tab/session capture. Dedicated URL patterns intentionally read matching address bars so selected sites can reopen as separate windows; leave the list empty if you do not need that behavior."/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="The optional Chromium and Firefox connectors add metadata-based tab/session capture. Private windows, cookies, passwords, general history, page bodies, and Firefox container identity are excluded. Dedicated URL patterns intentionally read matching address bars so selected sites can reopen as separate windows; leave the list empty if you do not need that behavior."/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="File Explorer tabs" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="On Windows 11, enabling Save open files also records every folder tab in each selected File Explorer window and which tab was active. Restore adds only missing saved tabs to the assigned Explorer window, leaves unrelated tabs open, and reselects the saved active tab. Missing folders are reported as a partial restore instead of closing tabs or guessing another location."/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource SectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="VS Code workspaces" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Style="{StaticResource BodyText}" Text="When file detection identifies a `.code-workspace` file or a project folder, WindowAnchor saves that workspace context separately from an open document. Restore opens it through VS Code in a new or assigned editor window according to the entry policy. A title alone is not treated as a workspace path; Cursor continues to use its normal registered-file handler."/>
                             </StackPanel>
                         </Border>
                     </StackPanel>

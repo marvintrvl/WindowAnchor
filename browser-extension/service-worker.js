@@ -1,5 +1,5 @@
 const HOST_NAME = "com.windowanchor.browser";
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
 let nativePort = null;
 let reconnectTimer = null;
 let hostUnavailable = false;
@@ -35,6 +35,7 @@ async function captureSessions(selectedTitles) {
     populate: true,
     windowTypes: ["normal"]
   });
+  const profileKey = await getProfileKey();
   const sessions = [];
   for (let windowIndex = 0; windowIndex < windows.length; windowIndex += 1) {
     const browserWindow = windows[windowIndex];
@@ -58,6 +59,10 @@ async function captureSessions(selectedTitles) {
         !selectedTitles.some(title => activeTitle.includes(title) || title.includes(activeTitle)))
       continue;
     sessions.push({
+      profileKey,
+      // Chromium does not expose a non-sensitive browser-profile display name.
+      profileLabel: "",
+      browserWindowId: String(browserWindow.id),
       browser: browserName(),
       activeTitle,
       windowIndex,
@@ -78,6 +83,16 @@ async function captureSessions(selectedTitles) {
   return sessions;
 }
 
+async function getProfileKey() {
+  const stored = await chrome.storage.local.get("windowAnchorProfileKey");
+  if (typeof stored.windowAnchorProfileKey === "string" && stored.windowAnchorProfileKey.length > 0)
+    return stored.windowAnchorProfileKey;
+
+  const profileKey = crypto.randomUUID();
+  await chrome.storage.local.set({ windowAnchorProfileKey: profileKey });
+  return profileKey;
+}
+
 function isRestorableUrl(url) {
   return typeof url === "string" && (url.startsWith("http://") ||
     url.startsWith("https://") || url.startsWith("file://"));
@@ -93,13 +108,42 @@ function browserName() {
 
 async function restoreSessions(sessions) {
   const results = [];
+  const profileKey = await getProfileKey();
   for (const session of sessions || []) {
     const tabs = (session.tabs || []).sort((a, b) => a.index - b.index);
     const urls = tabs.map(tab => tab.url).filter(isRestorableUrl);
     if (urls.length === 0) continue;
+
+    if (typeof session.profileKey === "string" && session.profileKey.length > 0 &&
+        session.profileKey !== profileKey) {
+      results.push({ ok: true, status: "profileUnavailable", sessionId: session.browserSessionId || "" });
+      continue;
+    }
+
+    const policy = restorePolicy(session.restorePolicy, Boolean(session.profileKey));
+    const matchingTabs = policy === "OpenDuplicate"
+      ? []
+      : await findMatchingTabs(urls);
+    if (policy === "Ask" && matchingTabs.length > 0) {
+      results.push({ ok: true, status: "conflict", sessionId: session.browserSessionId || "" });
+      continue;
+    }
+
+    const reusedByUrl = new Map(matchingTabs.map(tab => [tab.url, tab]));
+    const missingTabs = tabs.filter(tab => !reusedByUrl.has(tab.url));
+    if (matchingTabs.length > 0) {
+      const active = matchingTabs.find(tab => tab.url === tabs.find(saved => saved.active)?.url) || matchingTabs[0];
+      await chrome.tabs.update(active.id, { active: true });
+      await chrome.windows.update(active.windowId, { focused: true });
+    }
+    if (missingTabs.length === 0) {
+      results.push({ ok: true, status: "reused", sessionId: session.browserSessionId || "", tabs: matchingTabs.length });
+      continue;
+    }
+
     try {
       const created = await chrome.windows.create({
-        url: urls,
+        url: missingTabs.map(tab => tab.url),
         left: session.left,
         top: session.top,
         width: session.width,
@@ -107,15 +151,15 @@ async function restoreSessions(sessions) {
         focused: false,
         state: session.state === "normal" ? "normal" : undefined
       });
-      const createdTabs = created.tabs || [];
-      for (let index = 0; index < Math.min(createdTabs.length, tabs.length); index += 1) {
+      const createdTabs = await chrome.tabs.query({ windowId: created.id });
+      for (let index = 0; index < Math.min(createdTabs.length, missingTabs.length); index += 1) {
         await chrome.tabs.update(createdTabs[index].id, {
-          pinned: Boolean(tabs[index].pinned),
-          active: Boolean(tabs[index].active)
+          pinned: Boolean(missingTabs[index].pinned),
+          active: Boolean(missingTabs[index].active)
         });
       }
       for (const group of session.groups || []) {
-        const tabIds = tabs
+        const tabIds = missingTabs
           .map((tab, index) => tab.groupIndex === group.index ? createdTabs[index]?.id : null)
           .filter(id => Number.isInteger(id));
         if (tabIds.length === 0) continue;
@@ -128,12 +172,31 @@ async function restoreSessions(sessions) {
       }
       if (session.state && session.state !== "normal")
         await chrome.windows.update(created.id, { state: session.state });
-      results.push({ ok: true, tabs: urls.length });
+      results.push({ ok: true, status: matchingTabs.length > 0 ? "partiallyReused" : "opened", sessionId: session.browserSessionId || "", tabs: missingTabs.length });
     } catch (error) {
-      results.push({ ok: false, error: String(error) });
+      results.push({ ok: false, sessionId: session.browserSessionId || "", error: String(error) });
     }
   }
   return results;
+}
+
+function restorePolicy(policy, hasProfileIdentity) {
+  if (!hasProfileIdentity) return "OpenDuplicate";
+  if (policy === "ReuseMatchingTab" || policy === 0) return "ReuseMatchingTab";
+  if (policy === "OpenDuplicate" || policy === 1) return "OpenDuplicate";
+  if (policy === "Ask" || policy === 2) return "Ask";
+  return hasProfileIdentity ? "ReuseMatchingTab" : "OpenDuplicate";
+}
+
+async function findMatchingTabs(urls) {
+  const wanted = new Set(urls.filter(url => !url.startsWith("file://")));
+  if (wanted.size === 0) return [];
+  const windows = await chrome.windows.getAll({
+    populate: true,
+    windowTypes: ["normal"]
+  });
+  return windows.flatMap(browserWindow => browserWindow.tabs || [])
+    .filter(tab => !tab.incognito && typeof tab.url === "string" && wanted.has(tab.url));
 }
 
 function sendResponse(requestId, payload) {

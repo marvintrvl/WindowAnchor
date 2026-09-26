@@ -20,11 +20,13 @@ internal sealed class AppAdapterRegistry
     internal static AppAdapterRegistry CreateCaptureDefault(
         WebAppService webAppService,
         CaptureResourceResolver resourceResolver) => new(
-        [new ChromiumWebAppAdapter(webAppService), new DedicatedBrowserWindowAdapter(), new ExplorerFolderAdapter()],
+        [new ChromiumWebAppAdapter(webAppService), new DedicatedBrowserWindowAdapter(), new ExplorerFolderAdapter(),
+         new VsCodeWorkspaceAdapter(resourceResolver)],
         new GenericWindowsAppAdapter(resourceResolver));
 
     internal static AppAdapterRegistry CreatePlanningDefault() => new(
-        [new ChromiumWebAppAdapter(new WebAppService()), new DedicatedBrowserWindowAdapter(), new ExplorerFolderAdapter()],
+        [new ChromiumWebAppAdapter(new WebAppService()), new DedicatedBrowserWindowAdapter(), new ExplorerFolderAdapter(),
+         new VsCodeWorkspaceAdapter()],
         new GenericPlanningAppAdapter());
 
     internal WorkspaceEntry Capture(AppAdapterCaptureContext context)
