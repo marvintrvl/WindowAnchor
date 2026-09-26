@@ -2,10 +2,11 @@
 
 **WindowAnchor** is a modern, Fluent-designed window management utility for Windows 11. It allows you to capture your entire workspace — including window positions, sizes, and even open files — and restore them with a single click or automatically when your monitor configuration changes.
 
-[![GitHub release](https://img.shields.io/github/v/release/marvintrvl/WindowAnchor)](https://github.com/marvintrvl/WindowAnchor/releases/tag/v1.6.1)
+[![GitHub release](https://img.shields.io/github/v/release/marvintrvl/WindowAnchor)](https://github.com/marvintrvl/WindowAnchor/releases/latest)
 
 This README describes the current development tree. Use the changelog and release notes to
-distinguish unreleased behavior from the latest packaged release.
+distinguish unreleased behavior from the latest packaged release. The release badge above always
+opens the latest published GitHub release.
 
 ![Saved workspace management](docs/screenshots/settings_saved_workspaces.png)
 
@@ -108,7 +109,7 @@ distinguish unreleased behavior from the latest packaged release.
 
 WindowAnchor operates silently in your system tray, watching your display configuration. Using **Monitor Fingerprinting**, it identifies your current setup (e.g., "Home Office" vs. "Travel") and restores your preferred layout instantly.
 
-1. **Download**: Get the Windows executable from the [v1.6.1 release](https://github.com/marvintrvl/WindowAnchor/releases/tag/v1.6.1) page.
+1. **Download**: Get the Windows executable from the [latest GitHub release](https://github.com/marvintrvl/WindowAnchor/releases/latest) page.
 2. **Get oriented**: On the first interactive launch, use the in-app guide to save a workspace or
    open Settings. Reopen it later with **Help & Guide** from the tray or Settings.
 3. **Save**: Right-click the tray icon and select "Save Workspace...".
@@ -147,7 +148,7 @@ the same browser profile. Settings lets you reuse exact matching tabs, always re
 matches for review; `file://` tabs always reopen separately.
 
 ### Local desktop app install
-1. Download `WindowAnchor-v1.6.1.exe` from the [v1.6.1 GitHub release](https://github.com/marvintrvl/WindowAnchor/releases/tag/v1.6.1) and verify it against `SHA256SUMS.txt`.
+1. Download the Windows executable from the [latest GitHub release](https://github.com/marvintrvl/WindowAnchor/releases/latest) and verify it against that release's `SHA256SUMS.txt`.
 2. Run the executable once to confirm the app starts correctly.
 3. If Windows prompts for security permissions, allow the app to run.
 
