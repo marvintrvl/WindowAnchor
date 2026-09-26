@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Windows Terminal tab capture (WA-021)** — A per-tab profile and current directory can be
+  confirmed during workspace save. An opt-in PowerShell prompt hook pre-fills tracked tabs using
+  `WT_SESSION`/`WT_PROFILE_ID`; a single `wt` launch recreates their tab order and active tab.
+  Missing directories are reported before launch; an unresolvable Terminal execution alias is
+  attempted through Windows and reported as a launch failure if unavailable. Existing
+  prototype saves must be recaptured because they did not contain real per-tab data.
+
 ## [1.6.1] - 2026-09-26
 
 ### Added

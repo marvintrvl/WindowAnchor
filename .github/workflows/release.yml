@@ -62,6 +62,7 @@ jobs:
           $executable = "./publish/WindowAnchor-$tag.exe"
           $browserConnector = "./publish/WindowAnchor-Browser-Connector-$tag.zip"
           $firefoxConnector = "./publish/WindowAnchor-Firefox-Connector-AMO-$tag.zip"
+          $terminalIntegration = "./publish/WindowAnchor-Terminal-Integration-$tag.ps1"
           Copy-Item `
             ./publish/WindowAnchor.exe `
             $executable
@@ -69,7 +70,8 @@ jobs:
             -Path ./browser-extension/* `
             -DestinationPath $browserConnector `
             -CompressionLevel Optimal
-          $checksums = @($executable, $browserConnector, $firefoxConnector) | ForEach-Object {
+          Copy-Item ./scripts/WindowAnchor.Terminal.ps1 $terminalIntegration
+          $checksums = @($executable, $browserConnector, $firefoxConnector, $terminalIntegration) | ForEach-Object {
             $hash = (Get-FileHash -Algorithm SHA256 $_).Hash
             "$hash  $(Split-Path -Leaf $_)"
           }
@@ -89,6 +91,7 @@ jobs:
             "./publish/WindowAnchor-$tag.exe" `
             "./publish/WindowAnchor-Browser-Connector-$tag.zip" `
             "./publish/WindowAnchor-Firefox-Connector-AMO-$tag.zip" `
+            "./publish/WindowAnchor-Terminal-Integration-$tag.ps1" `
             ./publish/SHA256SUMS.txt `
             --repo "${{ github.repository }}" `
             --clobber

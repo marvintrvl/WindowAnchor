@@ -21,11 +21,13 @@ internal sealed class AppAdapterRegistry
         WebAppService webAppService,
         CaptureResourceResolver resourceResolver) => new(
         [new ChromiumWebAppAdapter(webAppService), new DedicatedBrowserWindowAdapter(), new ExplorerFolderAdapter(),
+         new WindowsTerminalAdapter(),
          new VsCodeWorkspaceAdapter(resourceResolver)],
         new GenericWindowsAppAdapter(resourceResolver));
 
     internal static AppAdapterRegistry CreatePlanningDefault() => new(
         [new ChromiumWebAppAdapter(new WebAppService()), new DedicatedBrowserWindowAdapter(), new ExplorerFolderAdapter(),
+         new WindowsTerminalAdapter(),
          new VsCodeWorkspaceAdapter()],
         new GenericPlanningAppAdapter());
 

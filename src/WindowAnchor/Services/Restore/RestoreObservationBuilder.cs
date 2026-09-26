@@ -120,6 +120,34 @@ internal sealed class RestoreObservationBuilder
                     entry.IsWebApp ? null : entry.LogicalExecutablePath));
             }
 
+            if (entry.ProcessName.Equals("windowsterminal", StringComparison.OrdinalIgnoreCase) &&
+                entry.TerminalTabs.Count > 0)
+            {
+                string terminalAlias = WindowsTerminalLauncherResolver.Find();
+                observations.Add(terminalAlias.Length > 0
+                    ? _restoreResources.Observe(entryIndex,
+                        RestoreResourceKind.TerminalLauncher, terminalAlias)
+                    : new RestoreResourceObservation(entryIndex,
+                        RestoreResourceKind.TerminalLauncher,
+                        RestoreResourceAvailability.Unknown, "wt.exe"));
+                RestoreResourceAvailability directoryAvailability = entry.TerminalTabs
+                    .Select(tab => _restoreResources.Observe(
+                        entryIndex, RestoreResourceKind.TerminalDirectories,
+                        tab.StartingDirectory).Availability)
+                    .Aggregate(RestoreResourceAvailability.Available, (current, next) =>
+                        current == RestoreResourceAvailability.Missing ||
+                        next == RestoreResourceAvailability.Missing
+                            ? RestoreResourceAvailability.Missing
+                            : current == RestoreResourceAvailability.Stale ||
+                              next == RestoreResourceAvailability.Stale
+                                ? RestoreResourceAvailability.Stale
+                                : next == RestoreResourceAvailability.Unknown
+                                    ? RestoreResourceAvailability.Unknown
+                                    : current);
+                observations.Add(new RestoreResourceObservation(entryIndex,
+                    RestoreResourceKind.TerminalDirectories, directoryAvailability));
+            }
+
             PackagedAppResolution? packaged = _packagedAppResolver.Resolve(
                 entry.ExecutablePath,
                 entry.AppUserModelId);

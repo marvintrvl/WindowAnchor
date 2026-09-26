@@ -15,7 +15,7 @@ namespace WindowAnchor.Models;
 public class WorkspaceSnapshot
 {
     /// <summary>Current persisted workspace schema version.</summary>
-    public const int CurrentSchemaVersion = 9;
+    public const int CurrentSchemaVersion = 10;
 
     /// <summary>Schema version used to serialize this workspace document.</summary>
     [System.Text.Json.Serialization.JsonInclude]

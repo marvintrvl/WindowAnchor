@@ -61,6 +61,10 @@ opens the latest published GitHub release.
 - **Windows 11 File Explorer Tabs**: When file/folder capture is enabled, each Explorer window
   retains all of its folder tabs and the active tab. Restore reconciles only missing tabs in the
   assigned Explorer window, preserves unrelated open tabs, and avoids duplicates on repeat runs.
+- **Windows Terminal Tabs (WA-021, development tree)**: With "Save open files" enabled, the
+  save dialog records each detected tab's profile and current directory. An optional PowerShell
+  prompt integration pre-fills these values; otherwise confirm them in the tab editor. Restore
+  opens the saved tabs together in a new Terminal window with their respective directories.
 - **Default Workspace & Startup Restore**: Set a default workspace to auto-restore on launch, restore the last-used one, or choose from a picker dialog.
 - **Global Keyboard Shortcuts**: Customisable hotkeys for quick save, restore, workspace switching (Ctrl+Alt+1/2/3), switch workspace (Ctrl+Alt+Shift+1/2/3) and settings.
 - **Workspace Ordering**: Reorder workspaces with Move Up/Down — the first three map to the hotkey slots.
@@ -132,6 +136,42 @@ operation does not require the GitHub documentation.
 Customize global keyboard shortcuts and assign recognizable names to connected monitors.
 
 ![Keyboard shortcuts and monitor aliases](docs/screenshots/settings_hotkeys_monitors.png)
+
+## Windows Terminal integration
+
+Windows Terminal does not provide an external live query for every tab's profile and current
+directory ([Terminal feature request](https://github.com/microsoft/terminal/issues/19818)).
+WindowAnchor detects visible tabs through accessibility, and its optional PowerShell
+integration reports each tab's `WT_SESSION`, `WT_PROFILE_ID`, and file-system location at every
+prompt. A short `[WA:...]` marker in the tab title associates that report with the right window
+and tab. The integration is opt-in and does not install or change your PowerShell profile by itself.
+
+To enable it after this feature is released, download
+`WindowAnchor-Terminal-Integration-<version>.ps1` from the matching release
+(or use [`scripts/WindowAnchor.Terminal.ps1`](scripts/WindowAnchor.Terminal.ps1) when running from
+source), copy it to a stable location, then add this line at the *end* of the PowerShell profile
+used by your Terminal tab (open that profile with `notepad $PROFILE`):
+
+```powershell
+. 'C:\path\to\WindowAnchor.Terminal.ps1'
+```
+
+Restart the tab. Its title should gain a `[WA:...]` marker; if it does not, check that Terminal's
+profile does not enable `suppressApplicationTitle`. Windows PowerShell and PowerShell 7 have
+separate `$PROFILE` files, so repeat for each shell you use. Removing that one profile line
+disables future tracking; the integration does not delete your saved workspaces or session reports.
+
+When saving, select the Terminal window and keep "Save open files" on. Use "Configure Terminal
+tabs" to inspect the left-to-right tab list, correct any profile/directory, or add a tab if
+accessibility did not expose it. Untracked cmd, WSL, or non-PowerShell tabs need manual values.
+Each directory must exist at save time and again at restore time. This feature recreates tabs,
+profiles, initial directories, and active-tab selection; it does not restore shell command history,
+running programs, split panes, or arbitrary shell state. A PowerShell profile that calls
+`Set-Location` on startup can override Terminal's requested starting directory; remove or adjust
+that profile behavior if a restored tab still starts elsewhere. A running Terminal window may be reused
+by Resume; use Launch Fresh when you explicitly want a separate copy of its saved tabs. Workspaces
+saved by the earlier WA-021 prototype contain no trustworthy per-tab data and must be recaptured.
+The restore command follows [Microsoft's `wt` command-line documentation](https://learn.microsoft.com/en-us/windows/terminal/command-line-arguments).
 
 ## Browser Connector
 

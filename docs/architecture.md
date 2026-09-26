@@ -492,10 +492,10 @@ boundaries.
   observation and capture construction behind the façade.
 
 ### `StorageService`
-Atomic, versioned JSON persistence and migration. Workspace schema v9 combines stable identities,
+Atomic, versioned JSON persistence and migration. Workspace schema v10 combines stable identities,
 semantic layout, Resume-compatible mode/per-entry policy, topology-specific layout variants, the
-persisted VS Code workspace target kind, stable browser-session metadata, and per-window Explorer
-tab sessions; v2-v8 and legacy
+persisted VS Code workspace target kind, stable browser-session metadata, per-window Explorer
+tab sessions, and explicitly confirmed Windows Terminal tab profiles/directories; v2-v9 and legacy
 profile documents migrate without inventing unavailable geometry or changing restore behavior.
 When a same-name recapture replaces a named workspace, its default mode is retained and stable IDs
 and entry policies are carried across only for identities that are unique in both snapshots.

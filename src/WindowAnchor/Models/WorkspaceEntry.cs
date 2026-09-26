@@ -84,6 +84,12 @@ public class WorkspaceEntry
     /// <summary>Index of the tab that was active when the Explorer window was captured.</summary>
     public int ExplorerActiveTabIndex { get; set; }
 
+    /// <summary>Ordered Windows Terminal tabs with explicitly confirmed profiles and directories.</summary>
+    public List<TerminalTab> TerminalTabs { get; set; } = new();
+
+    /// <summary>Index of the focused Terminal tab at capture time.</summary>
+    public int TerminalActiveTabIndex { get; set; }
+
     // ── Window position ──────────────────────────────────────────────────────
     public WindowRecord Position  { get; set; } = new();
 

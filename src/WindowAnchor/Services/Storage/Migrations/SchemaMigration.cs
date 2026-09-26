@@ -94,7 +94,8 @@ internal static class WorkspaceSchemaMigrator
             [5] = MigrateV5ToV6,
             [6] = MigrateV6ToV7,
             [7] = MigrateV7ToV8,
-            [8] = MigrateV8ToV9
+            [8] = MigrateV8ToV9,
+            [9] = _ => { }
         };
         bool migrated = JsonMigrationPipeline.Apply(
             root,
@@ -173,6 +174,14 @@ internal static class WorkspaceSchemaMigrator
             {
                 throw new InvalidDataException("Explorer active tab index is outside the saved tab list.");
             }
+            if (entry.TerminalTabs is null || entry.TerminalTabs.Any(tab => tab is null ||
+                string.IsNullOrWhiteSpace(tab.StartingDirectory)))
+                throw new InvalidDataException("Terminal tabs must have a starting directory.");
+            if (entry.TerminalActiveTabIndex < 0 ||
+                (entry.TerminalTabs.Count == 0 && entry.TerminalActiveTabIndex != 0) ||
+                (entry.TerminalTabs.Count > 0 &&
+                    entry.TerminalActiveTabIndex >= entry.TerminalTabs.Count))
+                throw new InvalidDataException("Terminal active tab index is outside the saved tab list.");
             if (entry.Position?.NormalizedLayout is { } layout &&
                 !WindowLayoutGeometry.IsValid(layout))
             {

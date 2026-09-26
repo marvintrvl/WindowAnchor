@@ -61,7 +61,7 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
             if (!WindowPolicyEvaluator.Includes(observed, policy))
                 continue;
 
-            var record = CaptureWindowRecord(observed, explorerSessions);
+            var record = CaptureWindowRecord(observed, explorerSessions, captureTerminalTabs: true);
             if (record != null)
             {
                 // Tag with monitor while HWND is still valid
@@ -89,7 +89,8 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
     /// <summary>Builds the enriched record for one raw top-level window.</summary>
     private WindowRecord? CaptureWindowRecord(
         ObservedWindow observed,
-        IReadOnlyDictionary<IntPtr, ExplorerWindowSession>? explorerSessions = null)
+        IReadOnlyDictionary<IntPtr, ExplorerWindowSession>? explorerSessions = null,
+        bool captureTerminalTabs = false)
     {
         IntPtr hWnd = observed.Hwnd;
         var placement = new NativeMethodsWindow.WindowPlacement();
@@ -185,6 +186,11 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
             folderPath = explorerSession.TabPaths[activeIndex];
         }
 
+        (List<TerminalTab> terminalTabs, int terminalActiveIndex) =
+            captureTerminalTabs && processName.Equals("windowsterminal", StringComparison.OrdinalIgnoreCase)
+                ? TerminalTabCaptureService.Capture(hWnd)
+                : (new List<TerminalTab>(), 0);
+
         return new WindowRecord
         {
             ExecutablePath = exePath,
@@ -200,6 +206,8 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
             FolderPath = folderPath,
             ExplorerTabPaths = explorerSession?.TabPaths.ToList() ?? new List<string>(),
             ExplorerActiveTabIndex = explorerSession?.ActiveTabIndex ?? 0,
+            TerminalTabs = terminalTabs,
+            TerminalActiveTabIndex = terminalActiveIndex,
             AppUserModelId = appUserModelId,
             BrowserUrl = browserUrl,
         };

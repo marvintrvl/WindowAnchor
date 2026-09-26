@@ -81,6 +81,8 @@ public sealed class WorkspaceTransferService
             entry.WebAppLaunchArguments = null;
             entry.ExplorerTabPaths.Clear();
             entry.ExplorerActiveTabIndex = 0;
+            entry.TerminalTabs.Clear();
+            entry.TerminalActiveTabIndex = 0;
             entry.MonitorId = "";
             entry.MonitorName = "";
             RedactPosition(entry.Position);

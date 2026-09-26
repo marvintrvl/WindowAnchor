@@ -92,7 +92,9 @@ public enum RestoreResourceKind
     Executable,
     LaunchTarget,
     WebAppShortcut,
-    PackagedApplication
+    PackagedApplication,
+    TerminalLauncher,
+    TerminalDirectories
 }
 
 /// <summary>
@@ -390,7 +392,12 @@ public sealed record RestoreAction(
     string Explanation,
     LogSensitivity TargetSensitivity = LogSensitivity.Public,
     LogSensitivity ArgumentsSensitivity = LogSensitivity.CommandLine,
-    RestoreActionCondition Condition = RestoreActionCondition.Always);
+    RestoreActionCondition Condition = RestoreActionCondition.Always)
+{
+    /// <summary>Approved Terminal tab directories to revalidate before launching wt.exe.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public IReadOnlyList<string>? TerminalDirectories { get; init; }
+}
 
 /// <summary>Deterministic outcome assigned to one saved workspace entry.</summary>
 public enum RestorePlanEntryOutcome

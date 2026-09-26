@@ -10,6 +10,7 @@
     ExtendsContentIntoTitleBar="True">
 
     <ui:FluentWindow.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
         <Style x:Key="LinkBtnStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
@@ -75,7 +76,7 @@
                     <StackPanel VerticalAlignment="Center" Margin="0,0,8,0">
                         <TextBlock Text="Save open files" FontSize="13" FontWeight="Medium"
                                    Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                        <TextBlock Text="Save documents, editor workspaces, and File Explorer folder tabs"
+                        <TextBlock Text="Save documents, editor workspaces, Explorer tabs, and Terminal tabs"
                                    FontSize="11" TextWrapping="Wrap"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                    Margin="0,2,0,0"/>
@@ -151,6 +152,11 @@
                                                                        Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                                                                        TextTrimming="CharacterEllipsis"
                                                                        Margin="0,1,0,0"/>
+                                                            <Button Content="Configure Terminal tabs"
+                                                                    Tag="{Binding}"
+                                                                    Click="OnConfigureTerminal"
+                                                                    Visibility="{Binding IsTerminal, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                                                    HorizontalAlignment="Left" Margin="0,3,0,0"/>
                                                         </StackPanel>
                                                     </Grid>
                                                 </Border>

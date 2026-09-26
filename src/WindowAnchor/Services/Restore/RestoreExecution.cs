@@ -313,6 +313,20 @@ public sealed class FileSystemRestoreResourceBoundary : IRestoreResourceBoundary
                 : Missing("The packaged application identity is missing.");
         }
 
+        foreach (string directory in action.TerminalDirectories ?? Array.Empty<string>())
+        {
+            if (!Directory.Exists(directory))
+                return Missing("A saved Windows Terminal tab directory no longer exists.");
+        }
+
+        // The fixed wt.exe app-execution alias is not necessarily a normal file-system entry.
+        // This narrow fallback belongs only to a Terminal action carrying approved directories.
+        if (action.Kind == RestoreActionKind.LaunchApplication &&
+            action.Target.Equals("wt.exe", StringComparison.OrdinalIgnoreCase) &&
+            action.TerminalDirectories is { Count: > 0 } &&
+            action.Arguments.StartsWith("-w -1 new-tab", StringComparison.Ordinal))
+            return Available("The Windows Terminal alias will be resolved by Windows at launch.");
+
         RestoreResourceValidation target = ValidateTarget(action.Target);
         if (!target.IsAvailable) return target;
 

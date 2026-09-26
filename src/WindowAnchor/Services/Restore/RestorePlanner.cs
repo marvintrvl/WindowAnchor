@@ -588,7 +588,9 @@ public static class RestorePlanner
         selectedMonitorIds.Contains(FirstNonEmpty(entry.MonitorId, entry.Position?.MonitorId));
 
     private static bool SupportsFreshLaunch(WorkspaceEntry entry) =>
-        entry.IsDedicatedBrowserWindow && !string.IsNullOrWhiteSpace(entry.BrowserUrl);
+        (entry.IsDedicatedBrowserWindow && !string.IsNullOrWhiteSpace(entry.BrowserUrl)) ||
+        (entry.ProcessName.Equals("windowsterminal", StringComparison.OrdinalIgnoreCase) &&
+         entry.TerminalTabs.Count > 0);
 
     private static bool PlacementNeedsRepair(
         RestorePlanCandidate current,

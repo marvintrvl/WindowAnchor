@@ -57,6 +57,10 @@ public partial class SaveWorkspaceDialog : FluentWindow
         public WindowRecord Record       { get; init; } = null!;
         public string       DisplayName  { get; init; } = "";
         public string       TitleSnippet { get; init; } = "";
+        public bool IsTerminal => Record.ProcessName.Equals("windowsterminal", StringComparison.OrdinalIgnoreCase);
+        public string TerminalSummary => IsTerminal
+            ? $"{Record.TerminalTabs.Count} detected tab(s) · configure profiles and directories"
+            : "";
 
         private bool _isSelected = true;
         public bool IsSelected
@@ -143,6 +147,15 @@ public partial class SaveWorkspaceDialog : FluentWindow
     private void OnSelectAllWindows(object sender, RoutedEventArgs e) => SetAllWindows(true);
     private void OnDeselectAllWindows(object sender, RoutedEventArgs e) => SetAllWindows(false);
 
+    private void OnConfigureTerminal(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button { Tag: WindowCheckItem item }) return;
+        var dialog = new TerminalTabsDialog(item.Record) { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+        item.Record.TerminalTabs = dialog.Tabs.ToList();
+        item.Record.TerminalActiveTabIndex = dialog.ActiveIndex;
+    }
+
     private void SetAllWindows(bool value)
     {
         foreach (var g in _monitorGroups)
@@ -167,6 +180,23 @@ public partial class SaveWorkspaceDialog : FluentWindow
                 "Please select at least one window to save.", "No Windows Selected",
                 System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
             return;
+        }
+
+        if (SaveFiles)
+        {
+            foreach (WindowCheckItem item in _monitorGroups.SelectMany(g => g.Windows)
+                         .Where(w => w.IsSelected && w.IsTerminal))
+            {
+                if (item.Record.TerminalTabs.Count > 0 &&
+                    item.Record.TerminalTabs.All(tab =>
+                        !string.IsNullOrWhiteSpace(tab.StartingDirectory) &&
+                        System.IO.Directory.Exists(tab.StartingDirectory)))
+                    continue;
+                var tabsDialog = new TerminalTabsDialog(item.Record) { Owner = this };
+                if (tabsDialog.ShowDialog() != true) return;
+                item.Record.TerminalTabs = tabsDialog.Tabs.ToList();
+                item.Record.TerminalActiveTabIndex = tabsDialog.ActiveIndex;
+            }
         }
 
         DialogResult = true;

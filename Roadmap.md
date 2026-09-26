@@ -97,6 +97,8 @@ Explorer smoke. See
 - Structured per-entry restore diagnostics, deterministic planner simulation, display-topology
   stabilization, topology-specific layout variants, persistent application identities, active-window
   rescue, logical path aliases, and application adapters are implemented.
+- WA-021's Windows Terminal adapter and opt-in PowerShell tab tracking are implemented in the
+  development tree; a real two-tab/profile/directory round trip is still a release gate.
 - Internal workspace transfer and generic-folder sync foundations are deliberately partial. They do
   not yet provide a user-facing import/export or synchronization workflow.
 - Real-Windows Restore/Switch/Undo, changed-topology rescue, and warm exact-topology Resume checks
@@ -107,11 +109,10 @@ Explorer smoke. See
 The dependency-checked ready queue is maintained in the companion planning repository. Its current
 order is:
 
-1. **WA-021 Windows Terminal adapter** — capture and restore shells and profiles safely.
-2. **WA-030B/WA-031 display recovery** — temporary-resolution and RDP-aware restoration.
-3. **WA-036A/WA-036D portability resolution** — cross-device display mapping and moved-resource
+1. **WA-030B/WA-031 display recovery** — temporary-resolution and RDP-aware restoration.
+2. **WA-036A/WA-036D portability resolution** — cross-device display mapping and moved-resource
    resolution above the existing path-alias foundation.
-4. **WA-040A/WA-042A catalog and template foundations** — stable workspace metadata and templates.
+3. **WA-040A/WA-042A catalog and template foundations** — stable workspace metadata and templates.
 
 ## Later themes
 

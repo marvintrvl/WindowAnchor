@@ -98,6 +98,14 @@ public class WindowRecord
     [JsonIgnore]
     public int ExplorerActiveTabIndex { get; set; }
 
+    /// <summary>Runtime-only Terminal tabs discovered through accessibility and configured at save.</summary>
+    [JsonIgnore]
+    public List<TerminalTab> TerminalTabs { get; set; } = new();
+
+    /// <summary>Runtime-only active Terminal tab index.</summary>
+    [JsonIgnore]
+    public int TerminalActiveTabIndex { get; set; }
+
     // ── Monitor assignment (populated during snapshot, empty in old saves) ───
     /// <summary>Stable EDID-based monitor ID, e.g. "A1B2:C3D4:0".</summary>
     public string MonitorId   { get; set; } = "";

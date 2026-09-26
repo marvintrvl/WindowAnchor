@@ -26,6 +26,12 @@ public class WorkspaceTransferAndSyncTests
             @"C:\Users\Alice\Other secret"
         ];
         entry.ExplorerActiveTabIndex = 1;
+        entry.TerminalTabs =
+        [
+            new TerminalTab { Profile = "PowerShell", StartingDirectory = @"C:\Users\Alice\TerminalOnly" },
+            new TerminalTab { Profile = "Ubuntu", StartingDirectory = @"C:\Users\Alice\SecondTerminalOnly" }
+        ];
+        entry.TerminalActiveTabIndex = 1;
         workspace.MonitorFingerprint = "private-fingerprint";
         workspace.Monitors = [Monitor("private-monitor")];
         workspace.EnsureLayoutVariants();
@@ -40,6 +46,7 @@ public class WorkspaceTransferAndSyncTests
         Assert.DoesNotContain("private-desk", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("private.example", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Secret document", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("TerminalOnly", json, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("${TOOLS}", json, StringComparison.Ordinal);
     }
 
