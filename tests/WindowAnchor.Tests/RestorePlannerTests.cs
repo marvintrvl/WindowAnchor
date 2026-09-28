@@ -64,6 +64,47 @@ public class RestorePlannerTests
     }
 
     [Fact]
+    public void Opted_in_virtual_desktop_association_adds_only_a_matched_window_move()
+    {
+        WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Quarterly notes", "primary");
+        Guid desktopId = Guid.Parse("11111111-1111-4111-8111-111111111111");
+        entry.Position.VirtualDesktopId = desktopId.ToString("D");
+
+        RestorePlan plan = RestorePlanner.Build(
+            Snapshot(entry),
+            new RestoreLiveInventory
+            {
+                Windows = [Live(41, entry.ExecutablePath, "Quarterly notes", "EditorWindow", monitorId: "primary")],
+                VirtualDesktopAssociationEnabled = true
+            },
+            Topology(Monitor("primary", 0, 96, primary: true)) with { IsExactMatch = true },
+            RestoreMode.Resume);
+
+        RestoreAction action = Assert.Single(plan.Actions);
+        Assert.Equal(RestoreActionKind.MoveWindowToVirtualDesktop, action.Kind);
+        Assert.Equal(41, action.WindowHandle);
+        Assert.Equal(desktopId.ToString("D"), action.Target);
+    }
+
+    [Fact]
+    public void Disabled_virtual_desktop_association_leaves_saved_guid_inert()
+    {
+        WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Quarterly notes", "primary");
+        entry.Position.VirtualDesktopId = Guid.NewGuid().ToString("D");
+
+        RestorePlan plan = RestorePlanner.Build(
+            Snapshot(entry),
+            new RestoreLiveInventory
+            {
+                Windows = [Live(41, entry.ExecutablePath, "Quarterly notes", "EditorWindow", monitorId: "primary")]
+            },
+            Topology(Monitor("primary", 0, 96, primary: true)) with { IsExactMatch = true },
+            RestoreMode.Resume);
+
+        Assert.Empty(plan.Actions);
+    }
+
+    [Fact]
     public void Ambiguous_duplicate_windows_have_no_assignment_or_actions_and_stable_json()
     {
         WorkspaceEntry first = Entry(@"C:\Apps\editor.exe", "Untitled", "primary");
@@ -132,6 +173,35 @@ public class RestorePlannerTests
             action => action.EntryIndex == 0 && action.WindowHandle == 10);
         Assert.Throws<InvalidOperationException>(() =>
             RestorePlanner.ResolveAmbiguousMatch(resolved, 1, 10));
+    }
+
+    [Fact]
+    public void Preview_choice_retains_an_enabled_virtual_desktop_move()
+    {
+        WorkspaceEntry first = Entry(@"C:\Apps\editor.exe", "Untitled", "primary");
+        WorkspaceEntry second = Entry(@"C:\Apps\editor.exe", "Untitled", "primary");
+        Guid desktopId = Guid.Parse("11111111-1111-4111-8111-111111111111");
+        first.Position.VirtualDesktopId = desktopId.ToString("D");
+        RestorePlan preview = RestorePlanner.Build(
+            Snapshot(first, second),
+            new RestoreLiveInventory
+            {
+                Windows =
+                [
+                    Live(10, first.ExecutablePath, "Untitled", "EditorWindow"),
+                    Live(20, first.ExecutablePath, "Untitled", "EditorWindow")
+                ],
+                VirtualDesktopAssociationEnabled = true
+            },
+            Topology(Monitor("primary", 0, 96, primary: true)),
+            RestoreMode.Resume);
+
+        RestorePlan resolved = RestorePlanner.ResolveAmbiguousMatch(preview, 0, 10);
+
+        RestoreAction action = Assert.Single(resolved.Entries[0].Actions,
+            item => item.Kind == RestoreActionKind.MoveWindowToVirtualDesktop);
+        Assert.Equal(10, action.WindowHandle);
+        Assert.Equal(desktopId.ToString("D"), action.Target);
     }
 
     [Fact]

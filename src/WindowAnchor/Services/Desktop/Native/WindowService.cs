@@ -18,6 +18,7 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
     private readonly SettingsService? _settingsService;
     private readonly IRawWindowInventory _rawInventory;
     private readonly IExplorerTabSessionCapture _explorerTabs;
+    private readonly IVirtualDesktopAssociation _virtualDesktops;
 
     /// <param name="settingsService">
     ///   Optional. Supplies <see cref="Models.AppSettings.DedicatedBrowserUrlPatterns"/>; when
@@ -32,11 +33,13 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
     internal WindowService(
         IRawWindowInventory rawInventory,
         SettingsService? settingsService = null,
-        IExplorerTabSessionCapture? explorerTabs = null)
+        IExplorerTabSessionCapture? explorerTabs = null,
+        IVirtualDesktopAssociation? virtualDesktops = null)
     {
         _rawInventory = rawInventory;
         _settingsService = settingsService;
         _explorerTabs = explorerTabs ?? new ExplorerTabSessionService();
+        _virtualDesktops = virtualDesktops ?? new VirtualDesktopAssociationService();
     }
 
     /// <summary>
@@ -191,6 +194,10 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
             captureTerminalTabs && processName.Equals("windowsterminal", StringComparison.OrdinalIgnoreCase)
                 ? TerminalTabCaptureService.Capture(hWnd)
                 : (new List<TerminalTab>(), 0);
+        VirtualDesktopCaptureResult virtualDesktop =
+            _settingsService?.Settings.EnableVirtualDesktopAssociation == true
+                ? _virtualDesktops.TryGetWindowDesktopId(hWnd)
+                : new VirtualDesktopCaptureResult(VirtualDesktopAssociationStatus.Unsupported);
 
         return new WindowRecord
         {
@@ -211,6 +218,9 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
             TerminalActiveTabIndex = terminalActiveIndex,
             AppUserModelId = appUserModelId,
             BrowserUrl = browserUrl,
+            VirtualDesktopId = virtualDesktop.Status == VirtualDesktopAssociationStatus.Available
+                ? virtualDesktop.DesktopId?.ToString("D") ?? ""
+                : "",
         };
     }
 

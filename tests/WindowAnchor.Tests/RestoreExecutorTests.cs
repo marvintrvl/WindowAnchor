@@ -83,6 +83,35 @@ public class RestoreExecutorTests
     }
 
     [Fact]
+    public async Task Rejected_virtual_desktop_move_is_skipped_without_failing_restore()
+    {
+        WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Notes");
+        entry.Position.VirtualDesktopId = "11111111-1111-4111-8111-111111111111";
+        RestorePlan plan = Plan(
+            Snapshot(entry),
+            [Live(10, 1010, entry.ExecutablePath, "Notes")],
+            mode: RestoreMode.Resume,
+            exactTopology: true,
+            virtualDesktopAssociationEnabled: true);
+        var desktops = new FakeVirtualDesktopAssociation
+        {
+            MoveResult = new VirtualDesktopMoveResult(VirtualDesktopAssociationStatus.Rejected)
+        };
+
+        RestoreExecutionResult result = await Executor(
+            Inventory((10, 1010, entry.ExecutablePath, "Notes")),
+            new RecordingWindowMutation(),
+            virtualDesktops: desktops).ExecuteAsync(plan);
+
+        Assert.Equal(RestoreExecutionStatus.Completed, result.Status);
+        Assert.Single(desktops.MoveCalls);
+        RestoreExecutionActionResult action = Assert.Single(result.Actions);
+        Assert.Equal(RestoreActionKind.MoveWindowToVirtualDesktop, action.Kind);
+        Assert.Equal(RestoreExecutionActionStatus.Skipped, action.Status);
+        Assert.Contains("left accessible", action.Explanation, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Placement_noise_inside_dpi_aware_tolerance_does_not_retry()
     {
         WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Notes");
@@ -1040,7 +1069,8 @@ public class RestoreExecutorTests
         IEnumerable<IAppReadinessStrategy>? readinessStrategies = null,
         IWindowPlacementProbe? placementProbe = null,
         WindowPlacementVerificationPolicy? placementPolicy = null,
-        IEnumerable<IWindowPlacementVerificationStrategy>? placementStrategies = null) => new(
+        IEnumerable<IWindowPlacementVerificationStrategy>? placementStrategies = null,
+        IVirtualDesktopAssociation? virtualDesktops = null) => new(
             inventory,
             mutation,
             process ?? new RecordingRestoreProcessLauncher(),
@@ -1052,7 +1082,8 @@ public class RestoreExecutorTests
             readinessStrategies,
             placementProbe,
             placementPolicy,
-            placementStrategies);
+            placementStrategies,
+            virtualDesktops: virtualDesktops);
 
     private static RestorePlan Plan(
         WorkspaceSnapshot snapshot,
@@ -1061,13 +1092,15 @@ public class RestoreExecutorTests
         BrowserSessionRestoreAvailability browserAvailability =
             BrowserSessionRestoreAvailability.NotAvailable,
         RestoreMode? mode = null,
-        bool exactTopology = false) => RestorePlanner.Build(
+        bool exactTopology = false,
+        bool virtualDesktopAssociationEnabled = false) => RestorePlanner.Build(
             snapshot,
             new RestoreLiveInventory
             {
                 Windows = live ?? Array.Empty<LiveWindowIdentity>(),
                 Resources = resources ?? Array.Empty<RestoreResourceObservation>(),
-                BrowserSessionRestore = browserAvailability
+                BrowserSessionRestore = browserAvailability,
+                VirtualDesktopAssociationEnabled = virtualDesktopAssociationEnabled
             },
             new RestoreMonitorTopology
             {

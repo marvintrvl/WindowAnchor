@@ -164,22 +164,34 @@ internal static class RestoreApprovalProjector
             false,
             entry.TargetPlacement,
             "Assign the candidate explicitly selected in Restore Preview and apply its target placement.");
-        RestoreAction[] resolvedActions = entry.ExplorerSession is null ||
-            !entry.RestorePolicy.LaunchIfMissing
-            ? [placementAction]
-            :
-            [
-                placementAction,
-                new RestoreAction(
-                    entryIndex,
-                    RestoreActionKind.RestoreExplorerTabs,
-                    selected.WindowHandle,
-                    Target: "",
-                    Arguments: "",
-                    UseShellExecute: false,
-                    TargetPlacement: null,
-                    "Reconcile the saved File Explorer tabs after the target window is ready.")
-            ];
+        var resolvedActions = new List<RestoreAction> { placementAction };
+        if (preview.VirtualDesktopAssociationEnabled &&
+            Guid.TryParse(entry.VirtualDesktopId, out Guid virtualDesktopId) &&
+            virtualDesktopId != Guid.Empty)
+        {
+            resolvedActions.Add(new RestoreAction(
+                entryIndex,
+                RestoreActionKind.MoveWindowToVirtualDesktop,
+                selected.WindowHandle,
+                virtualDesktopId.ToString("D"),
+                "",
+                false,
+                null,
+                "Move the user-selected window to its saved virtual desktop when that desktop still exists.",
+                LogSensitivity.Identifier));
+        }
+        if (entry.ExplorerSession is not null && entry.RestorePolicy.LaunchIfMissing)
+        {
+            resolvedActions.Add(new RestoreAction(
+                entryIndex,
+                RestoreActionKind.RestoreExplorerTabs,
+                selected.WindowHandle,
+                Target: "",
+                Arguments: "",
+                UseShellExecute: false,
+                TargetPlacement: null,
+                "Reconcile the saved File Explorer tabs after the target window is ready."));
+        }
         RestorePlanEntry resolvedEntry = entry with
         {
             Outcome = RestorePlanEntryOutcome.Matched,
@@ -187,7 +199,7 @@ internal static class RestoreApprovalProjector
             SelectedMatch = selected,
             LaunchRequirement = RestoreLaunchRequirement.None(
                 "The selected live window is the user-confirmed target for this entry."),
-            Actions = resolvedActions,
+            Actions = resolvedActions.ToArray(),
             Warnings = entry.Warnings
                 .Where(issue => issue.Code != RestorePlanIssueCode.AmbiguousMatch)
                 .ToArray()

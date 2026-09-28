@@ -113,7 +113,7 @@ public sealed record PersistentApplicationCandidate(
 public class AppSettings
 {
     /// <summary>Current persisted settings schema version.</summary>
-    public const int CurrentSchemaVersion = 10;
+    public const int CurrentSchemaVersion = 11;
 
     /// <summary>Schema version used to serialize this settings document.</summary>
     [JsonInclude]
@@ -161,6 +161,9 @@ public class AppSettings
     /// </summary>
     public TemporaryDisplayRecoveryMode TemporaryDisplayRecoveryMode { get; set; } =
         TemporaryDisplayRecoveryMode.Ask;
+
+    /// <summary>Opt-in association with existing Windows 10+ virtual desktops.</summary>
+    public bool EnableVirtualDesktopAssociation { get; set; }
 
     /// <summary>Minimum foreground-window area that must remain in a current work area before rescue acts.</summary>
     public double MinimumVisibleWindowAreaRatio { get; set; } = 0.25;

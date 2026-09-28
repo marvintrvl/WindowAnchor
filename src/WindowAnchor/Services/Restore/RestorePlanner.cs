@@ -340,6 +340,22 @@ public static class RestorePlanner
 
             }
 
+            if (liveInventory.VirtualDesktopAssociationEnabled &&
+                Guid.TryParse(entry.Position?.VirtualDesktopId, out Guid virtualDesktopId) &&
+                virtualDesktopId != Guid.Empty && selectedMatch is not null)
+            {
+                entryActions.Add(new RestoreAction(
+                    entryIndex,
+                    RestoreActionKind.MoveWindowToVirtualDesktop,
+                    selectedMatch.Hwnd.ToInt64(),
+                    virtualDesktopId.ToString("D"),
+                    "",
+                    false,
+                    null,
+                    "Move the revalidated assigned window to its saved virtual desktop when that desktop still exists.",
+                    LogSensitivity.Identifier));
+            }
+
             bool correctResourceMatched = selectedMatch?.Evidence.Any(evidence =>
                 evidence.Matched && evidence.Kind is
                     WindowMatchEvidenceKind.DocumentNameInTitle or
@@ -510,6 +526,7 @@ public static class RestorePlanner
                 .Concat(policyProtectedWindowHandles)
                 .Concat(persistentApplicationWindowHandles)
                 .ToHashSet(),
+            VirtualDesktopAssociationEnabled = liveInventory.VirtualDesktopAssociationEnabled,
             WasCancelled = mode.CancellationRequested,
             Entries = planEntries.ToArray(),
             Actions = actions.ToArray(),
@@ -565,7 +582,11 @@ public static class RestorePlanner
             RestorePolicy = policy,
             ReadinessExcludedWindowHandles = readinessExcludedWindowHandles?.ToHashSet() ??
                 new HashSet<long>(),
-            ExplorerSession = ToRestoreExplorerSession(entry)
+            ExplorerSession = ToRestoreExplorerSession(entry),
+            VirtualDesktopId = Guid.TryParse(entry.Position?.VirtualDesktopId, out Guid desktopId) &&
+                desktopId != Guid.Empty
+                ? desktopId.ToString("D")
+                : null
         };
 
     private static RestoreExplorerSession? ToRestoreExplorerSession(WorkspaceEntry entry)

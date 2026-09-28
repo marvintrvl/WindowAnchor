@@ -196,6 +196,23 @@ internal sealed class FakeExplorerTabSessionRestorer : IExplorerTabSessionRestor
     }
 }
 
+internal sealed class FakeVirtualDesktopAssociation : IVirtualDesktopAssociation
+{
+    internal VirtualDesktopCaptureResult CaptureResult { get; set; } =
+        new(VirtualDesktopAssociationStatus.Unavailable);
+    internal VirtualDesktopMoveResult MoveResult { get; set; } =
+        new(VirtualDesktopAssociationStatus.Available);
+    internal List<(IntPtr WindowHandle, Guid DesktopId)> MoveCalls { get; } = new();
+
+    public VirtualDesktopCaptureResult TryGetWindowDesktopId(IntPtr hWnd) => CaptureResult;
+
+    public VirtualDesktopMoveResult TryMoveWindowToDesktop(IntPtr hWnd, Guid desktopId)
+    {
+        MoveCalls.Add((hWnd, desktopId));
+        return MoveResult;
+    }
+}
+
 internal sealed class RecordingRestoreProcessLauncher : IRestoreProcessLauncher
 {
     internal List<RestoreAction> Launches { get; } = new();

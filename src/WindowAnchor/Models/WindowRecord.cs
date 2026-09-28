@@ -115,4 +115,7 @@ public class WindowRecord
 
     /// <summary>Human-readable monitor name for display purposes.</summary>
     public string MonitorName  { get; set; } = "";
+
+    /// <summary>Optional saved Windows virtual-desktop GUID; empty means disabled or unavailable.</summary>
+    public string VirtualDesktopId { get; set; } = "";
 }

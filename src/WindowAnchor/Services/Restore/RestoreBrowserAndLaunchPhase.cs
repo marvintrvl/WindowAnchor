@@ -15,6 +15,7 @@ internal sealed class RestoreBrowserAndLaunchPhase
     private readonly IBrowserSessionConnector? _browserConnector;
     private readonly IExplorerTabSessionRestorer _explorerTabs;
     private readonly RestoreWindowRevalidator _revalidator;
+    private readonly IVirtualDesktopAssociation _virtualDesktops;
 
     internal RestoreBrowserAndLaunchPhase(
         IWindowMutation windowMutation,
@@ -22,7 +23,8 @@ internal sealed class RestoreBrowserAndLaunchPhase
         IRestoreResourceBoundary resources,
         IBrowserSessionConnector? browserConnector,
         IExplorerTabSessionRestorer explorerTabs,
-        RestoreWindowRevalidator revalidator)
+        RestoreWindowRevalidator revalidator,
+        IVirtualDesktopAssociation virtualDesktops)
     {
         _windowMutation = windowMutation;
         _processLauncher = processLauncher;
@@ -30,6 +32,7 @@ internal sealed class RestoreBrowserAndLaunchPhase
         _browserConnector = browserConnector;
         _explorerTabs = explorerTabs;
         _revalidator = revalidator;
+        _virtualDesktops = virtualDesktops;
     }
 
     internal async Task RestoreBrowserSessionsAsync(
@@ -112,6 +115,52 @@ internal sealed class RestoreBrowserAndLaunchPhase
                 RestoreExecutionActionStatus.Succeeded,
                 staleReason: null,
                 "Minimized windows outside the final approved assignment set.");
+        }
+    }
+
+    internal void MoveWindowsToVirtualDesktops(
+        RestoreExecutionContext context,
+        IProgress<RestoreProgressReport>? progress)
+    {
+        IndexedRestoreAction[] actions = context.IndexedActions.Where(item =>
+            item.Action.Kind == RestoreActionKind.MoveWindowToVirtualDesktop).ToArray();
+        for (int index = 0; index < actions.Length; index++)
+        {
+            IndexedRestoreAction item = actions[index];
+            progress?.Report(new RestoreProgressReport(
+                RestoreProgressStage.MovingVirtualDesktops,
+                $"Associating virtual desktop ({index + 1}/{actions.Length})"));
+            if (item.Action.EntryIndex is not int entryIndex ||
+                !context.Entries.TryGetValue(entryIndex, out RestoreEntryExecutionState? state) ||
+                item.Action.WindowHandle is not long handle ||
+                !Guid.TryParse(item.Action.Target, out Guid desktopId))
+            {
+                context.Results[item.Index] = RestoreExecutionSupport.Result(
+                    item, RestoreExecutionActionStatus.Skipped, null,
+                    "Virtual-desktop association was unavailable because the approved action was incomplete.");
+                continue;
+            }
+
+            uint expectedPid = state.PlanEntry.SelectedMatch?.ProcessId ?? 0;
+            if (_revalidator.Revalidate(state.PlanEntry, new IntPtr(handle), expectedPid) is not null)
+            {
+                context.Results[item.Index] = RestoreExecutionSupport.Result(
+                    item, RestoreExecutionActionStatus.Skipped, null,
+                    "The matched window changed before its optional virtual-desktop association; it was left accessible.");
+                continue;
+            }
+
+            VirtualDesktopMoveResult result = _virtualDesktops.TryMoveWindowToDesktop(
+                new IntPtr(handle), desktopId);
+            context.Results[item.Index] = RestoreExecutionSupport.Result(
+                item,
+                result.Status == VirtualDesktopAssociationStatus.Available
+                    ? RestoreExecutionActionStatus.Succeeded
+                    : RestoreExecutionActionStatus.Skipped,
+                null,
+                result.Status == VirtualDesktopAssociationStatus.Available
+                    ? "Moved the matched window to its saved virtual desktop."
+                    : "The saved virtual desktop is unavailable or no longer exists; the window was left accessible.");
         }
     }
 

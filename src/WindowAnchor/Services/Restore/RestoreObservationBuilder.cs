@@ -74,7 +74,9 @@ internal sealed class RestoreObservationBuilder
                     ? BrowserSessionRestoreAvailability.Unavailable
                     : BrowserSessionRestoreAvailability.Available,
             BrowserTabRestorePolicy = _settingsService?.Settings.BrowserTabRestorePolicy ??
-                BrowserTabRestorePolicy.ReuseMatchingTab
+                BrowserTabRestorePolicy.ReuseMatchingTab,
+            VirtualDesktopAssociationEnabled =
+                _settingsService?.Settings.EnableVirtualDesktopAssociation == true
         };
 
         RestoreObservation observation = new RestoreObservation(

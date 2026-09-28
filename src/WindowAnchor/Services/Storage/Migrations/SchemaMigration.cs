@@ -509,7 +509,8 @@ internal static class SettingsSchemaMigrator
             [6] = _ => { },
             [7] = _ => { },
             [8] = _ => { },
-            [9] = MigrateV9ToV10
+            [9] = MigrateV9ToV10,
+            [10] = MigrateV10ToV11
         };
         bool migrated = JsonMigrationPipeline.Apply(
             root,
@@ -639,6 +640,12 @@ internal static class SettingsSchemaMigrator
         // A returned display layout can move many windows. Existing installations therefore
         // receive an explicit tray offer instead of silently inheriting automatic movement.
         root["temporaryDisplayRecoveryMode"] = (int)TemporaryDisplayRecoveryMode.Ask;
+    }
+
+    private static void MigrateV10ToV11(JsonObject root)
+    {
+        // Existing users must actively choose virtual-desktop moves after upgrade.
+        root["enableVirtualDesktopAssociation"] = false;
     }
 
     private static WorkspaceSnapshot? ResolveByName(

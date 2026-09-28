@@ -146,6 +146,9 @@ public sealed record RestoreLiveInventory
 
     public IReadOnlyList<WindowMatchHint> MatchHints { get; init; } =
         Array.Empty<WindowMatchHint>();
+
+    /// <summary>Whether the user opted in to supported virtual-desktop association.</summary>
+    public bool VirtualDesktopAssociationEnabled { get; init; }
 }
 
 /// <summary>Current monitor facts required to compute a target placement without native calls.</summary>
@@ -366,6 +369,7 @@ public enum RestoreActionKind
     ActivatePackagedApplication,
     RestoreBrowserSession,
     RestoreExplorerTabs,
+    MoveWindowToVirtualDesktop,
     AwaitWindowAppearance,
     MinimizeOtherWindows
 }
@@ -440,6 +444,10 @@ public sealed record RestorePlanEntry(
 
     /// <summary>Saved File Explorer tabs to reconcile after the target window is ready.</summary>
     public RestoreExplorerSession? ExplorerSession { get; init; }
+
+    /// <summary>Optional saved virtual-desktop GUID retained for an explicit preview choice.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? VirtualDesktopId { get; init; }
 }
 
 /// <summary>
@@ -464,6 +472,9 @@ public sealed record RestorePlan
         Array.Empty<RestoreBrowserSession>();
     public IReadOnlySet<int> DisabledEntryIndexes { get; init; } = new HashSet<int>();
     public IReadOnlySet<long> ProtectedWindowHandles { get; init; } = new HashSet<long>();
+    /// <summary>Whether this plan may move assigned windows to saved virtual desktops.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool VirtualDesktopAssociationEnabled { get; init; }
     public bool WasCancelled { get; init; }
     public IReadOnlyList<RestorePlanEntry> Entries { get; init; } = Array.Empty<RestorePlanEntry>();
     public IReadOnlyList<RestoreAction> Actions { get; init; } = Array.Empty<RestoreAction>();

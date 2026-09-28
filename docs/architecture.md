@@ -265,6 +265,22 @@ required by workspace switching because its own approved close phase intentional
 unrelated candidates before the destination plan executes. A selected HWND disappearing or being
 reused by another PID still invalidates the plan.
 
+### Virtual-desktop association
+
+Virtual-desktop association is an explicit, off-by-default Windows 10/11 preference. At capture,
+`VirtualDesktopAssociationService` calls only the documented Shell
+`IVirtualDesktopManager.GetWindowDesktopId(HWND)` method and persists the resulting GUID with the
+window record. At planning, a valid GUID produces a `MoveWindowToVirtualDesktop` action only for a
+safely selected live match. An explicit Restore Preview match retains that GUID and receives the
+same action.
+
+At execution, the HWND is revalidated again before the documented
+`IVirtualDesktopManager.MoveWindowToDesktop(HWND, GUID)` call. The service never calls an
+undocumented interface and has no code path to create, enumerate, name, or switch desktops. A
+missing, rejected, unsupported, or unavailable GUID is an action-level `Skipped` outcome; it does
+not fail the restore or hide/close the window. This boundary follows Microsoft's guidance that
+apps should not automatically switch the user between desktops.
+
 ### Application readiness
 
 `SystemAppReadinessProbe` captures one shared read-only observation per poll: eligible live

@@ -30,7 +30,8 @@ public sealed class RestoreExecutor
         IWindowPlacementProbe? placementProbe = null,
         WindowPlacementVerificationPolicy? placementPolicy = null,
         IEnumerable<IWindowPlacementVerificationStrategy>? placementStrategies = null,
-        IExplorerTabSessionRestorer? explorerTabRestorer = null)
+        IExplorerTabSessionRestorer? explorerTabRestorer = null,
+        IVirtualDesktopAssociation? virtualDesktops = null)
     {
         ArgumentNullException.ThrowIfNull(windowInventory);
         ArgumentNullException.ThrowIfNull(windowMutation);
@@ -57,7 +58,8 @@ public sealed class RestoreExecutor
             resources,
             browserConnector,
             explorerTabRestorer ?? new ExplorerTabSessionService(),
-            revalidator);
+            revalidator,
+            virtualDesktops ?? new VirtualDesktopAssociationService());
         _readiness = new RestoreReadinessPhase(
             windowMutation,
             clock,
@@ -197,6 +199,9 @@ public sealed class RestoreExecutor
                 RestoreExecutionStatus.Cancelled,
                 wasCancelled: true);
         }
+
+        using (context.Timing.Measure(RestoreProgressStage.MovingVirtualDesktops))
+            _browserAndLaunch.MoveWindowsToVirtualDesktops(context, progress);
 
 
         bool explorerTabsComplete;

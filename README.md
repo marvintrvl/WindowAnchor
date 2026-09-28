@@ -49,6 +49,10 @@ opens the latest published GitHub release.
   missing monitors use the semantic representation and are clamped fully onto a visible work area.
   Visible DWM frame bounds are kept distinct from invisible resize borders so edge-aligned windows
   do not acquire the usual Windows 8-pixel inset after adaptation.
+- **Optional Virtual Desktop Association (WA-022)**: On Windows 10/11, opt in from Settings to
+  remember a window's virtual desktop and return a revalidated match to that existing desktop.
+  WindowAnchor never creates, lists, names, or switches desktops; if the saved desktop is gone,
+  the window remains accessible where it is.
 - **Stabilized Display Changes**: Dock/KVM event bursts share one cancellable topology stabilizer.
   Restore begins only after monitor identity, bounds, work area, DPI, primary state, and orientation
   remain unchanged for the settle interval; a timeout refuses to restore an unstable intermediate state.
@@ -207,7 +211,9 @@ The development ID differs from the published Chrome Web Store ID.
 
 2. **Window snapshot** — Enumerates visible windows, recording exact normal bounds, monitor/work-area
    geometry, DPI, normalized anchors, semantic layout, and process info. File detection parses
-   window titles and queries Windows jump-lists to relaunch files.
+   window titles and queries Windows jump-lists to relaunch files. With **Remember virtual
+   desktops** enabled in Settings, it also records the documented Windows desktop GUID for each
+   top-level window.
 
 3. **Choose policy, then plan and optionally approve** — The workspace mode and each entry’s
    persisted override are resolved once by the pure planner. Manual tray, Settings, and hotkey
@@ -237,7 +243,9 @@ The development ID differs from the published Chrome Web Store ID.
    each entry becomes ready, then verifies the observed placement and performs at most two
    same-HWND corrections. A dedicated final Explorer phase restores missing saved folder tabs in
    the revalidated assigned window and reselects the saved active tab. Structured per-item outcomes
-   include readiness, verification, retry count, tolerance, and final failure state.
+   include readiness, verification, retry count, tolerance, and final failure state. When virtual
+   desktop association is enabled, it moves only a revalidated matched window to its saved GUID;
+   a missing or rejected desktop leaves that window accessible and is recorded as skipped.
 
 ## Docs & Architecture
 

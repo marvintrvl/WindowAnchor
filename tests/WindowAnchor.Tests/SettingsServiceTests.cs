@@ -14,6 +14,7 @@ public class SettingsServiceTests
         Assert.False(settings.ShowRestorePreview);
         Assert.False(settings.CreateRestoreCheckpoints);
         Assert.Equal(TemporaryDisplayRecoveryMode.Ask, settings.TemporaryDisplayRecoveryMode);
+        Assert.False(settings.EnableVirtualDesktopAssociation);
     }
 
     [Fact]
@@ -96,6 +97,7 @@ public class SettingsServiceTests
         Assert.Equal(
             (int)TemporaryDisplayRecoveryMode.Ask,
             json.RootElement.GetProperty("temporaryDisplayRecoveryMode").GetInt32());
+        Assert.False(json.RootElement.GetProperty("enableVirtualDesktopAssociation").GetBoolean());
         Assert.Equal(0.25, json.RootElement.GetProperty("minimumVisibleWindowAreaRatio").GetDouble());
         Assert.False(json.RootElement.GetProperty("onboardingCompleted").GetBoolean());
         Assert.False(json.RootElement.TryGetProperty("defaultWorkspaceName", out _));
@@ -106,6 +108,7 @@ public class SettingsServiceTests
         Assert.False(reloaded.Settings.ShowRestorePreview);
         Assert.False(reloaded.Settings.CreateRestoreCheckpoints);
         Assert.Equal(TemporaryDisplayRecoveryMode.Ask, reloaded.Settings.TemporaryDisplayRecoveryMode);
+        Assert.False(reloaded.Settings.EnableVirtualDesktopAssociation);
         Assert.False(reloaded.Settings.OnboardingCompleted);
     }
 
@@ -142,9 +145,11 @@ public class SettingsServiceTests
         Assert.Equal("11111111-1111-4111-8111-111111111111", service.Settings.DefaultWorkspaceId);
         Assert.True(service.Settings.OnboardingCompleted);
         Assert.Equal(TemporaryDisplayRecoveryMode.Ask, service.Settings.TemporaryDisplayRecoveryMode);
+        Assert.False(service.Settings.EnableVirtualDesktopAssociation);
         Assert.Equal(AppSettings.CurrentSchemaVersion, service.Settings.SchemaVersion);
         Assert.Contains($"\"schemaVersion\": {AppSettings.CurrentSchemaVersion}", File.ReadAllText(settingsPath));
         Assert.Contains("\"temporaryDisplayRecoveryMode\": 1", File.ReadAllText(settingsPath));
+        Assert.Contains("\"enableVirtualDesktopAssociation\": false", File.ReadAllText(settingsPath));
     }
 
     [Fact]
