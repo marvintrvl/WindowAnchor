@@ -15,7 +15,8 @@ public enum VirtualDesktopAssociationStatus
 /// <summary>Safe result of observing a top-level window's virtual desktop.</summary>
 public sealed record VirtualDesktopCaptureResult(
     VirtualDesktopAssociationStatus Status,
-    Guid? DesktopId = null);
+    Guid? DesktopId = null,
+    bool? IsOnCurrentDesktop = null);
 
 /// <summary>Safe result of requesting a move to a saved virtual desktop.</summary>
 public sealed record VirtualDesktopMoveResult(VirtualDesktopAssociationStatus Status);
@@ -45,9 +46,16 @@ public sealed class VirtualDesktopAssociationService : IVirtualDesktopAssociatio
 
         try
         {
-            int hr = CreateManager().GetWindowDesktopId(hWnd, out Guid desktopId);
-            return hr >= 0 && desktopId != Guid.Empty
-                ? new VirtualDesktopCaptureResult(VirtualDesktopAssociationStatus.Available, desktopId)
+            IVirtualDesktopManager manager = CreateManager();
+            int idResult = manager.GetWindowDesktopId(hWnd, out Guid desktopId);
+            int currentResult = manager.IsWindowOnCurrentVirtualDesktop(
+                hWnd,
+                out bool isOnCurrentDesktop);
+            return idResult >= 0 && desktopId != Guid.Empty
+                ? new VirtualDesktopCaptureResult(
+                    VirtualDesktopAssociationStatus.Available,
+                    desktopId,
+                    currentResult >= 0 ? isOnCurrentDesktop : null)
                 : new VirtualDesktopCaptureResult(VirtualDesktopAssociationStatus.Unavailable);
         }
         catch (COMException) { return new VirtualDesktopCaptureResult(VirtualDesktopAssociationStatus.Unavailable); }

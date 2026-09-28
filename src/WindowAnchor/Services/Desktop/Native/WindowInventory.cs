@@ -34,7 +34,8 @@ public sealed record ObservedWindow(
     bool IsCloaked = false,
     IntPtr RootOwnerHwnd = default,
     IntPtr TaskSwitcherRepresentativeHwnd = default,
-    WindowBounds? VisibleBounds = null);
+    WindowBounds? VisibleBounds = null,
+    uint CloakState = 0);
 
 /// <summary>Named product policy applied to raw native window observations.</summary>
 public enum WindowCandidatePolicy
@@ -166,7 +167,8 @@ public sealed class WindowInventory : IRawWindowInventory
             isCloaked,
             rootOwnerHwnd,
             taskSwitcherRepresentativeHwnd,
-            visibleBounds);
+            visibleBounds,
+            cloakState);
     }
 
     private static IntPtr FindTaskSwitcherRepresentative(IntPtr rootOwnerHwnd)
@@ -189,6 +191,7 @@ public sealed class WindowInventory : IRawWindowInventory
 /// <summary>Pure, testable named policies for selecting raw observed windows.</summary>
 public static class WindowPolicyEvaluator
 {
+    internal const uint DwmCloakedByShell = 0x00000002;
     private static readonly HashSet<string> ShellWindowClasses = new(StringComparer.Ordinal)
     {
         "Shell_TrayWnd", "DV2ControlHost", "MsgrIMEWindowClass",
@@ -235,6 +238,27 @@ public static class WindowPolicyEvaluator
 
             _ => throw new ArgumentOutOfRangeException(nameof(policy), policy, null)
         };
+    }
+
+    /// <summary>
+    /// Applies the ordinary task-window shape while allowing only a Shell-cloaked window. The
+    /// caller must independently prove through <c>IVirtualDesktopManager</c> that the HWND is on
+    /// an inactive virtual desktop before using this result.
+    /// </summary>
+    public static bool IncludesInactiveVirtualDesktopCandidate(
+        ObservedWindow window,
+        WindowCandidatePolicy policy,
+        uint ownProcessId = 0)
+    {
+        if (policy is not (WindowCandidatePolicy.CaptureCandidate or
+            WindowCandidatePolicy.RestoreMatchCandidate) ||
+            !window.IsCloaked ||
+            (window.CloakState & DwmCloakedByShell) == 0)
+        {
+            return false;
+        }
+
+        return Includes(window with { IsCloaked = false }, policy, ownProcessId);
     }
 
     /// <summary>

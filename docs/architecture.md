@@ -269,10 +269,20 @@ reused by another PID still invalidates the plan.
 
 Virtual-desktop association is an explicit, off-by-default Windows 10/11 preference. At capture,
 `VirtualDesktopAssociationService` calls only the documented Shell
-`IVirtualDesktopManager.GetWindowDesktopId(HWND)` method and persists the resulting GUID with the
-window record. At planning, a valid GUID produces a `MoveWindowToVirtualDesktop` action only for a
-safely selected live match. An explicit Restore Preview match retains that GUID and receives the
-same action.
+`IVirtualDesktopManager.GetWindowDesktopId(HWND)` and
+`IsWindowOnCurrentVirtualDesktop(HWND)` methods. The ordinary policy continues to reject every
+DWM-cloaked surface. A narrow opt-in path admits a window only when Windows reports that it is not
+on the current desktop, DWM identifies Shell cloaking, and the same ownership/style/title/bounds
+task-window checks pass with the cloak removed. Application-cloaked, inherited, tool, shell-chrome,
+and non-activatable surfaces remain excluded. The Save dialog groups the resulting windows by
+observed desktop GUID and monitor; because the supported interface exposes no names or ordering,
+it labels groups as current or deterministic inactive desktops rather than guessing Windows' UI
+number.
+
+The same narrow inventory path applies to restore matching, so a window on an inactive desktop is
+reused instead of duplicated. At planning, a valid GUID produces a
+`MoveWindowToVirtualDesktop` action only for a safely selected live match. An explicit Restore
+Preview match retains that GUID and receives the same action.
 
 At execution, the HWND is revalidated again before the documented
 `IVirtualDesktopManager.MoveWindowToDesktop(HWND, GUID)` call. The service never calls an

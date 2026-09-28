@@ -48,7 +48,7 @@ public partial class SaveWorkspaceDialog : FluentWindow
 
     public sealed class MonitorWindowGroup
     {
-        public string MonitorHeader { get; init; } = "";
+        public string GroupHeader { get; init; } = "";
         public List<WindowCheckItem> Windows { get; init; } = new();
     }
 
@@ -91,28 +91,120 @@ public partial class SaveWorkspaceDialog : FluentWindow
     {
         InitializeComponent();
 
-        foreach (var (mon, windows) in windowData)
-        {
-            string primaryTag = mon.IsPrimary ? " (Primary)" : "";
-            string monName = settingsService?.ResolveMonitorName(mon.MonitorId, mon.FriendlyName)
-                             ?? mon.FriendlyName;
-            var group = new MonitorWindowGroup
-            {
-                MonitorHeader = $"Monitor {mon.Index + 1}: {monName}{primaryTag}  \u2014  " +
-                                $"{mon.WidthPixels}\u00d7{mon.HeightPixels}  ({windows.Count} window{(windows.Count == 1 ? "" : "s")})",
-                Windows = windows.Select(w => new WindowCheckItem
-                {
-                    Record       = w,
-                    DisplayName  = string.IsNullOrEmpty(w.DisplayName) ? w.ProcessName : w.DisplayName,
-                    TitleSnippet = w.TitleSnippet,
-                    IsSelected   = !ShouldAutoExclude(w),
-                }).ToList(),
-            };
-            _monitorGroups.Add(group);
-        }
+        _monitorGroups.AddRange(BuildGroups(windowData, settingsService));
 
         WindowGroupList.ItemsSource = _monitorGroups;
         Loaded += (_, _) => WorkspaceNameInput.Focus();
+    }
+
+    internal static List<MonitorWindowGroup> BuildGroups(
+        List<(MonitorInfo Monitor, List<WindowRecord> Windows)> windowData,
+        Services.SettingsService? settingsService = null)
+    {
+        WindowRecord[] allWindows = windowData.SelectMany(item => item.Windows).ToArray();
+        bool showVirtualDesktops = allWindows.Any(window =>
+            window.IsOnCurrentVirtualDesktop == false &&
+            Guid.TryParse(window.VirtualDesktopId, out _));
+
+        if (!showVirtualDesktops)
+        {
+            return windowData.Select(item => CreateGroup(
+                item.Monitor,
+                item.Windows,
+                desktopLabel: null,
+                settingsService)).ToList();
+        }
+
+        string? currentDesktopId = allWindows.FirstOrDefault(window =>
+            window.IsOnCurrentVirtualDesktop == true &&
+            Guid.TryParse(window.VirtualDesktopId, out _))?.VirtualDesktopId;
+        string[] desktopIds = allWindows
+            .Select(window => window.VirtualDesktopId)
+            .Where(id => Guid.TryParse(id, out _))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var desktopLabels = new List<(string Id, string Label)>();
+        if (!string.IsNullOrWhiteSpace(currentDesktopId))
+            desktopLabels.Add((currentDesktopId, "Current virtual desktop"));
+        int inactiveIndex = 0;
+        int observedIndex = 0;
+        foreach (string desktopId in desktopIds.Where(id => !string.Equals(
+                     id,
+                     currentDesktopId,
+                     StringComparison.OrdinalIgnoreCase)))
+        {
+            bool inactive = allWindows.Any(window =>
+                string.Equals(window.VirtualDesktopId, desktopId, StringComparison.OrdinalIgnoreCase) &&
+                window.IsOnCurrentVirtualDesktop == false);
+            desktopLabels.Add((
+                desktopId,
+                inactive
+                    ? $"Inactive virtual desktop {++inactiveIndex}"
+                    : $"Observed virtual desktop {++observedIndex}"));
+        }
+
+        var groups = new List<MonitorWindowGroup>();
+        foreach ((string desktopId, string desktopLabel) in desktopLabels)
+        {
+            foreach ((MonitorInfo monitor, List<WindowRecord> windows) in windowData)
+            {
+                List<WindowRecord> desktopWindows = windows.Where(window => string.Equals(
+                    window.VirtualDesktopId,
+                    desktopId,
+                    StringComparison.OrdinalIgnoreCase)).ToList();
+                if (desktopWindows.Count > 0)
+                {
+                    groups.Add(CreateGroup(
+                        monitor,
+                        desktopWindows,
+                        desktopLabel,
+                        settingsService));
+                }
+            }
+        }
+
+        foreach ((MonitorInfo monitor, List<WindowRecord> windows) in windowData)
+        {
+            List<WindowRecord> monitorWindows = windows
+                .Where(window => !Guid.TryParse(window.VirtualDesktopId, out _))
+                .ToList();
+            if (monitorWindows.Count > 0)
+                groups.Add(CreateGroup(monitor, monitorWindows, "Desktop unavailable", settingsService));
+        }
+
+        return groups;
+    }
+
+    private static MonitorWindowGroup CreateGroup(
+        MonitorInfo monitor,
+        List<WindowRecord> windows,
+        string? desktopLabel,
+        Services.SettingsService? settingsService)
+    {
+        string primaryTag = monitor.IsPrimary ? " (Primary)" : "";
+        string monitorName = settingsService?.ResolveMonitorName(
+            monitor.MonitorId,
+            monitor.FriendlyName) ?? monitor.FriendlyName;
+        string monitorHeader = $"Monitor {monitor.Index + 1}: {monitorName}{primaryTag}  \u2014  " +
+            $"{monitor.WidthPixels}\u00d7{monitor.HeightPixels}  " +
+            $"({windows.Count} window{(windows.Count == 1 ? "" : "s")})";
+        return new MonitorWindowGroup
+        {
+            GroupHeader = desktopLabel is null
+                ? monitorHeader
+                : $"{desktopLabel}  ·  {monitorHeader}",
+            Windows = windows.Select(window => new WindowCheckItem
+            {
+                Record = window,
+                DisplayName = string.IsNullOrEmpty(window.DisplayName)
+                    ? window.ProcessName
+                    : window.DisplayName,
+                TitleSnippet = window.TitleSnippet,
+                IsSelected = !ShouldAutoExclude(window),
+            }).ToList(),
+        };
     }
 
     // ── Smart exclusion ───────────────────────────────────────────────────

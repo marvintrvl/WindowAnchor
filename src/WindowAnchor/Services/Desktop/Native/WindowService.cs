@@ -62,10 +62,14 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
 
         foreach (var observed in _rawInventory.EnumerateWindows())
         {
-            if (!WindowPolicyEvaluator.Includes(observed, policy))
+            if (!TryIncludeWindow(observed, policy, out VirtualDesktopCaptureResult virtualDesktop))
                 continue;
 
-            var record = CaptureWindowRecord(observed, explorerSessions, captureTerminalTabs: true);
+            var record = CaptureWindowRecord(
+                observed,
+                explorerSessions,
+                captureTerminalTabs: true,
+                observedVirtualDesktop: virtualDesktop);
             if (record != null)
             {
                 // Tag with monitor while HWND is still valid
@@ -94,7 +98,8 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
     private WindowRecord? CaptureWindowRecord(
         ObservedWindow observed,
         IReadOnlyDictionary<IntPtr, ExplorerWindowSession>? explorerSessions = null,
-        bool captureTerminalTabs = false)
+        bool captureTerminalTabs = false,
+        VirtualDesktopCaptureResult? observedVirtualDesktop = null)
     {
         IntPtr hWnd = observed.Hwnd;
         var placement = new NativeMethodsWindow.WindowPlacement();
@@ -195,9 +200,7 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
                 ? TerminalTabCaptureService.Capture(hWnd)
                 : (new List<TerminalTab>(), 0);
         VirtualDesktopCaptureResult virtualDesktop =
-            _settingsService?.Settings.EnableVirtualDesktopAssociation == true
-                ? _virtualDesktops.TryGetWindowDesktopId(hWnd)
-                : new VirtualDesktopCaptureResult(VirtualDesktopAssociationStatus.Unsupported);
+            observedVirtualDesktop ?? ObserveVirtualDesktop(hWnd);
 
         return new WindowRecord
         {
@@ -221,6 +224,7 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
             VirtualDesktopId = virtualDesktop.Status == VirtualDesktopAssociationStatus.Available
                 ? virtualDesktop.DesktopId?.ToString("D") ?? ""
                 : "",
+            IsOnCurrentVirtualDesktop = virtualDesktop.IsOnCurrentDesktop,
         };
     }
 
@@ -324,10 +328,13 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
 
         foreach (var observed in _rawInventory.EnumerateWindows())
         {
-            if (!WindowPolicyEvaluator.Includes(observed, policy))
+            if (!TryIncludeWindow(observed, policy, out VirtualDesktopCaptureResult virtualDesktop))
                 continue;
 
-            var record = CaptureWindowRecord(observed, explorerSessions);
+            var record = CaptureWindowRecord(
+                observed,
+                explorerSessions,
+                observedVirtualDesktop: virtualDesktop);
             if (record == null)
                 continue;
 
@@ -335,6 +342,33 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
         }
 
         return result;
+    }
+
+    private VirtualDesktopCaptureResult ObserveVirtualDesktop(IntPtr hWnd) =>
+        _settingsService?.Settings.EnableVirtualDesktopAssociation == true
+            ? _virtualDesktops.TryGetWindowDesktopId(hWnd)
+            : new VirtualDesktopCaptureResult(VirtualDesktopAssociationStatus.Unsupported);
+
+    private bool TryIncludeWindow(
+        ObservedWindow observed,
+        WindowCandidatePolicy policy,
+        out VirtualDesktopCaptureResult virtualDesktop)
+    {
+        bool standardCandidate = WindowPolicyEvaluator.Includes(observed, policy);
+        bool possibleInactiveCandidate =
+            _settingsService?.Settings.EnableVirtualDesktopAssociation == true &&
+            WindowPolicyEvaluator.IncludesInactiveVirtualDesktopCandidate(observed, policy);
+        if (!standardCandidate && !possibleInactiveCandidate)
+        {
+            virtualDesktop = new VirtualDesktopCaptureResult(
+                VirtualDesktopAssociationStatus.Unsupported);
+            return false;
+        }
+
+        virtualDesktop = ObserveVirtualDesktop(observed.Hwnd);
+        return standardCandidate ||
+            (virtualDesktop.Status == VirtualDesktopAssociationStatus.Available &&
+             virtualDesktop.IsOnCurrentDesktop == false);
     }
 
     /// <summary>

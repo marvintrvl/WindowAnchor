@@ -50,9 +50,11 @@ opens the latest published GitHub release.
   Visible DWM frame bounds are kept distinct from invisible resize borders so edge-aligned windows
   do not acquire the usual Windows 8-pixel inset after adaptation.
 - **Optional Virtual Desktop Association (WA-022)**: On Windows 10/11, opt in from Settings to
-  remember a window's virtual desktop and return a revalidated match to that existing desktop.
-  WindowAnchor never creates, lists, names, or switches desktops; if the saved desktop is gone,
-  the window remains accessible where it is.
+  include task windows from inactive desktops, group the Save list by observed desktop and
+  monitor, remember each association, and return a revalidated match to that existing desktop.
+  WindowAnchor never creates, enumerates, names, or switches desktops; if the saved desktop is
+  gone, the window remains accessible where it is. Because the supported API exposes membership
+  GUIDs but not desktop names/order, the UI uses “Current” and deterministic “Inactive” labels.
 - **Stabilized Display Changes**: Dock/KVM event bursts share one cancellable topology stabilizer.
   Restore begins only after monitor identity, bounds, work area, DPI, primary state, and orientation
   remain unchanged for the settle interval; a timeout refuses to restore an unstable intermediate state.
@@ -212,8 +214,9 @@ The development ID differs from the published Chrome Web Store ID.
 2. **Window snapshot** — Enumerates visible windows, recording exact normal bounds, monitor/work-area
    geometry, DPI, normalized anchors, semantic layout, and process info. File detection parses
    window titles and queries Windows jump-lists to relaunch files. With **Remember virtual
-   desktops** enabled in Settings, it also records the documented Windows desktop GUID for each
-   top-level window.
+   desktops** enabled in Settings, it also admits Shell-cloaked task windows proven to be on an
+   inactive desktop, records the documented Windows desktop GUID for each top-level window, and
+   groups the Save list by virtual desktop and monitor.
 
 3. **Choose policy, then plan and optionally approve** — The workspace mode and each entry’s
    persisted override are resolved once by the pure planner. Manual tray, Settings, and hotkey

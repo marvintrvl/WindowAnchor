@@ -401,7 +401,7 @@
                                 <TextBlock Text="Remember virtual desktops"
                                            FontSize="13" FontWeight="Medium"
                                            Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                <TextBlock Text="Save and restore a window's existing Windows virtual desktop. WindowAnchor never creates, names, lists, or switches desktops; if a saved desktop no longer exists, the window stays accessible where it is."
+                                <TextBlock Text="Include windows from inactive desktops, group them in Save Workspace, and restore each existing association. WindowAnchor never creates, enumerates, names, or switches desktops; if a saved desktop no longer exists, the window stays accessible where it is."
                                            FontSize="12" TextWrapping="Wrap"
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                             </StackPanel>

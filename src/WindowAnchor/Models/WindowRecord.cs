@@ -118,4 +118,8 @@ public class WindowRecord
 
     /// <summary>Optional saved Windows virtual-desktop GUID; empty means disabled or unavailable.</summary>
     public string VirtualDesktopId { get; set; } = "";
+
+    /// <summary>Runtime-only membership in the active virtual desktop for Save-dialog grouping.</summary>
+    [JsonIgnore]
+    public bool? IsOnCurrentVirtualDesktop { get; set; }
 }

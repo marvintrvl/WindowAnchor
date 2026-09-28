@@ -79,6 +79,40 @@ public class WindowPolicyTests
     }
 
     [Fact]
+    public void Shell_cloaked_inactive_desktop_task_can_be_admitted_only_for_capture_and_matching()
+    {
+        ObservedWindow inactiveDesktopWindow = Window() with
+        {
+            IsCloaked = true,
+            CloakState = WindowPolicyEvaluator.DwmCloakedByShell
+        };
+
+        Assert.True(WindowPolicyEvaluator.IncludesInactiveVirtualDesktopCandidate(
+            inactiveDesktopWindow,
+            WindowCandidatePolicy.CaptureCandidate));
+        Assert.True(WindowPolicyEvaluator.IncludesInactiveVirtualDesktopCandidate(
+            inactiveDesktopWindow,
+            WindowCandidatePolicy.RestoreMatchCandidate));
+        Assert.False(WindowPolicyEvaluator.IncludesInactiveVirtualDesktopCandidate(
+            inactiveDesktopWindow,
+            WindowCandidatePolicy.SwitchCloseCandidate));
+    }
+
+    [Fact]
+    public void Application_cloaking_is_never_treated_as_inactive_virtual_desktop_membership()
+    {
+        ObservedWindow appHiddenWindow = Window() with
+        {
+            IsCloaked = true,
+            CloakState = 0x00000001
+        };
+
+        Assert.False(WindowPolicyEvaluator.IncludesInactiveVirtualDesktopCandidate(
+            appHiddenWindow,
+            WindowCandidatePolicy.CaptureCandidate));
+    }
+
+    [Fact]
     public void Appwindow_style_explicitly_opts_an_owned_window_into_task_policies()
     {
         ObservedWindow appWindow = Window() with

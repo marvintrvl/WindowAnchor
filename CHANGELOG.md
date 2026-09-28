@@ -8,7 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 - **Virtual desktop association (WA-022)** — An opt-in Windows 10/11 setting captures a
-  top-level window's documented virtual-desktop GUID and restores a revalidated match to that
+  top-level window's documented virtual-desktop GUID, includes task windows on inactive desktops,
+  groups the Save dialog by observed desktop and monitor, and restores a revalidated match to that
   existing desktop. WindowAnchor never creates, enumerates, names, or switches desktops; an
   unavailable/deleted target is reported as skipped and leaves the window accessible.
 - **Temporary display recovery (WA-030B)** — After a settled resolution, docking, or monitor
