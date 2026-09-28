@@ -508,7 +508,8 @@ internal static class SettingsSchemaMigrator
             [5] = _ => { },
             [6] = _ => { },
             [7] = _ => { },
-            [8] = _ => { }
+            [8] = _ => { },
+            [9] = MigrateV9ToV10
         };
         bool migrated = JsonMigrationPipeline.Apply(
             root,
@@ -534,6 +535,8 @@ internal static class SettingsSchemaMigrator
             throw new InvalidDataException("DiagnosticLogLevel is invalid.");
         if (!Enum.IsDefined(settings.BrowserTabRestorePolicy))
             throw new InvalidDataException("BrowserTabRestorePolicy is invalid.");
+        if (!Enum.IsDefined(settings.TemporaryDisplayRecoveryMode))
+            throw new InvalidDataException("TemporaryDisplayRecoveryMode is invalid.");
         if (settings.MinimumVisibleWindowAreaRatio is < 0 or > 1)
             throw new InvalidDataException("MinimumVisibleWindowAreaRatio must be between 0 and 1.");
         foreach ((string alias, string localRoot) in settings.LogicalPathAliases ?? [])
@@ -629,6 +632,13 @@ internal static class SettingsSchemaMigrator
         // A settings document proves that WindowAnchor has already run. Do not present an
         // upgrade as a first launch; the same guide remains available from Help & Guide.
         root["onboardingCompleted"] = true;
+    }
+
+    private static void MigrateV9ToV10(JsonObject root)
+    {
+        // A returned display layout can move many windows. Existing installations therefore
+        // receive an explicit tray offer instead of silently inheriting automatic movement.
+        root["temporaryDisplayRecoveryMode"] = (int)TemporaryDisplayRecoveryMode.Ask;
     }
 
     private static WorkspaceSnapshot? ResolveByName(

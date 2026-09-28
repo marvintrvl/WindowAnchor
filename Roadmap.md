@@ -56,8 +56,11 @@ application adapters, and practical recovery controls:
   page in the tray and Settings documents operation, restore variants, policies, privacy, and limits.
 - Restore reports produce structured, privacy-redactable action and entry outcomes, and deterministic
   simulation fixtures make planner behavior reproducible without mutating the live desktop.
-- Startup and display-change restoration use bounded topology stabilization. Workspaces retain named
-  topology-specific layout variants alongside their shared application context.
+- Startup and display-change restoration use bounded topology stabilization. After a temporary
+  resolution, docking, or monitor excursion returns, users can decline the tray recovery offer,
+  disable it, or opt into checkpointed automatic recovery; fullscreen activity pauses automatic
+  moves. Workspaces retain named topology-specific layout variants alongside shared application
+  context.
 - Logical path aliases, persistent keep-open app identities, and active-window rescue support safer
   recovery after device, path, or display changes.
 - Chromium PWA, dedicated-browser URL, Explorer-folder, and generic Win32 behavior is owned by
@@ -109,10 +112,14 @@ Explorer smoke. See
 The dependency-checked ready queue is maintained in the companion planning repository. Its current
 order is:
 
-1. **WA-030B/WA-031 display recovery** — temporary-resolution and RDP-aware restoration.
-2. **WA-036A/WA-036D portability resolution** — cross-device display mapping and moved-resource
-   resolution above the existing path-alias foundation.
-3. **WA-040A/WA-042A catalog and template foundations** — stable workspace metadata and templates.
+1. **WA-006A restore recovery verification** — finish the real-Windows Undo verification gate.
+2. **WA-022 virtual desktop association** — supported, opt-in virtual-desktop placement with a
+   graceful ordinary-window fallback.
+3. **WA-046/WA-033 reliability and portability** — deterministic restore fixtures plus a narrow,
+   local-first workspace export/import flow.
+
+Cross-device restoration, cloud sync, community templates/recipes, and ecosystem catalog features
+are retained only as historical planning records and are not active product commitments.
 
 ## Later themes
 

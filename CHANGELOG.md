@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Temporary display recovery (WA-030B)** — After a settled resolution, docking, or monitor
+  excursion returns to the prior saved layout, WindowAnchor offers recovery from the tray. Users
+  can disable it, keep the default ask-first behavior, or opt into automatic recovery; automatic
+  recovery creates an Undo checkpoint and defers while a fullscreen foreground app is active.
 - **Windows Terminal tab capture (WA-021)** — A per-tab profile and current directory can be
   confirmed during workspace save. An opt-in PowerShell prompt hook pre-fills tracked tabs using
   `WT_SESSION`/`WT_PROFILE_ID`; a single `wt` launch recreates their tab order and active tab.

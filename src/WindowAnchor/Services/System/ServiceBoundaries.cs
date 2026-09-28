@@ -49,3 +49,10 @@ public interface IWindowMutation
     /// <summary>Minimizes policy-selected windows except those in <paramref name="keep"/>.</summary>
     int MinimizeUserWindowsExcept(WindowCandidatePolicy policy, HashSet<IntPtr> keep);
 }
+
+/// <summary>Reports whether foreground fullscreen activity makes automatic display recovery unsafe.</summary>
+public interface IDisplayRecoveryEnvironment
+{
+    /// <summary>Returns true only when the foreground window covers its current monitor.</summary>
+    bool IsForegroundWindowFullscreen(IReadOnlyList<MonitorInfo> monitors);
+}

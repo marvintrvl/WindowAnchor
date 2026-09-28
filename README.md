@@ -203,7 +203,7 @@ The development ID differs from the published Chrome Web Store ID.
 
 ## 🛠 How It Works
 
-1. **Monitor fingerprint** — WindowAnchor computes a stable SHA-256 hash of your connected monitors. This is used to automatically match workspaces when you reconnect monitors.
+1. **Monitor fingerprint and temporary display recovery** — WindowAnchor computes a stable SHA-256 hash of your connected monitors. When a settled resolution, docking, or monitor excursion returns to a saved layout, it offers that layout from the tray by default. You can disable this, choose automatic recovery, or dismiss an individual offer; automatic recovery saves an Undo checkpoint and pauses while a fullscreen foreground app is active.
 
 2. **Window snapshot** — Enumerates visible windows, recording exact normal bounds, monitor/work-area
    geometry, DPI, normalized anchors, semantic layout, and process info. File detection parses
@@ -225,7 +225,8 @@ The development ID differs from the published Chrome Web Store ID.
 
 4. **Conditional checkpoint** — Routine non-destructive restores skip capture by default; the
    Settings opt-in enables a fast metadata-only checkpoint. Exact Switch and Undo always require
-   one before the first close or replacement mutation. It retains title, Explorer-folder, PWA, and
+   one before the first close or replacement mutation. Automatic temporary-display recovery also
+   always requires one. It retains title, Explorer-folder, PWA, and
    browser metadata, but skips Jump List parsing and recursive folder scans. A failed required
    checkpoint blocks mutation, while a skipped routine checkpoint still uses the same serialized
    execution gate.

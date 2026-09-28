@@ -32,7 +32,9 @@ internal sealed class WorkspaceCheckpointService : IAsyncDisposable
     internal bool RoutineCheckpointsEnabled => _settings?.Settings.CreateRestoreCheckpoints ?? false;
 
     internal bool ShouldCreate(WorkspaceCheckpointTrigger trigger) =>
-        trigger is WorkspaceCheckpointTrigger.WorkspaceSwitch or WorkspaceCheckpointTrigger.Undo ||
+        trigger is WorkspaceCheckpointTrigger.WorkspaceSwitch or
+            WorkspaceCheckpointTrigger.AutomaticDisplayRestore or
+            WorkspaceCheckpointTrigger.Undo ||
         RoutineCheckpointsEnabled;
 
     internal WorkspaceSnapshot? GetLatest() => _storage.Checkpoints.GetLatest();

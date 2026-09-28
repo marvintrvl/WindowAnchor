@@ -120,6 +120,12 @@
                         <MenuItem Header="Undo Last Restore"
                                   x:Name="UndoLastRestoreMenuItem"
                                   Click="OnUndoLastRestoreClick"/>
+                        <MenuItem Header="Restore Returned Display Layout"
+                                  x:Name="RestorePendingDisplayRecoveryMenuItem"
+                                  Click="OnRestorePendingDisplayRecoveryClick"/>
+                        <MenuItem Header="Dismiss Display Recovery"
+                                  x:Name="DismissPendingDisplayRecoveryMenuItem"
+                                  Click="OnDismissPendingDisplayRecoveryClick"/>
                         <MenuItem Header="Copy Last Restore Diagnostics"
                                   x:Name="CopyLastRestoreDiagnosticsMenuItem"
                                   Click="OnCopyLastRestoreDiagnosticsClick"/>

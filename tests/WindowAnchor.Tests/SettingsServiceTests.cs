@@ -13,6 +13,7 @@ public class SettingsServiceTests
 
         Assert.False(settings.ShowRestorePreview);
         Assert.False(settings.CreateRestoreCheckpoints);
+        Assert.Equal(TemporaryDisplayRecoveryMode.Ask, settings.TemporaryDisplayRecoveryMode);
     }
 
     [Fact]
@@ -92,6 +93,9 @@ public class SettingsServiceTests
             json.RootElement.GetProperty("diagnosticLogLevel").GetInt32());
         Assert.False(json.RootElement.GetProperty("showRestorePreview").GetBoolean());
         Assert.False(json.RootElement.GetProperty("createRestoreCheckpoints").GetBoolean());
+        Assert.Equal(
+            (int)TemporaryDisplayRecoveryMode.Ask,
+            json.RootElement.GetProperty("temporaryDisplayRecoveryMode").GetInt32());
         Assert.Equal(0.25, json.RootElement.GetProperty("minimumVisibleWindowAreaRatio").GetDouble());
         Assert.False(json.RootElement.GetProperty("onboardingCompleted").GetBoolean());
         Assert.False(json.RootElement.TryGetProperty("defaultWorkspaceName", out _));
@@ -101,6 +105,7 @@ public class SettingsServiceTests
         Assert.Equal(DiagnosticLogLevel.Warning, reloaded.Settings.DiagnosticLogLevel);
         Assert.False(reloaded.Settings.ShowRestorePreview);
         Assert.False(reloaded.Settings.CreateRestoreCheckpoints);
+        Assert.Equal(TemporaryDisplayRecoveryMode.Ask, reloaded.Settings.TemporaryDisplayRecoveryMode);
         Assert.False(reloaded.Settings.OnboardingCompleted);
     }
 
@@ -136,8 +141,10 @@ public class SettingsServiceTests
         Assert.False(service.IsSaveBlocked);
         Assert.Equal("11111111-1111-4111-8111-111111111111", service.Settings.DefaultWorkspaceId);
         Assert.True(service.Settings.OnboardingCompleted);
+        Assert.Equal(TemporaryDisplayRecoveryMode.Ask, service.Settings.TemporaryDisplayRecoveryMode);
         Assert.Equal(AppSettings.CurrentSchemaVersion, service.Settings.SchemaVersion);
         Assert.Contains($"\"schemaVersion\": {AppSettings.CurrentSchemaVersion}", File.ReadAllText(settingsPath));
+        Assert.Contains("\"temporaryDisplayRecoveryMode\": 1", File.ReadAllText(settingsPath));
     }
 
     [Fact]

@@ -310,6 +310,10 @@ public class WorkspaceService : IAsyncDisposable
     public bool RestoreCheckpointsEnabled =>
         _checkpoints.RoutineCheckpointsEnabled;
 
+    /// <summary>User preference for recovery after a temporary display-layout excursion returns.</summary>
+    public TemporaryDisplayRecoveryMode TemporaryDisplayRecoveryMode =>
+        _settingsService?.Settings.TemporaryDisplayRecoveryMode ?? TemporaryDisplayRecoveryMode.Ask;
+
     /// <summary>
     /// Returns stable identities observed for currently open user windows. The result is intended
     /// for the global Exact Switch preservation picker and contains no title, HWND, or PID data.

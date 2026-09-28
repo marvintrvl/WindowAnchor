@@ -69,19 +69,26 @@ public sealed class DisplayTopologyStabilizer
         }
     }
 
+    /// <summary>Captures the current topology for an initial baseline without waiting or mutating.</summary>
+    public DisplayTopologySnapshot CaptureCurrentTopology() => Capture();
+
     private DisplayTopologySnapshot Capture()
     {
         List<MonitorInfo> monitors = _monitorInventory.GetCurrentMonitors();
         return new DisplayTopologySnapshot(
             _monitorInventory.GetCurrentMonitorFingerprint(),
-            DisplayTopologySignature.Create(monitors));
+            DisplayTopologySignature.Create(monitors),
+            monitors);
     }
 
     private static TimeSpan Min(TimeSpan first, TimeSpan second, TimeSpan third) =>
         first <= second && first <= third ? first : second <= third ? second : third;
 }
 
-public sealed record DisplayTopologySnapshot(string Fingerprint, string Signature);
+public sealed record DisplayTopologySnapshot(
+    string Fingerprint,
+    string Signature,
+    IReadOnlyList<MonitorInfo> Monitors);
 
 public sealed record DisplayTopologyStabilizationResult(
     DisplayTopologySnapshot Snapshot,

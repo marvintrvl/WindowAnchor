@@ -137,6 +137,7 @@ public partial class App : System.Windows.Application
 
         _workspaceService = workspaceService;
         _coordinator      = new LayoutCoordinator(_monitorService, windowService, workspaceService);
+        _coordinator.SeedDisplayTopologyBaseline();
 
         // Hotkeys (settings were created above, before WindowService)
         _hotkeyService   = new HotkeyService();
@@ -350,6 +351,18 @@ public partial class App : System.Windows.Application
                 {
                     menuItem.IsEnabled = _coordinator?.CanUndoLastRestore == true;
                 }
+                else if (menuItem.Name == "RestorePendingDisplayRecoveryMenuItem")
+                {
+                    bool hasPending = _coordinator?.HasPendingDisplayRecovery == true;
+                    menuItem.IsEnabled = hasPending;
+                    menuItem.Header = hasPending
+                        ? $"Restore Returned Layout: {_coordinator!.PendingDisplayRecoveryName}"
+                        : "Restore Returned Display Layout";
+                }
+                else if (menuItem.Name == "DismissPendingDisplayRecoveryMenuItem")
+                {
+                    menuItem.IsEnabled = _coordinator?.HasPendingDisplayRecovery == true;
+                }
                 else if (menuItem.Name == "CopyLastRestoreDiagnosticsMenuItem")
                 {
                     menuItem.IsEnabled = RestoreDiagnosticsReportStore.HasLatest;
@@ -378,6 +391,30 @@ public partial class App : System.Windows.Application
                 H.NotifyIcon.Core.NotificationIcon.Warning);
         }
     }
+
+    private async void OnRestorePendingDisplayRecoveryClick(object sender, RoutedEventArgs e)
+    {
+        if (_coordinator is null) return;
+        try
+        {
+            await _coordinator.RestorePendingDisplayRecoveryAsync();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error(
+                "display.recovery_failed",
+                "The offered display recovery could not be restored",
+                ex,
+                LogField.Public("errorCategory", "display_recovery"));
+            ShowBalloon(
+                "Display Recovery Failed",
+                "The returned display layout could not be restored.",
+                H.NotifyIcon.Core.NotificationIcon.Warning);
+        }
+    }
+
+    private void OnDismissPendingDisplayRecoveryClick(object sender, RoutedEventArgs e) =>
+        _coordinator?.DismissPendingDisplayRecovery();
 
     private void OnCopyLastRestoreDiagnosticsClick(object sender, RoutedEventArgs e)
     {

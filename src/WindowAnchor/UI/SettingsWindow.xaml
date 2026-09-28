@@ -398,6 +398,31 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <StackPanel VerticalAlignment="Center" Margin="0,0,18,0">
+                                <TextBlock Text="Temporary display recovery"
+                                           FontSize="13" FontWeight="Medium"
+                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                <TextBlock Text="When a temporary resolution, docking, or monitor change returns to a saved layout, ask before restoring it, restore it automatically, or do nothing. Automatic recovery always saves an undo checkpoint and pauses for fullscreen apps."
+                                           FontSize="12" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            </StackPanel>
+                            <ComboBox x:Name="TemporaryDisplayRecoveryModeCombo"
+                                      Grid.Column="1" MinWidth="160" VerticalAlignment="Center"
+                                      SelectedValuePath="Tag"
+                                      SelectionChanged="OnTemporaryDisplayRecoveryModeChanged">
+                                <ComboBoxItem Content="Ask before restoring" Tag="Ask"/>
+                                <ComboBoxItem Content="Restore automatically" Tag="AutomaticallyRestore"/>
+                                <ComboBoxItem Content="Do nothing" Tag="Disabled"/>
+                            </ComboBox>
+                        </Grid>
+
+                        <Separator Margin="0,14,0,14" Opacity="0.4"/>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center" Margin="0,0,18,0">
                                 <TextBlock Text="Checkpoint routine restores"
                                            FontSize="13" FontWeight="Medium"
                                            Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>

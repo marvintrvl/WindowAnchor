@@ -1,7 +1,7 @@
 # Implemented Ticket Verification
 
-**Audit date:** 2026-09-26
-**Automated gate:** `dotnet test .\WindowAnchor.sln --configuration Release --no-restore` — 333 passed, 0 failed, 0 skipped
+**Audit date:** 2026-09-28
+**Automated gate:** `dotnet test .\WindowAnchor.sln --configuration Release --no-restore` — 337 passed, 0 failed, 0 skipped
 **Explorer live gate:** `WINDOWANCHOR_LIVE_EXPLORER_SMOKE=1` isolated Windows 11 25H2
 three-tab restore — passed, including active-tab selection and zero duplicate tabs on rerun
 **Firefox behavior gate:** `node --test .\firefox-extension\tests\background.test.cjs` — 4 passed, 0 failed
@@ -31,6 +31,7 @@ application-launch, browser, or multi-monitor smoke pass.
 | WA-021 | Implemented in automation; live Terminal gate open | The optional PowerShell prompt hook tracks profile GUID and current directory by `WT_SESSION`; an accessibility title marker maps reports to tab order. The save editor requires each tab directory and permits manual correction for untracked shells. The adapter builds a multi-tab `wt` command; preview/preflight check directories and prefer the installed alias, with a narrowly scoped shell-alias fallback. A real Windows Terminal two-tab round trip, including distinct current paths and tab focus, remains required. Old prototype saves must be recaptured. |
 | #15 | Verified in automation and Windows 11 25H2 live smoke | File Explorer captures every folder tab and active selection per top-level window when file/folder capture is enabled. Restore revalidates the assigned HWND, adds only missing tab occurrences, preserves unrelated tabs, and reselects the saved active tab. Workspace v8 migration seeds the legacy active folder; portable-redacted export removes tab paths. The isolated three-folder smoke passed and its second restore opened zero tabs. |
 | WA-030A | Verified in automation | Deterministic geometry covers sufficiently visible, fully off-screen, negative-origin, and maximized cases. The foreground-window command is wired through the native boundary and tray; live desktop behavior remains part of release smoke testing. |
+| WA-030B | Verified in automation; live display-change smoke open | A stabilized departure/return tracker offers the saved layout once when it returns. Settings support disabled, ask-first, and automatic modes; automatic recovery creates a mandatory checkpoint and pauses while a foreground window covers its monitor. Synthetic tests cover return-only triggering, duplicate suppression, fullscreen geometry, and checkpoint gating. A real resolution/dock/fullscreen smoke remains required before release. |
 | WA-032 | Verified in automation | Most-specific alias capture, per-device persistence, exact-path-first resolution, mapped fallback, and unresolved-alias handling are covered while retaining the absolute path. |
 | WA-033 | Partial | The internal transfer service has atomic exact/portable export, bounded schema validation, redaction, and collision-safe clone/reject behavior. User-facing export/import, configurable inclusion, conflict preview, and old transfer-schema migration are missing. |
 | WA-034 | Partial | `ISyncProvider` and an atomic generic folder transport exist and preserve the previous provider copy on write failure. Staging into local validation/migration, manifests, device IDs, conflict detection/copies, retries, exclusion policy, orchestration, and UI are missing. |

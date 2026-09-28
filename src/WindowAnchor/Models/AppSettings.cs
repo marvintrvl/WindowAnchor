@@ -32,6 +32,19 @@ public enum DiagnosticLogLevel
     Off = 4
 }
 
+/// <summary>Controls how WindowAnchor handles a saved layout returning after a temporary display excursion.</summary>
+public enum TemporaryDisplayRecoveryMode
+{
+    /// <summary>Do not track or offer temporary-display recovery.</summary>
+    Disabled = 0,
+
+    /// <summary>Offer the recovered layout from the tray; the user chooses whether to restore it.</summary>
+    Ask = 1,
+
+    /// <summary>Restore the recovered layout after a checkpoint, unless fullscreen activity is active.</summary>
+    AutomaticallyRestore = 2
+}
+
 /// <summary>
 /// Persisted binding for a single keyboard shortcut.
 /// Stored as human-readable strings for clean JSON output.
@@ -100,7 +113,7 @@ public sealed record PersistentApplicationCandidate(
 public class AppSettings
 {
     /// <summary>Current persisted settings schema version.</summary>
-    public const int CurrentSchemaVersion = 9;
+    public const int CurrentSchemaVersion = 10;
 
     /// <summary>Schema version used to serialize this settings document.</summary>
     [JsonInclude]
@@ -141,6 +154,13 @@ public class AppSettings
     /// switches and Undo always create a checkpoint because they can close or replace desktop state.
     /// </summary>
     public bool CreateRestoreCheckpoints { get; set; }
+
+    /// <summary>
+    /// Controls recovery after a temporary resolution, docking, or monitor-topology excursion
+    /// returns to a previously saved display layout. New and upgraded installations ask first.
+    /// </summary>
+    public TemporaryDisplayRecoveryMode TemporaryDisplayRecoveryMode { get; set; } =
+        TemporaryDisplayRecoveryMode.Ask;
 
     /// <summary>Minimum foreground-window area that must remain in a current work area before rescue acts.</summary>
     public double MinimumVisibleWindowAreaRatio { get; set; } = 0.25;

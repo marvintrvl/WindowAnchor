@@ -9,7 +9,7 @@ namespace WindowAnchor.Services;
 
 /// <summary>
 /// Bridges display-change events from the UI layer to <see cref="WorkspaceService"/>.
-/// Owns the debounce timer for <c>WM_DISPLAYCHANGE</c>, the auto-restore logic,
+/// Owns the debounce timer for <c>WM_DISPLAYCHANGE</c>, return-aware temporary-display recovery,
 /// and all system-tray notification balloons.
 /// </summary>
 public class LayoutCoordinator : IAsyncDisposable
@@ -17,7 +17,10 @@ public class LayoutCoordinator : IAsyncDisposable
     private readonly WorkspaceService _workspaceService;
     private readonly WorkspaceSwitchEngine _switchEngine;
     private readonly DisplayTopologyStabilizer _displayTopologyStabilizer;
+    private readonly IDisplayRecoveryEnvironment? _displayRecoveryEnvironment;
+    private readonly TemporaryDisplayRecoveryTracker _temporaryDisplayRecovery = new();
     private readonly object _switchRequestSync = new();
+    private WorkspaceSnapshot? _pendingDisplayRecovery;
     private CancellationTokenSource? _activeSwitchRequest;
     private CancellationTokenSource? _displayChangeCts;
     private Task _activeDisplayChange = Task.CompletedTask;
@@ -33,7 +36,8 @@ public class LayoutCoordinator : IAsyncDisposable
             monitorService,
             workspaceService,
             new WorkspaceSwitchEngine(windowService),
-            new DisplayTopologyStabilizer(monitorService))
+            new DisplayTopologyStabilizer(monitorService),
+            windowService)
 #pragma warning restore CA2000
     {
     }
@@ -42,16 +46,18 @@ public class LayoutCoordinator : IAsyncDisposable
         MonitorService monitorService,
         WorkspaceService workspaceService,
         WorkspaceSwitchEngine switchEngine,
-        DisplayTopologyStabilizer? displayTopologyStabilizer = null)
+        DisplayTopologyStabilizer? displayTopologyStabilizer = null,
+        IDisplayRecoveryEnvironment? displayRecoveryEnvironment = null)
     {
         _workspaceService = workspaceService;
         _switchEngine = switchEngine;
         _displayTopologyStabilizer = displayTopologyStabilizer ?? new DisplayTopologyStabilizer(monitorService);
+        _displayRecoveryEnvironment = displayRecoveryEnvironment;
     }
 
     /// <summary>
     /// Called by <c>App.xaml.cs</c> whenever a <c>WM_DISPLAYCHANGE</c> message is received.
-    /// Waits for the topology to settle, then auto-restores the exact matching workspace.
+    /// Waits for the topology to settle, then recognizes a return from a temporary excursion.
     /// Cancels any in-flight invocation so rapid display changes cause just one final restore.
     /// </summary>
     public async Task HandleDisplayChangeAsync()
@@ -98,43 +104,42 @@ public class LayoutCoordinator : IAsyncDisposable
                 "Detected a stabilized display change",
                 LogField.Identifier("monitorFingerprint", fingerprint));
 
-            var matchedWorkspace = _workspaceService.FindWorkspaceByFingerprint(fingerprint);
-            bool isReconnect = matchedWorkspace != null;
+            TemporaryDisplayRecoveryObservation observation;
+            lock (_switchRequestSync)
+            {
+                observation = _temporaryDisplayRecovery.Observe(
+                    stabilization.Snapshot,
+                    _workspaceService.FindWorkspaceByFingerprint);
+            }
 
-            if (!isReconnect)
+            if (observation.ReturnedWorkspace is null)
+                return;
+
+            WorkspaceSnapshot workspace = observation.ReturnedWorkspace;
+            TemporaryDisplayRecoveryMode mode = _workspaceService.TemporaryDisplayRecoveryMode;
+            if (mode == TemporaryDisplayRecoveryMode.Disabled)
             {
                 AppLogger.Info(
-                    "display.auto_restore_not_found",
-                    "No workspace matched the current display topology",
-                    LogField.Identifier("monitorFingerprint", fingerprint));
+                    "display.recovery_disabled",
+                    "A temporary display layout returned, but recovery is disabled in Settings",
+                    LogField.Identifier("workspaceId", workspace.WorkspaceId));
                 return;
             }
 
-            AppLogger.Info(
-                "display.auto_restore_started",
-                "A display reconnect matched a saved workspace",
-                LogField.Identifier("workspaceId", matchedWorkspace!.WorkspaceId),
-                LogField.Workspace("workspaceName", matchedWorkspace.Name));
-            RestoreExecutionResult autoRestore = await _workspaceService
-                .RestoreWorkspaceWithExecutionResultAsync(
-                    matchedWorkspace,
-                    RestoreMode.Standard,
-                    WorkspaceCheckpointTrigger.AutomaticDisplayRestore,
-                    token);
-            if (token.IsCancellationRequested || autoRestore.WasCancelled) return;
-            if (NotifyCheckpointFailure(autoRestore)) return;
-            if (autoRestore.Status != RestoreExecutionStatus.Completed)
+            bool fullscreen = _displayRecoveryEnvironment?.IsForegroundWindowFullscreen(
+                stabilization.Snapshot.Monitors) ?? false;
+            if (mode == TemporaryDisplayRecoveryMode.AutomaticallyRestore && !fullscreen)
             {
-                NotifyBalloon(
-                    "Automatic Restore Needs Attention",
-                    "The matching workspace could not be restored cleanly. Review it manually for details.",
-                    H.NotifyIcon.Core.NotificationIcon.Warning);
+                await RestoreTemporaryDisplayRecoveryAsync(workspace, token).ConfigureAwait(false);
                 return;
             }
 
-            _workspaceService.SetLastKnownFingerprint(fingerprint);
-            NotifyBalloon("Workspace Restored",
-                $"\u201c{matchedWorkspace.Name}\u201d \u2014 {matchedWorkspace.Entries.Count} windows repositioned.");
+            SetPendingDisplayRecovery(workspace);
+            NotifyBalloon(
+                fullscreen ? "Display Recovery Paused" : "Display Layout Returned",
+                fullscreen
+                    ? $"Fullscreen activity is active. Restore \u201c{workspace.Name}\u201d from the WindowAnchor tray when ready."
+                    : $"Restore \u201c{workspace.Name}\u201d from the WindowAnchor tray, or dismiss this recovery offer.");
         }
         catch (TaskCanceledException) { }
         finally
@@ -155,6 +160,124 @@ public class LayoutCoordinator : IAsyncDisposable
     public Task<DisplayTopologyStabilizationResult> WaitForStableDisplayTopologyAsync(
         CancellationToken token = default) =>
         _displayTopologyStabilizer.WaitForStableTopologyAsync(token);
+
+    /// <summary>Records the startup display layout so later changes can be recognized as a return.</summary>
+    public void SeedDisplayTopologyBaseline()
+    {
+        DisplayTopologySnapshot topology = _displayTopologyStabilizer.CaptureCurrentTopology();
+        lock (_switchRequestSync)
+        {
+            if (!_disposed)
+                _temporaryDisplayRecovery.Seed(topology);
+        }
+    }
+
+    /// <summary>True when a returned display layout is waiting for an explicit tray decision.</summary>
+    public bool HasPendingDisplayRecovery
+    {
+        get
+        {
+            lock (_switchRequestSync)
+                return _pendingDisplayRecovery is not null;
+        }
+    }
+
+    /// <summary>Name shown by the tray for the current temporary-display recovery offer.</summary>
+    public string? PendingDisplayRecoveryName
+    {
+        get
+        {
+            lock (_switchRequestSync)
+                return _pendingDisplayRecovery?.Name;
+        }
+    }
+
+    /// <summary>Dismisses the current recovery offer without changing any windows.</summary>
+    public void DismissPendingDisplayRecovery()
+    {
+        WorkspaceSnapshot? dismissed;
+        lock (_switchRequestSync)
+        {
+            dismissed = _pendingDisplayRecovery;
+            _pendingDisplayRecovery = null;
+        }
+        if (dismissed is not null)
+        {
+            AppLogger.Info(
+                "display.recovery_declined",
+                "The user dismissed a temporary display recovery offer",
+                LogField.Identifier("workspaceId", dismissed.WorkspaceId));
+        }
+    }
+
+    /// <summary>Restores the currently offered display recovery after its mandatory checkpoint gate.</summary>
+    public async Task<RestoreExecutionResult?> RestorePendingDisplayRecoveryAsync(
+        CancellationToken token = default)
+    {
+        WorkspaceSnapshot? workspace;
+        lock (_switchRequestSync)
+            workspace = _pendingDisplayRecovery;
+        if (workspace is null)
+            return null;
+
+        return await RestoreTemporaryDisplayRecoveryAsync(workspace, token).ConfigureAwait(false);
+    }
+
+    private async Task<RestoreExecutionResult> RestoreTemporaryDisplayRecoveryAsync(
+        WorkspaceSnapshot workspace,
+        CancellationToken token)
+    {
+        AppLogger.Info(
+            "display.recovery_started",
+            "Restoring a layout after its temporary display excursion returned",
+            LogField.Identifier("workspaceId", workspace.WorkspaceId),
+            LogField.Workspace("workspaceName", workspace.Name));
+        RestoreExecutionResult result = await _workspaceService
+            .RestoreWorkspaceWithExecutionResultAsync(
+                workspace,
+                RestoreMode.Standard,
+                WorkspaceCheckpointTrigger.AutomaticDisplayRestore,
+                token)
+            .ConfigureAwait(false);
+        if (token.IsCancellationRequested || result.WasCancelled)
+            return result;
+        if (NotifyCheckpointFailure(result))
+            return result;
+        if (result.Status != RestoreExecutionStatus.Completed)
+        {
+            SetPendingDisplayRecovery(workspace);
+            NotifyBalloon(
+                "Display Recovery Needs Attention",
+                "The recovered layout could not be restored cleanly. Review it from the WindowAnchor tray.",
+                H.NotifyIcon.Core.NotificationIcon.Warning);
+            return result;
+        }
+
+        lock (_switchRequestSync)
+        {
+            if (_pendingDisplayRecovery?.WorkspaceId.Equals(
+                    workspace.WorkspaceId,
+                    StringComparison.OrdinalIgnoreCase) == true)
+            {
+                _pendingDisplayRecovery = null;
+            }
+        }
+        _workspaceService.SetLastKnownFingerprint(_workspaceService.GetCurrentMonitorFingerprint());
+        NotifyBalloon("Display Layout Restored",
+            $"“{workspace.Name}” — {workspace.Entries.Count} windows repositioned.");
+        return result;
+    }
+
+    private void SetPendingDisplayRecovery(WorkspaceSnapshot workspace)
+    {
+        lock (_switchRequestSync)
+            _pendingDisplayRecovery = workspace;
+        AppLogger.Info(
+            "display.recovery_offered",
+            "A returned display layout is awaiting a tray decision",
+            LogField.Identifier("workspaceId", workspace.WorkspaceId),
+            LogField.Workspace("workspaceName", workspace.Name));
+    }
 
     /// <summary>Restores a workspace and shows a completion balloon.</summary>
     public Task RestoreWorkspaceAsync(

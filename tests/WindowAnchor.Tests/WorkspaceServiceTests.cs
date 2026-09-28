@@ -814,6 +814,84 @@ public class WorkspaceServiceTests
     }
 
     [Fact]
+    public async Task Automatic_display_recovery_always_creates_a_checkpoint_even_when_routine_checkpoints_are_disabled()
+    {
+        using var directory = new TestDirectory();
+        const string exe = @"C:\Apps\editor.exe";
+        WindowRecord live = Record(exe, "notes", "primary", 96);
+        live.ClassName = "EditorWindow";
+        MonitorInfo monitor = Monitor("primary", 0, true);
+        monitor.BoundsRight = live.NormalRight;
+        monitor.BoundsBottom = live.NormalBottom;
+        monitor.WorkAreaRight = live.NormalRight;
+        monitor.WorkAreaBottom = live.NormalBottom;
+        WindowRecord saved = Record(exe, "notes", "primary", 96);
+        saved.ClassName = "EditorWindow";
+        saved.NormalLeft = 100;
+        saved.NormalRight = 1900;
+        var snapshot = new WorkspaceSnapshot
+        {
+            Name = "Returned display layout",
+            Monitors = [monitor],
+            Entries =
+            [
+                new WorkspaceEntry
+                {
+                    ExecutablePath = exe,
+                    ProcessName = "editor",
+                    WindowClassName = "EditorWindow",
+                    MonitorId = "primary",
+                    Position = saved
+                }
+            ]
+        };
+        var windows = new FakeWindowInventory
+        {
+            Snapshot = [live],
+            Live = new Dictionary<IntPtr, (uint Pid, WindowRecord Record)>
+            {
+                [new IntPtr(306)] = (3006, live)
+            }
+        };
+        var storage = new StorageService(directory.Path);
+        var settings = new SettingsService(Path.Combine(directory.Path, "settings.json"), storage);
+        settings.Settings.CreateRestoreCheckpoints = false;
+        var service = CreateService(
+            directory,
+            windows,
+            new RecordingWindowMutation(),
+            new FakeMonitorInventory { Monitors = [monitor] },
+            storage,
+            settings: settings,
+            restoreClock: new FakeRestoreClock(),
+            placementProbe: new FakeWindowPlacementProbe
+            {
+                DefaultObservation = new WindowPlacementObservation(
+                    true,
+                    true,
+                    saved.NormalLeft,
+                    saved.NormalTop,
+                    saved.NormalRight,
+                    saved.NormalBottom,
+                    saved.ShowCmd,
+                    saved.SavedDpi)
+            });
+
+        RestoreExecutionResult result = await service.RestoreWorkspaceWithExecutionResultAsync(
+            snapshot,
+            RestoreMode.Standard,
+            WorkspaceCheckpointTrigger.AutomaticDisplayRestore,
+            CancellationToken.None);
+
+        Assert.Equal(RestoreExecutionStatus.Completed, result.Status);
+        Assert.Equal(RestoreCheckpointStatus.Created, result.Checkpoint?.Status);
+        Assert.Equal(
+            WorkspaceCheckpointTrigger.AutomaticDisplayRestore,
+            result.Checkpoint?.Trigger);
+        Assert.Single(storage.Checkpoints.Load().Workspaces);
+    }
+
+    [Fact]
     public async Task Checkpoint_write_failure_rejects_restore_without_any_mutation()
     {
         using var directory = new TestDirectory();

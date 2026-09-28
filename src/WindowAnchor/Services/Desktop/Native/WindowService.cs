@@ -12,7 +12,8 @@ namespace WindowAnchor.Services;
 /// Applies named selection policies to raw window observations, enriches capture/match records,
 /// and performs live window mutations via P/Invoke.
 /// </summary>
-public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitchWindowController
+public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitchWindowController,
+    IDisplayRecoveryEnvironment
 {
     private readonly SettingsService? _settingsService;
     private readonly IRawWindowInventory _rawInventory;
@@ -437,6 +438,38 @@ public class WindowService : IWindowInventory, IWindowMutation, IWorkspaceSwitch
             LogField.Public("showCmd", placement.ShowCmd));
         return new OffScreenWindowRescueResult(
             OffScreenWindowRescueStatus.Rescued, hWnd, original, rescued);
+    }
+
+    /// <summary>
+    /// Detects a foreground borderless/fullscreen window without treating ordinary maximized
+    /// windows as fullscreen. Automatic display recovery defers to this state so a game or video
+    /// player is never repeatedly repositioned while changing display modes.
+    /// </summary>
+    public bool IsForegroundWindowFullscreen(IReadOnlyList<MonitorInfo> monitors)
+    {
+        ArgumentNullException.ThrowIfNull(monitors);
+        IntPtr hWnd = NativeMethodsWindow.GetForegroundWindow();
+        if (hWnd == IntPtr.Zero || !NativeMethodsWindow.IsWindowVisible(hWnd) ||
+            !NativeMethodsWindow.GetWindowRect(hWnd, out NativeMethodsWindow.Rect bounds))
+        {
+            return false;
+        }
+
+        MonitorInfo? monitor = MonitorService.GetMonitorForWindow(hWnd, monitors.ToList());
+        return monitor is not null && IsFullscreenBounds(bounds, monitor);
+    }
+
+    internal static bool IsFullscreenBounds(NativeMethodsWindow.Rect bounds, MonitorInfo monitor)
+    {
+        ArgumentNullException.ThrowIfNull(monitor);
+        if (!monitor.HasValidBounds)
+            return false;
+
+        const int tolerance = 2;
+        return bounds.Left <= monitor.BoundsLeft + tolerance &&
+               bounds.Top <= monitor.BoundsTop + tolerance &&
+               bounds.Right >= monitor.BoundsRight - tolerance &&
+               bounds.Bottom >= monitor.BoundsBottom - tolerance;
     }
 
     // ── Close all user windows ─────────────────────────────────────────────

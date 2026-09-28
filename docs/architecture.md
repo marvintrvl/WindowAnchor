@@ -551,10 +551,14 @@ from being mixed.
 ### `LayoutCoordinator`
 Reacts to `WM_DISPLAYCHANGE` events forwarded from `App.xaml.cs`.
 
-- **`HandleDisplayChangeAsync()`** — cancels a superseded event, waits through
+- **`HandleDisplayChangeAsync()`** — cancels a superseded event and waits through
   `DisplayTopologyStabilizer` until the complete topology signature is unchanged for the settle
-  interval, refuses to restore on timeout, then looks up the stabilized fingerprint and runs it
-  with the `AutomaticDisplayRestore` checkpoint trigger. Startup readiness uses the same component.
+  interval. `TemporaryDisplayRecoveryTracker` records a departure and acts only when that exact
+  prior signature returns; it does not reposition windows during the excursion. The default mode
+  offers the saved layout once from the tray, while disabled and automatic modes are persisted in
+  Settings. Automatic recovery uses the mandatory `AutomaticDisplayRestore` checkpoint trigger and
+  is converted to a tray offer when the foreground window covers its monitor. Startup readiness
+  uses the same stabilizer.
 - **`UndoLastRestoreAsync()`** — reconciles the latest checkpoint through the close-and-restore
   switch engine and reports checkpoint-gate or restore failures without treating them as success.
 - Owns all notification balloon calls via the private `NotifyBalloon` helper, which marshals to the UI thread.
@@ -615,12 +619,18 @@ Manual tray/Settings/hotkey request
             → placement verification and bounded retry
             → final minimization and ordered result aggregation
 
-Startup or display-change request
+Startup request
     → LayoutCoordinator automatic restore route
         → WorkspaceService.RestoreWorkspaceWithExecutionResultAsync(snapshot, mode)
             → build the same immutable plan
             → checkpoint, then execute through the same preflight and mutation boundary
             → retain one-click behavior without opening preview UI
+
+Display-change request
+    → DisplayTopologyStabilizer waits for a settled signature
+    → TemporaryDisplayRecoveryTracker records departure, then recognizes only its return
+    → disabled: no offer; ask-first: tray Restore/Dismiss offer; automatic: checkpointed restore
+    → fullscreen foreground activity converts automatic recovery to the same tray offer
 
 Undo Last Restore
     → CheckpointRepository.GetLatest() isolates corrupt/expired documents

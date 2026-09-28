@@ -11,6 +11,8 @@ public partial class SettingsWindow
         _suppressToggle = true;
         RestorePreviewToggle.IsChecked = _settingsService.Settings.ShowRestorePreview;
         RestoreCheckpointToggle.IsChecked = _settingsService.Settings.CreateRestoreCheckpoints;
+        TemporaryDisplayRecoveryModeCombo.SelectedValue =
+            _settingsService.Settings.TemporaryDisplayRecoveryMode.ToString();
         BrowserTabRestorePolicyCombo.SelectedIndex = (int)_settingsService.Settings.BrowserTabRestorePolicy;
         double threshold = _settingsService.Settings.MinimumVisibleWindowAreaRatio;
         RescueVisibilityThresholdCombo.SelectedIndex = threshold <= 0.10 ? 0 : threshold >= 0.50 ? 2 : 1;
@@ -35,6 +37,18 @@ public partial class SettingsWindow
             return;
 
         _settingsService.Settings.BrowserTabRestorePolicy = policy;
+        _settingsService.Save();
+    }
+
+    private void OnTemporaryDisplayRecoveryModeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressToggle || TemporaryDisplayRecoveryModeCombo.SelectedItem is not ComboBoxItem item ||
+            item.Tag is not string value || !Enum.TryParse(value, out TemporaryDisplayRecoveryMode mode))
+        {
+            return;
+        }
+
+        _settingsService.Settings.TemporaryDisplayRecoveryMode = mode;
         _settingsService.Save();
     }
 
