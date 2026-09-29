@@ -17,6 +17,13 @@ with `allowed_extensions`, and discovers the host under Mozilla's Windows regist
 
 Firefox for Android is not supported because it does not provide native messaging.
 
+## Install
+
+Install the Mozilla-signed
+[WindowAnchor Browser Connector](https://addons.mozilla.org/en-US/firefox/addon/windowanchor-browser-connector/)
+from Firefox Add-ons. In WindowAnchor, choose **Settings > Browser Integration > Set up Firefox**
+to register the current-user native host and open the listing.
+
 ## Local test setup
 
 1. Build or publish `WindowAnchor.exe`.
@@ -51,17 +58,16 @@ web-ext build
 Firefox Release and Beta require Mozilla signing, so an unsigned ZIP is only a submission or
 development artifact.
 
-For the first public AMO submission, create API credentials in the AMO Developer Hub and run:
+For a signed AMO update, create API credentials in the AMO Developer Hub and run:
 
 ```powershell
 web-ext sign --channel=listed --amo-metadata=amo-metadata.json `
   --api-key=$env:AMO_JWT_ISSUER --api-secret=$env:AMO_JWT_SECRET
 ```
 
-The checked-in metadata supplies the mandatory initial summary and Firefox category. Review the
-listing copy, screenshots, support contact, and privacy-policy URL in AMO before publication.
-After AMO assigns the public listing URL, replace the search URL used by
-`BrowserIntegrationService.FirefoxAddOnSearchUrl` with that exact listing.
+The checked-in metadata supplies the listing summary and Firefox category. Review the listing copy,
+screenshots, support contact, and privacy-policy URL in AMO before publishing an update. The desktop
+app's Firefox setup action must continue to target the exact public listing above.
 
 ## Privacy and recovery boundaries
 

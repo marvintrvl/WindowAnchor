@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Firefox connector published** — The Mozilla-signed
+  [WindowAnchor Browser Connector](https://addons.mozilla.org/en-US/firefox/addon/windowanchor-browser-connector/)
+  is now available from Firefox Add-ons, and **Set Up Firefox** opens the exact public listing.
+
 ## [1.7.0] - 2026-09-29
 
 ### Added
@@ -57,8 +62,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   connector with normal-window/tab capture, pinned and active state, tab groups, geometry,
   profile-scoped exact-URL reuse, private-window exclusion, and per-tab failure isolation. The
   package has a fixed Gecko ID, Mozilla native-host registration, explicit data-consent metadata,
-  AMO listing metadata, and a warning-free `web-ext` validation path. Public AMO signing and a
-  live signed-add-on smoke remain open.
+  AMO listing metadata, and a warning-free `web-ext` validation path. The public Mozilla-signed
+  listing is now live; a multi-profile signed-add-on round trip remains a manual verification gate.
 - **Browser profile-aware restore (WA-019)** — Browser sessions now retain an opaque extension-local
   profile key, stable saved session/window linkage, and safe monitor/desktop-entry linkage. Restore
   can reuse an exact matching normal tab only within that profile, always reopen, or leave a

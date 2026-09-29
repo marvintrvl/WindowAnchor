@@ -80,9 +80,10 @@ The Chromium connector is available from the
 [Chrome Web Store](https://chromewebstore.google.com/detail/windowanchor-browser-conn/liiklnjpifhhmjncifbjjfgplonkkinh).
 Use **Settings > Browser Integration > Set Up Chrome** to register the native host.
 
-Firefox support is packaged separately in [`firefox-extension/`](firefox-extension/). Firefox
-Release/Beta requires a Mozilla-signed add-on; the release ZIP is intended for AMO review and
-development until the public listing is available.
+The Mozilla-signed [WindowAnchor Browser Connector for Firefox](https://addons.mozilla.org/en-US/firefox/addon/windowanchor-browser-connector/)
+is available from Firefox Add-ons. Use **Settings > Browser Integration > Set Up Firefox** to
+register the native host and open the listing. The source and development package remain in
+[`firefox-extension/`](firefox-extension/).
 
 Browser capture excludes private/incognito windows, cookies, passwords, page contents, and general
 history. Exact tab reuse stays inside the opaque local browser profile that captured the session.

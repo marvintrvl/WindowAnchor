@@ -25,8 +25,9 @@ work. Automated tests do not replace live Windows application checks.
 
 - **WA-006A:** automated Undo and undo-of-undo behavior passes; record the complete real-Windows
   Restore, Exact Switch, Undo, and undo-of-undo checklist.
-- **Firefox:** the add-on's Node tests and `web-ext` lint pass; AMO signing/publication and a live
-  signed multi-profile round trip remain external gates.
+- **Firefox:** the connector is published and Mozilla-signed on
+  [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/windowanchor-browser-connector/);
+  a live signed multi-profile round trip remains a manual gate.
 - **Public issue #12:** update-safe Squirrel path rebinding is implemented and released; the issue
   remains open for reporter verification against updated Discord Canary/PTB installs.
 

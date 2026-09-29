@@ -96,7 +96,9 @@ Get-FileHash -Algorithm SHA256 "WindowAnchor-$tag.exe", "WindowAnchor-Browser-Co
 
 The GitHub release workflow repeats the Release test and publish process from the tagged commit,
 packages the Chromium connector, validates/builds the Firefox AMO submission ZIP, and uploads the
-four versioned assets plus `SHA256SUMS.txt`. The Firefox ZIP is not installable in normal
-Release/Beta Firefox until Mozilla signs it through AMO. Keep
+four versioned assets plus `SHA256SUMS.txt`. The generated Firefox ZIP is an unsigned review or
+development artifact; normal Firefox Release/Beta users install the Mozilla-signed connector from
+its [Firefox Add-ons listing](https://addons.mozilla.org/en-US/firefox/addon/windowanchor-browser-connector/).
+Keep
 `Version`, `AssemblyVersion`, and `FileVersion` synchronized in
 `src/WindowAnchor/WindowAnchor.csproj` before tagging.

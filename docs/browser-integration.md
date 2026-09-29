@@ -78,23 +78,23 @@ The Chromium connector is published in the
 with ID `liiklnjpifhhmjncifbjjfgplonkkinh`. **Set up Chrome** registers the current-user host with
 that exact allowed origin and opens the listing.
 
-The Firefox package is AMO-ready but does not yet have a public listing. **Set up Firefox** registers
-the current-user Mozilla native host and opens an AMO search for the connector. Once Mozilla
-publishes the listing, replace `FirefoxAddOnSearchUrl` with the exact listing URL so setup opens it
-directly. Release/Beta Firefox accepts only Mozilla-signed add-ons.
+The Mozilla-signed Firefox connector is published on
+[Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/windowanchor-browser-connector/).
+**Set up Firefox** registers the current-user Mozilla native host and opens that exact listing.
+Release/Beta Firefox accepts only Mozilla-signed add-ons.
 
 Desktop applications cannot silently install either extension. The browser/store remains in
 control of installation.
 
-## Local Firefox testing and AMO submission
+## Local Firefox testing and AMO packaging
 
 1. Run **Set up Firefox** in WindowAnchor, or execute
    `firefox-extension/register-native-host.ps1` with the WindowAnchor executable path.
 2. Open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select
    `firefox-extension/manifest.json`.
 3. Run `web-ext lint` and `web-ext build` from `firefox-extension/`.
-4. For a first listed submission, use `web-ext sign --channel=listed` with
-   `amo-metadata.json` and AMO JWT credentials. Mozilla signs the package after validation/review.
+4. Maintainers publish signed updates through AMO using the fixed add-on identity and the checked-in
+   `amo-metadata.json`; GitHub release ZIPs remain unsigned development/review artifacts.
 
 The fixed ID `windowanchor-browser-connector@windowanchor.app` appears in the add-on manifest,
 native-host allow-list, registration script, and desktop routing tests. Firefox starts a native

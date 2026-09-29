@@ -14,12 +14,14 @@ public class BrowserIntegrationServiceTests
     }
 
     [Fact]
-    public void Firefox_setup_uses_a_fixed_publishable_add_on_identity()
+    public void Firefox_setup_uses_the_published_add_on_identity_and_listing()
     {
         Assert.Equal(
             "windowanchor-browser-connector@windowanchor.app",
             BrowserIntegrationService.FirefoxExtensionId);
-        Assert.StartsWith("https://addons.mozilla.org/firefox/", BrowserIntegrationService.FirefoxAddOnSearchUrl);
+        Assert.Equal(
+            "https://addons.mozilla.org/en-US/firefox/addon/windowanchor-browser-connector/",
+            BrowserIntegrationService.FirefoxAddOnUrl);
     }
 
     [Fact]

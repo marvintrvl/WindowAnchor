@@ -47,12 +47,13 @@ normal process or ownership model cannot be restored generically.
 
 - `WindowAnchor-v1.7.0.exe` — self-contained Windows x64 application.
 - `WindowAnchor-Browser-Connector-v1.7.0.zip` — optional Chromium connector.
-- `WindowAnchor-Firefox-Connector-AMO-v1.7.0.zip` — unsigned AMO submission package.
+- `WindowAnchor-Firefox-Connector-AMO-v1.7.0.zip` — unsigned Firefox review/development package.
 - `WindowAnchor-Terminal-Integration-v1.7.0.ps1` — optional PowerShell prompt integration.
 - `SHA256SUMS.txt` — checksums for all versioned assets.
 
 The executable is not digitally signed, so Windows may show a security prompt. Firefox Release and
-Beta require Mozilla to sign the Firefox connector before normal installation.
+Beta users can install the Mozilla-signed connector from its
+[Firefox Add-ons listing](https://addons.mozilla.org/en-US/firefox/addon/windowanchor-browser-connector/).
 
 ## Updating
 

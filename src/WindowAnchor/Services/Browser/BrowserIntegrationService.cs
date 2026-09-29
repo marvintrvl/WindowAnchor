@@ -21,8 +21,8 @@ public static class BrowserIntegrationService
     public const string FirefoxExtensionId = "windowanchor-browser-connector@windowanchor.app";
     public const string ChromeWebStoreUrl =
         "https://chromewebstore.google.com/detail/windowanchor-browser-conn/liiklnjpifhhmjncifbjjfgplonkkinh";
-    public const string FirefoxAddOnSearchUrl =
-        "https://addons.mozilla.org/firefox/search/?q=WindowAnchor%20Browser%20Connector";
+    public const string FirefoxAddOnUrl =
+        "https://addons.mozilla.org/en-US/firefox/addon/windowanchor-browser-connector/";
 
     private sealed record BrowserDefinition(
         string Name,
@@ -56,7 +56,7 @@ public static class BrowserIntegrationService
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Mozilla Firefox", "firefox.exe"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Mozilla Firefox", "firefox.exe"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Mozilla Firefox", "firefox.exe"),
-        ], @"Software\Mozilla\NativeMessagingHosts\", FirefoxAddOnSearchUrl, BrowserConnectorKind.Firefox),
+        ], @"Software\Mozilla\NativeMessagingHosts\", FirefoxAddOnUrl, BrowserConnectorKind.Firefox),
     ];
 
     public static IReadOnlyList<string> GetInstalledBrowserNames()
