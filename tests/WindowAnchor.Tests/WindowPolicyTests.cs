@@ -5,6 +5,58 @@ namespace WindowAnchor.Tests;
 
 public class WindowPolicyTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Zero_area_task_owner_uses_its_real_ui_only_for_capture_and_matching(bool inactive)
+    {
+        var root = Window() with
+        {
+            Hwnd = new IntPtr(10), Bounds = new WindowBounds(0, 0, 0, 0),
+            TaskSwitcherRepresentativeHwnd = new IntPtr(11),
+            IsCloaked = inactive, CloakState = inactive ? 2u : 0u
+        };
+        var ui = Window() with
+        {
+            OwnerHwnd = root.Hwnd, RootOwnerHwnd = root.Hwnd,
+            TaskSwitcherRepresentativeHwnd = new IntPtr(11),
+            IsCloaked = inactive, CloakState = inactive ? 2u : 0u
+        };
+        var windows = WindowInventory.ResolveTaskProxyWindows([root, ui]);
+        Assert.Equal(root.Hwnd, windows[1].TaskProxyOwnerHwnd);
+        foreach (var policy in new[] { WindowCandidatePolicy.CaptureCandidate, WindowCandidatePolicy.RestoreMatchCandidate })
+        {
+            Assert.False(inactive ? WindowPolicyEvaluator.IncludesInactiveVirtualDesktopCandidate(windows[0], policy) : Includes(windows[0], policy));
+            Assert.True(inactive ? WindowPolicyEvaluator.IncludesInactiveVirtualDesktopCandidate(windows[1], policy) : Includes(windows[1], policy));
+        }
+        Assert.False(Includes(windows[1], WindowCandidatePolicy.SwitchCloseCandidate));
+        Assert.False(Includes(windows[1], WindowCandidatePolicy.MinimizeCandidate));
+        Assert.False(Includes(windows[1] with { IsCloaked = false, ExtendedStyle = NativeMethodsWindow.WS_EX_TOOLWINDOW }, WindowCandidatePolicy.CaptureCandidate));
+        Assert.False(Includes(windows[1] with { IsCloaked = false, ExtendedStyle = NativeMethodsWindow.WS_EX_NOACTIVATE }, WindowCandidatePolicy.CaptureCandidate));
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void Real_root_or_cross_process_owner_does_not_promote_owned_dialog(bool realRoot, bool differentProcess)
+    {
+        var root = Window() with
+        {
+            Hwnd = new IntPtr(10),
+            Bounds = realRoot ? new WindowBounds(0, 0, 800, 600) : new WindowBounds(0, 0, 0, 0),
+            TaskSwitcherRepresentativeHwnd = new IntPtr(11)
+        };
+        var popup = Window() with
+        {
+            ProcessId = differentProcess ? 77u : root.ProcessId,
+            OwnerHwnd = root.Hwnd, RootOwnerHwnd = root.Hwnd,
+            TaskSwitcherRepresentativeHwnd = new IntPtr(11)
+        };
+        var windows = WindowInventory.ResolveTaskProxyWindows([root, popup]);
+        Assert.Equal(IntPtr.Zero, windows[1].TaskProxyOwnerHwnd);
+        Assert.False(Includes(windows[1], WindowCandidatePolicy.CaptureCandidate));
+    }
+
     [Fact]
     public void Capture_candidate_preserves_all_legacy_layout_exclusions()
     {
@@ -98,13 +150,17 @@ public class WindowPolicyTests
             WindowCandidatePolicy.SwitchCloseCandidate));
     }
 
-    [Fact]
-    public void Application_cloaking_is_never_treated_as_inactive_virtual_desktop_membership()
+    [Theory]
+    [InlineData(1u)]
+    [InlineData(3u)]
+    [InlineData(4u)]
+    [InlineData(6u)]
+    public void Application_cloaking_is_never_treated_as_inactive_virtual_desktop_membership(uint cloakState)
     {
         ObservedWindow appHiddenWindow = Window() with
         {
             IsCloaked = true,
-            CloakState = 0x00000001
+            CloakState = cloakState
         };
 
         Assert.False(WindowPolicyEvaluator.IncludesInactiveVirtualDesktopCandidate(

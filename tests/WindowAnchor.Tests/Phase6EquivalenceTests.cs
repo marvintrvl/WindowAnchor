@@ -274,7 +274,7 @@ public class Phase6EquivalenceTests
             RestoreMode.AlignAndMinimize);
 
         Assert.Equal(
-            "C642EED2CE57EDCF74312519A08B16E8AFB79BD2A0A8403B0DE750D367ECA88B",
+            "C7326F9C532FEA556CB745A3549E6E0CAB97AC96AD8BA9B3F545A434F9378B8C",
             Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(plan.ToRedactedJson()))));
     }
 

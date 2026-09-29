@@ -129,6 +129,9 @@ public sealed class RestoreExecutor
         if (stalePreview is not null)
             return stalePreview;
 
+        using (context.Timing.Measure(RestoreProgressStage.MovingVirtualDesktops))
+            _browserAndLaunch.EnsureVirtualDesktopTopology(context, progress);
+
         using (context.Timing.Measure(RestoreProgressStage.CapturingBrowserSession))
         {
             await _browserAndLaunch.RestoreBrowserSessionsAsync(

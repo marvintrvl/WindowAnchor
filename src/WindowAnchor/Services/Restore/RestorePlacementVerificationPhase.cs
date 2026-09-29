@@ -100,6 +100,7 @@ internal sealed class RestorePlacementVerificationPhase
                     session.Policy,
                     finalObservation,
                     session.WasApplied);
+                evaluation = NormalizeFinalEvaluation(session, evaluation);
 
                 if (evaluation.State == WindowPlacementVerificationState.Applied ||
                     evaluation.State == WindowPlacementVerificationState.WindowGone ||
@@ -173,7 +174,9 @@ internal sealed class RestorePlacementVerificationPhase
         IDictionary<int, RestoreExecutionActionResult> results)
     {
         RestoreEntryExecutionState state = session.State;
-        bool succeeded = evaluation.State == WindowPlacementVerificationState.Applied;
+        bool succeeded = evaluation.State is
+            WindowPlacementVerificationState.Applied or
+            WindowPlacementVerificationState.Unavailable;
         state.PlacementVerification = evaluation.State;
         state.PlacementRetryCount = session.RetryCount;
         state.PlacementVerificationStrategy = session.Strategy;
@@ -198,14 +201,26 @@ internal sealed class RestorePlacementVerificationPhase
             };
         }
 
-        Action<string, string, LogField[]> log = succeeded ? AppLogger.Info : AppLogger.Warn;
+        Action<string, string, LogField[]> log = evaluation.State switch
+        {
+            WindowPlacementVerificationState.Applied => AppLogger.Info,
+            WindowPlacementVerificationState.Unavailable => AppLogger.Warn,
+            _ => AppLogger.Warn
+        };
         log(
-            succeeded
-                ? "restore.entry.placement_verified"
-                : "restore.entry.placement_verification_failed",
-            succeeded
-                ? "Verified the final window placement"
-                : "Window placement did not verify within the bounded retry policy",
+            evaluation.State switch
+            {
+                WindowPlacementVerificationState.Applied => "restore.entry.placement_verified",
+                WindowPlacementVerificationState.Unavailable => "restore.entry.placement_unavailable",
+                _ => "restore.entry.placement_verification_failed"
+            },
+            evaluation.State switch
+            {
+                WindowPlacementVerificationState.Applied => "Verified the final window placement",
+                WindowPlacementVerificationState.Unavailable =>
+                    "Application does not permit external window geometry control",
+                _ => "Window placement did not verify within the bounded retry policy"
+            },
             [
                 LogField.Identifier("entryId", state.PlanEntry.EntryId),
                 LogField.Public("entryIndex", state.PlanEntry.EntryIndex),
@@ -214,6 +229,23 @@ internal sealed class RestorePlacementVerificationPhase
                 LogField.Public("strategy", session.Strategy),
                 LogField.Public("tolerancePixels", evaluation.TolerancePixels)
             ]);
+    }
+
+    private static WindowPlacementEvaluation NormalizeFinalEvaluation(
+        PlacementVerificationSession session,
+        WindowPlacementEvaluation evaluation)
+    {
+        if (evaluation.State != WindowPlacementVerificationState.Rejected ||
+            !session.Policy.TreatRejectionAsUnavailable)
+            return evaluation;
+
+        return evaluation with
+        {
+            State = WindowPlacementVerificationState.Unavailable,
+            Explanation =
+                "The application does not permit external window geometry control; " +
+                "launch and virtual-desktop restoration can still complete."
+        };
     }
 
     private static void CancelPendingPlacementVerification(

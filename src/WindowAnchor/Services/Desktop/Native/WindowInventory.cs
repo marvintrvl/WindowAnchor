@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using WindowAnchor.Native;
@@ -35,7 +37,8 @@ public sealed record ObservedWindow(
     IntPtr RootOwnerHwnd = default,
     IntPtr TaskSwitcherRepresentativeHwnd = default,
     WindowBounds? VisibleBounds = null,
-    uint CloakState = 0);
+    uint CloakState = 0,
+    IntPtr TaskProxyOwnerHwnd = default);
 
 /// <summary>Named product policy applied to raw native window observations.</summary>
 public enum WindowCandidatePolicy
@@ -69,7 +72,29 @@ public sealed class WindowInventory : IRawWindowInventory
             return true;
         }, IntPtr.Zero);
 
-        return windows;
+        return ResolveTaskProxyWindows(windows);
+    }
+
+    // Some frameworks put the taskbar/desktop identity on an invisible or zero-area owner,
+    // while the real application UI is its owned popup. Never substitute a popup for an
+    // ordinary, independently capturable root (e.g. an editor's temporary Save dialog).
+    internal static IReadOnlyList<ObservedWindow> ResolveTaskProxyWindows(IReadOnlyList<ObservedWindow> windows)
+    {
+        var byHandle = windows.ToDictionary(window => window.Hwnd);
+        return windows.Select(window =>
+        {
+            if (window.OwnerHwnd == IntPtr.Zero || window.RootOwnerHwnd == window.Hwnd ||
+                window.TaskSwitcherRepresentativeHwnd != window.Hwnd ||
+                !byHandle.TryGetValue(window.RootOwnerHwnd, out var root) ||
+                root.ProcessId == 0 || root.ProcessId != window.ProcessId ||
+                root.OwnerHwnd != IntPtr.Zero ||
+                root.TaskSwitcherRepresentativeHwnd != window.Hwnd ||
+                (root.IsVisible && root.Bounds is not { Width: <= 0 } and not { Height: <= 0 }) ||
+                !WindowPolicyEvaluator.IsPrimaryTaskWindow(root with { IsVisible = true, IsCloaked = false }))
+                return window;
+
+            return window with { TaskProxyOwnerHwnd = root.Hwnd };
+        }).ToArray();
     }
 
     public bool IsWindowAlive(IntPtr hWnd) => NativeMethodsWindow.IsWindow(hWnd);
@@ -133,13 +158,17 @@ public sealed class WindowInventory : IRawWindowInventory
         {
             using var process = Process.GetProcessById((int)processId);
             processName = process.ProcessName;
-            executablePath = process.MainModule?.FileName ?? "";
         }
+
         catch
         {
             // Elevated or short-lived processes may not be queryable. The remaining raw facts
             // are still useful to switch-risk policy and should not be discarded.
         }
+
+        executablePath = QueryExecutablePath(processId);
+        if (string.IsNullOrEmpty(processName) && !string.IsNullOrEmpty(executablePath))
+            processName = Path.GetFileNameWithoutExtension(executablePath);
 
         string appUserModelId = WebAppService.GetWindowAppUserModelId(hWnd);
         if (string.IsNullOrEmpty(appUserModelId) &&
@@ -169,6 +198,21 @@ public sealed class WindowInventory : IRawWindowInventory
             taskSwitcherRepresentativeHwnd,
             visibleBounds,
             cloakState);
+    }
+
+    private static string QueryExecutablePath(uint processId)
+    {
+        IntPtr process = NativeMethodsShell.OpenProcess(
+            NativeMethodsShell.PROCESS_QUERY_LIMITED_INFORMATION, false, processId);
+        if (process == IntPtr.Zero) return "";
+        try
+        {
+            var path = new StringBuilder(32768);
+            uint size = (uint)path.Capacity;
+            return NativeMethodsShell.QueryFullProcessImageName(process, 0, path, ref size)
+                ? path.ToString() : "";
+        }
+        finally { NativeMethodsShell.CloseHandle(process); }
     }
 
     private static IntPtr FindTaskSwitcherRepresentative(IntPtr rootOwnerHwnd)
@@ -209,15 +253,20 @@ public static class WindowPolicyEvaluator
         bool isOwnWindow = ownProcessId != 0 && window.ProcessId == ownProcessId;
         bool isShellChrome = ShellWindowClasses.Contains(window.ClassName);
         bool isPrimaryTaskWindow = IsPrimaryTaskWindow(window, isShellChrome);
+        bool isCaptureTask = isPrimaryTaskWindow ||
+            (window.TaskProxyOwnerHwnd != IntPtr.Zero &&
+             window.TaskProxyOwnerHwnd == window.RootOwnerHwnd &&
+             window.TaskSwitcherRepresentativeHwnd == window.Hwnd &&
+             IsPrimaryTaskWindow(window with { OwnerHwnd = IntPtr.Zero }, isShellChrome));
         bool isInteractiveRisk = IsInteractiveRisk(window, isShellChrome);
 
         return policy switch
         {
             WindowCandidatePolicy.CaptureCandidate =>
-                isPrimaryTaskWindow && IsLayoutCandidate(window),
+                isCaptureTask && IsLayoutCandidate(window),
 
             WindowCandidatePolicy.RestoreMatchCandidate =>
-                isPrimaryTaskWindow && IsLayoutCandidate(window),
+                isCaptureTask && IsLayoutCandidate(window),
 
             WindowCandidatePolicy.SwitchCloseCandidate =>
                 !isOwnWindow &&
@@ -253,7 +302,7 @@ public static class WindowPolicyEvaluator
         if (policy is not (WindowCandidatePolicy.CaptureCandidate or
             WindowCandidatePolicy.RestoreMatchCandidate) ||
             !window.IsCloaked ||
-            (window.CloakState & DwmCloakedByShell) == 0)
+            window.CloakState != DwmCloakedByShell)
         {
             return false;
         }

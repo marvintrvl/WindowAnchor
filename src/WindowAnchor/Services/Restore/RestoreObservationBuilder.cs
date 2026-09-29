@@ -75,8 +75,8 @@ internal sealed class RestoreObservationBuilder
                     : BrowserSessionRestoreAvailability.Available,
             BrowserTabRestorePolicy = _settingsService?.Settings.BrowserTabRestorePolicy ??
                 BrowserTabRestorePolicy.ReuseMatchingTab,
-            VirtualDesktopAssociationEnabled =
-                _settingsService?.Settings.EnableVirtualDesktopAssociation == true
+            VirtualDesktopAssociationEnabled = snapshot.VirtualDesktops.Count > 0 ||
+                snapshot.Entries.Any(entry => Guid.TryParse(entry.Position?.VirtualDesktopId, out _))
         };
 
         RestoreObservation observation = new RestoreObservation(
@@ -120,6 +120,13 @@ internal sealed class RestoreObservationBuilder
                     RestoreResourceKind.Executable,
                     executableTarget,
                     entry.IsWebApp ? null : entry.LogicalExecutablePath));
+            }
+
+            string atLauncher = AtLauncherAdapter.ResolveLauncherPath(entry);
+            if (atLauncher.Length > 0)
+            {
+                observations.Add(_restoreResources.Observe(
+                    entryIndex, RestoreResourceKind.AppAdapterLauncher, atLauncher));
             }
 
             if (entry.ProcessName.Equals("windowsterminal", StringComparison.OrdinalIgnoreCase) &&

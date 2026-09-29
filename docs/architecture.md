@@ -1,7 +1,7 @@
 # WindowAnchor — Architecture
 
 This document describes the current development architecture of WindowAnchor for contributors and
-maintainers. The latest released baseline is v1.6.1; implementation status is tracked in
+maintainers. The latest released baseline is v1.7.0; implementation status is tracked in
 [`implementation-status.md`](implementation-status.md).
 
 ---

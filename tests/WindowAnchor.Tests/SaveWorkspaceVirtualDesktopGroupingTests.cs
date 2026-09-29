@@ -1,10 +1,48 @@
 using WindowAnchor.Models;
 using WindowAnchor.UI;
+using WindowAnchor.Services;
 
 namespace WindowAnchor.Tests;
 
 public class SaveWorkspaceVirtualDesktopGroupingTests
 {
+    [Fact]
+    public void Catalog_order_and_names_win_over_current_desktop_and_guid_order()
+    {
+        WindowRecord current = Window("editor", "Notes", CurrentDesktopId, true);
+        WindowRecord inactive = Window("browser", "Research", InactiveDesktopId, false);
+        var groups = SaveWorkspaceDialog.BuildGroups([(Monitor(), [current, inactive])], desktops:
+            [new(Guid.Parse(InactiveDesktopId), "Work", false),
+             new(Guid.Parse(CurrentDesktopId), "Desktop 2", true)]);
+        Assert.StartsWith("Work  ·", groups[0].GroupHeader);
+        Assert.StartsWith("Desktop 2 (Current)", groups[1].GroupHeader);
+        Assert.Same(inactive, Assert.Single(groups[0].Windows).Record);
+        Assert.Same(current, Assert.Single(groups[1].Windows).Record);
+    }
+
+    [Fact]
+    public void Empty_second_desktop_is_shown_and_unavailable_membership_is_not_lost()
+    {
+        WindowRecord current = Window("editor", "Notes", CurrentDesktopId, true);
+        WindowRecord unknown = Window("other", "Unknown", "", true);
+        var groups = SaveWorkspaceDialog.BuildGroups([(Monitor(), [current, unknown])], desktops:
+            [new(Guid.Parse(CurrentDesktopId), "Desktop 1", true),
+             new(Guid.Parse(InactiveDesktopId), "Desktop 2", false)]);
+        Assert.Equal(3, groups.Count);
+        Assert.Contains("Desktop 2  ·  No capturable windows", groups[1].GroupHeader);
+        Assert.Empty(groups[1].Windows);
+        Assert.Same(unknown, Assert.Single(groups[2].Windows).Record);
+    }
+
+    [Fact]
+    public void Stale_catalog_does_not_drop_new_desktop_windows()
+    {
+        WindowRecord inactive = Window("browser", "Research", InactiveDesktopId, false);
+        var groups = SaveWorkspaceDialog.BuildGroups([(Monitor(), [inactive])], desktops:
+            [new(Guid.Parse(CurrentDesktopId), "Desktop 1", true)]);
+        Assert.Same(inactive, Assert.Single(groups.SelectMany(group => group.Windows)).Record);
+    }
+
     [Fact]
     public void Inactive_desktop_windows_are_grouped_separately_from_current_desktop_windows()
     {

@@ -63,6 +63,34 @@ internal sealed class RestoreBrowserAndLaunchPhase
         }
     }
 
+    internal void EnsureVirtualDesktopTopology(
+        RestoreExecutionContext context,
+        IProgress<RestoreProgressReport>? progress)
+    {
+        if (!context.Plan.VirtualDesktopAssociationEnabled || context.Plan.VirtualDesktops.Count == 0)
+            return;
+        progress?.Report(new RestoreProgressReport(
+            RestoreProgressStage.MovingVirtualDesktops,
+            "Preparing virtual desktops",
+            "Creating any missing desktops before applications launch."));
+        VirtualDesktopTopologyResult result = _virtualDesktops.EnsureTopology(context.Plan.VirtualDesktops);
+        if (result.Status == VirtualDesktopAssociationStatus.Available)
+        {
+            foreach ((Guid saved, Guid actual) in result.DesktopMap)
+                context.VirtualDesktopMap[saved] = actual;
+            AppLogger.Info("restore.virtual_desktop_topology_ready", result.Message,
+                LogField.Public("savedDesktopCount", context.Plan.VirtualDesktops.Count),
+                LogField.Public("createdDesktopCount", result.CreatedDesktopCount));
+        }
+        else
+        {
+            AppLogger.Warn("restore.virtual_desktop_topology_unavailable",
+                "Could not recreate the saved virtual desktop topology",
+                fields: [LogField.Public("status", result.Status),
+                    LogField.Public("detail", result.Message)]);
+        }
+    }
+
     internal void LaunchApplications(
         RestoreExecutionContext context,
         IProgress<RestoreProgressReport>? progress)
@@ -132,7 +160,6 @@ internal sealed class RestoreBrowserAndLaunchPhase
                 $"Associating virtual desktop ({index + 1}/{actions.Length})"));
             if (item.Action.EntryIndex is not int entryIndex ||
                 !context.Entries.TryGetValue(entryIndex, out RestoreEntryExecutionState? state) ||
-                item.Action.WindowHandle is not long handle ||
                 !Guid.TryParse(item.Action.Target, out Guid desktopId))
             {
                 context.Results[item.Index] = RestoreExecutionSupport.Result(
@@ -140,6 +167,17 @@ internal sealed class RestoreBrowserAndLaunchPhase
                     "Virtual-desktop association was unavailable because the approved action was incomplete.");
                 continue;
             }
+
+            long? assignedHandle = state.AssignedWindowHandle ?? item.Action.WindowHandle;
+            if (assignedHandle is not long handle)
+            {
+                context.Results[item.Index] = RestoreExecutionSupport.Result(
+                    item, RestoreExecutionActionStatus.Skipped, null,
+                    "No existing or newly launched window was assigned for virtual-desktop placement.");
+                continue;
+            }
+            if (context.VirtualDesktopMap.TryGetValue(desktopId, out Guid mappedDesktopId))
+                desktopId = mappedDesktopId;
 
             uint expectedPid = state.PlanEntry.SelectedMatch?.ProcessId ?? 0;
             if (_revalidator.Revalidate(state.PlanEntry, new IntPtr(handle), expectedPid) is not null)
@@ -160,7 +198,7 @@ internal sealed class RestoreBrowserAndLaunchPhase
                 null,
                 result.Status == VirtualDesktopAssociationStatus.Available
                     ? "Moved the matched window to its saved virtual desktop."
-                    : "The saved virtual desktop is unavailable or no longer exists; the window was left accessible.");
+                    : $"The saved virtual desktop move was unavailable; the window was left accessible. {result.Message}".Trim());
         }
     }
 

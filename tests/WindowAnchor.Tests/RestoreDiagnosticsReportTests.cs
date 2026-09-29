@@ -213,6 +213,39 @@ public class RestoreDiagnosticsReportTests
         Assert.True(RestoreDiagnosticsPresentationPolicy.ShouldShowFailureSummary(stale));
     }
 
+    [Fact]
+    public void Unavailable_geometry_is_a_non_fatal_warning_in_the_report()
+    {
+        RestorePlan plan = new()
+        {
+            WorkspaceId = "workspace",
+            Entries = [],
+            Actions = []
+        };
+        var result = new RestoreExecutionResult(
+            plan.WorkspaceId,
+            RestoreExecutionStatus.Completed,
+            false,
+            [new RestoreExecutionEntryResult(
+                0,
+                "iobit",
+                RestoreExecutionEntryStatus.Restored,
+                42,
+                "Geometry unavailable.",
+                PlacementVerification: WindowPlacementVerificationState.Unavailable,
+                PlacementVerificationStrategy: IobitUninstallerAdapter.AdapterName)],
+            [],
+            new HashSet<long> { 42 });
+
+        RestoreDiagnosticsReport report = RestoreDiagnosticsReportBuilder.Build(plan, result);
+
+        Assert.Equal(RestoreExecutionStatus.Completed, report.Summary.Status);
+        Assert.Equal(0, report.Summary.EntriesNeedingAttention);
+        Assert.Equal(1, report.Summary.WarningCount);
+        Assert.Equal("Restore completed with 1 non-fatal warning.", report.Summary.Message);
+        Assert.False(RestoreDiagnosticsPresentationPolicy.ShouldShowFailureSummary(result));
+    }
+
     private static RestoreExecutionResult Result(RestoreExecutionStatus status) => new(
         "workspace",
         status,

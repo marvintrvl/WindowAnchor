@@ -6,6 +6,33 @@ namespace WindowAnchor.Tests;
 public class RestoreExecutorTests
 {
     [Fact]
+    public async Task Saved_desktop_id_is_mapped_before_the_assigned_window_moves()
+    {
+        Guid saved = Guid.NewGuid(), actual = Guid.NewGuid();
+        WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Notes");
+        entry.Position.VirtualDesktopId = saved.ToString("D");
+        RestorePlan plan = Plan(Snapshot(entry),
+            [Live(10, 1010, entry.ExecutablePath, "Notes")], mode: RestoreMode.Resume,
+            exactTopology: true, virtualDesktopAssociationEnabled: true) with
+        {
+            VirtualDesktops = [new SavedVirtualDesktop
+            {
+                DesktopId = saved.ToString("D"), Name = "Work", Index = 0, IsCurrent = true
+            }]
+        };
+        var desktops = new FakeVirtualDesktopAssociation
+        {
+            TopologyResult = new(VirtualDesktopAssociationStatus.Available,
+                new Dictionary<Guid, Guid> { [saved] = actual })
+        };
+
+        await Executor(Inventory((10, 1010, entry.ExecutablePath, "Notes")),
+            new RecordingWindowMutation(), virtualDesktops: desktops).ExecuteAsync(plan);
+
+        Assert.Equal((new IntPtr(10), actual), Assert.Single(desktops.MoveCalls));
+    }
+
+    [Fact]
     public void Default_readiness_policy_allows_slow_desktop_app_startup()
     {
         Assert.Equal(TimeSpan.FromSeconds(45), AppReadinessPolicy.Default.Timeout);
@@ -194,6 +221,36 @@ public class RestoreExecutorTests
         RestoreExecutionActionResult action = Assert.Single(result.Actions);
         Assert.Equal(RestoreExecutionActionStatus.Failed, action.Status);
         Assert.Equal(WindowPlacementVerificationState.Rejected, action.PlacementVerification);
+    }
+
+    [Fact]
+    public async Task Adapter_can_report_protected_geometry_as_non_fatal_unavailable()
+    {
+        WorkspaceEntry entry = Entry(@"C:\Apps\IObitUninstaler.exe", "IObit Uninstaller");
+        RestorePlan plan = Plan(
+            Snapshot(entry),
+            [Live(130, 13130, entry.ExecutablePath, "IObit Uninstaller")],
+            mode: RestoreMode.MoveExisting);
+        RestoreTargetPlacement target = Assert.Single(plan.Entries).TargetPlacement;
+        var probe = new FakeWindowPlacementProbe { DefaultObservation = Placement(target, 100) };
+        var mutation = new RecordingWindowMutation();
+
+        RestoreExecutionResult result = await Executor(
+            Inventory((130, 13130, entry.ExecutablePath, "IObit Uninstaller")),
+            mutation,
+            placementProbe: probe,
+            placementStrategies: [new ProtectedGeometryPlacementStrategy()]).ExecuteAsync(plan);
+
+        Assert.Equal(RestoreExecutionStatus.Completed, result.Status);
+        Assert.Single(mutation.Restores);
+        Assert.Empty(result.PlacementFailures);
+        RestoreExecutionEntryResult restored = Assert.Single(result.Entries);
+        Assert.Equal(RestoreExecutionEntryStatus.Restored, restored.Status);
+        Assert.Equal(WindowPlacementVerificationState.Unavailable, restored.PlacementVerification);
+        Assert.Equal(0, restored.PlacementRetryCount);
+        RestoreExecutionActionResult action = Assert.Single(result.Actions);
+        Assert.Equal(RestoreExecutionActionStatus.Succeeded, action.Status);
+        Assert.Equal(WindowPlacementVerificationState.Unavailable, action.PlacementVerification);
     }
 
     [Fact]
@@ -1206,6 +1263,22 @@ public class RestoreExecutorTests
             RetryDelay = TimeSpan.Zero,
             MaxRetries = 0,
             BaseTolerancePixels = 20
+        };
+    }
+
+    private sealed class ProtectedGeometryPlacementStrategy :
+        IWindowPlacementVerificationStrategy
+    {
+        public string Name => "protected-geometry";
+
+        public bool CanHandle(SavedWindowIdentity identity) => true;
+
+        public WindowPlacementVerificationPolicy GetPolicy(RestorePlanEntry entry) => new()
+        {
+            InitialDelay = TimeSpan.Zero,
+            RetryDelay = TimeSpan.Zero,
+            MaxRetries = 0,
+            TreatRejectionAsUnavailable = true
         };
     }
 }

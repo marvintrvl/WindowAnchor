@@ -340,22 +340,6 @@ public static class RestorePlanner
 
             }
 
-            if (liveInventory.VirtualDesktopAssociationEnabled &&
-                Guid.TryParse(entry.Position?.VirtualDesktopId, out Guid virtualDesktopId) &&
-                virtualDesktopId != Guid.Empty && selectedMatch is not null)
-            {
-                entryActions.Add(new RestoreAction(
-                    entryIndex,
-                    RestoreActionKind.MoveWindowToVirtualDesktop,
-                    selectedMatch.Hwnd.ToInt64(),
-                    virtualDesktopId.ToString("D"),
-                    "",
-                    false,
-                    null,
-                    "Move the revalidated assigned window to its saved virtual desktop when that desktop still exists.",
-                    LogSensitivity.Identifier));
-            }
-
             bool correctResourceMatched = selectedMatch?.Evidence.Any(evidence =>
                 evidence.Matched && evidence.Kind is
                     WindowMatchEvidenceKind.DocumentNameInTitle or
@@ -418,6 +402,24 @@ public static class RestorePlanner
                     UseShellExecute: false,
                     placement,
                     "Wait for the launched application to create an eligible window."));
+            }
+
+            if (liveInventory.VirtualDesktopAssociationEnabled &&
+                Guid.TryParse(entry.Position?.VirtualDesktopId, out Guid virtualDesktopId) &&
+                virtualDesktopId != Guid.Empty &&
+                (selectedMatch is not null || launch.Requirement.IsRequired ||
+                 launch.AwaitingBrowserSession || launch.AwaitingRunningApplication))
+            {
+                entryActions.Add(new RestoreAction(
+                    entryIndex,
+                    RestoreActionKind.MoveWindowToVirtualDesktop,
+                    selectedMatch?.Hwnd.ToInt64(),
+                    virtualDesktopId.ToString("D"),
+                    "",
+                    false,
+                    null,
+                    "Move the assigned existing or newly launched window to its mapped saved virtual desktop.",
+                    LogSensitivity.Identifier));
             }
 
             RestoreExplorerSession? explorerSession = ToRestoreExplorerSession(entry);
@@ -527,12 +529,32 @@ public static class RestorePlanner
                 .Concat(persistentApplicationWindowHandles)
                 .ToHashSet(),
             VirtualDesktopAssociationEnabled = liveInventory.VirtualDesktopAssociationEnabled,
+            VirtualDesktops = BuildSavedVirtualDesktopTopology(snapshot),
             WasCancelled = mode.CancellationRequested,
             Entries = planEntries.ToArray(),
             Actions = actions.ToArray(),
             Warnings = globalWarnings.Concat(entryWarnings).ToArray(),
             BlockingErrors = entryErrors
         };
+    }
+
+    private static IReadOnlyList<SavedVirtualDesktop> BuildSavedVirtualDesktopTopology(
+        WorkspaceSnapshot snapshot)
+    {
+        if (snapshot.VirtualDesktops.Count > 0)
+            return snapshot.VirtualDesktops.OrderBy(desktop => desktop.Index).ToArray();
+
+        return snapshot.Entries
+            .Select(entry => entry.Position?.VirtualDesktopId)
+            .Where(id => Guid.TryParse(id, out Guid parsed) && parsed != Guid.Empty)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select((id, index) => new SavedVirtualDesktop
+            {
+                DesktopId = id!,
+                Name = $"Desktop {index + 1}",
+                Index = index,
+                IsCurrent = index == 0
+            }).ToArray();
     }
 
     /// <summary>

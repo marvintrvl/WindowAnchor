@@ -80,7 +80,7 @@ Please include:
 
 ## What to Work On
 
-Check the [Issues](../../issues) tab for open bugs and feature requests.
+Check the [Issues](https://github.com/marvintrvl/WindowAnchor/issues) tab for open bugs and feature requests.
 High-value areas where contributions are especially welcome:
 
 | Area | Notes |

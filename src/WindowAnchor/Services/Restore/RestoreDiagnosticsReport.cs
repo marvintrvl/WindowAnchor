@@ -150,7 +150,9 @@ public static class RestoreDiagnosticsReportBuilder
         int staleActions = result.Actions.Count(action =>
             action.Status == RestoreExecutionActionStatus.Stale);
         int entriesNeedingAttention = result.Entries.Count(NeedsAttention);
-        int warningCount = plan.Warnings.Count + plan.Entries.Sum(entry => entry.Warnings.Count);
+        int warningCount = plan.Warnings.Count + plan.Entries.Sum(entry => entry.Warnings.Count) +
+            result.Entries.Count(entry =>
+                entry.PlacementVerification == WindowPlacementVerificationState.Unavailable);
 
         return new RestoreDiagnosticsReport
         {
@@ -163,7 +165,7 @@ public static class RestoreDiagnosticsReportBuilder
                 failedActions,
                 staleActions,
                 warningCount,
-                SummaryMessage(result, entriesNeedingAttention, failedActions, staleActions)),
+                SummaryMessage(result, entriesNeedingAttention, failedActions, staleActions, warningCount)),
             Plan = new RestoreDiagnosticsPlan(
                 Identifier(plan.WorkspaceId),
                 LogRedactor.RedactValue(
@@ -356,10 +358,14 @@ public static class RestoreDiagnosticsReportBuilder
         RestoreExecutionResult result,
         int entriesNeedingAttention,
         int failedActions,
-        int staleActions)
+        int staleActions,
+        int warningCount)
     {
         if (result.Status == RestoreExecutionStatus.Completed)
-            return "Restore completed without reported failures.";
+            return warningCount == 0
+                ? "Restore completed without reported failures."
+                : $"Restore completed with {warningCount} non-fatal warning" +
+                  (warningCount == 1 ? "." : "s.");
         return $"Restore status {result.Status}; {entriesNeedingAttention} entr" +
                $"{(entriesNeedingAttention == 1 ? "y" : "ies")} need attention, " +
                $"with {failedActions} failed and {staleActions} stale actions.";

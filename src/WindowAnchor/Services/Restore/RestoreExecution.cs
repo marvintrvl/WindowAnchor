@@ -151,7 +151,8 @@ public sealed record RestoreExecutionResult(
 
     public IReadOnlyList<RestoreExecutionEntryResult> PlacementFailures => Entries
         .Where(entry => entry.PlacementVerification is not null and not
-            WindowPlacementVerificationState.Applied)
+            (WindowPlacementVerificationState.Applied or
+             WindowPlacementVerificationState.Unavailable))
         .ToArray();
 }
 

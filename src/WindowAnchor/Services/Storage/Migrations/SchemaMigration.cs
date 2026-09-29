@@ -95,7 +95,8 @@ internal static class WorkspaceSchemaMigrator
             [6] = MigrateV6ToV7,
             [7] = MigrateV7ToV8,
             [8] = MigrateV8ToV9,
-            [9] = _ => { }
+            [9] = _ => { },
+            [10] = _ => { }
         };
         bool migrated = JsonMigrationPipeline.Apply(
             root,
@@ -123,6 +124,12 @@ internal static class WorkspaceSchemaMigrator
             throw new InvalidDataException("WorkspaceId must be a GUID.");
         if (snapshot.Entries == null)
             throw new InvalidDataException("Workspace entries cannot be null.");
+        if (snapshot.VirtualDesktops == null)
+            throw new InvalidDataException("Workspace virtual desktops cannot be null.");
+        if (snapshot.VirtualDesktops.Select(desktop => desktop.Index).Distinct().Count() !=
+            snapshot.VirtualDesktops.Count || snapshot.VirtualDesktops.Any(desktop =>
+                desktop.Index < 0 || !Guid.TryParse(desktop.DesktopId, out _)))
+            throw new InvalidDataException("Workspace virtual desktops must have valid IDs and unique indexes.");
         EnsureBrowserSessionMetadata(snapshot);
         if (snapshot.LayoutVariants is null || snapshot.LayoutVariants.Count == 0)
             throw new InvalidDataException("Every workspace must contain a default layout variant.");

@@ -178,6 +178,11 @@ public static class NativeMethodsShell
     /// <summary>Minimal access right needed to query a process's package identity.</summary>
     public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool QueryFullProcessImageName(
+        IntPtr hProcess, uint flags, StringBuilder executablePath, ref uint size);
+
     /// <summary>Returned by GetApplicationUserModelId when the process is not packaged.</summary>
     public const int APPMODEL_ERROR_NO_APPLICATION = 15703;
 

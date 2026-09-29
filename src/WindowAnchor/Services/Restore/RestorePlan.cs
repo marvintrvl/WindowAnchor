@@ -94,7 +94,8 @@ public enum RestoreResourceKind
     WebAppShortcut,
     PackagedApplication,
     TerminalLauncher,
-    TerminalDirectories
+    TerminalDirectories,
+    AppAdapterLauncher
 }
 
 /// <summary>
@@ -472,7 +473,9 @@ public sealed record RestorePlan
         Array.Empty<RestoreBrowserSession>();
     public IReadOnlySet<int> DisabledEntryIndexes { get; init; } = new HashSet<int>();
     public IReadOnlySet<long> ProtectedWindowHandles { get; init; } = new HashSet<long>();
-    /// <summary>Whether this plan may move assigned windows to saved virtual desktops.</summary>
+    public IReadOnlyList<SavedVirtualDesktop> VirtualDesktops { get; init; } =
+        Array.Empty<SavedVirtualDesktop>();
+    /// <summary>Whether this plan contains saved virtual-desktop topology or associations.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool VirtualDesktopAssociationEnabled { get; init; }
     public bool WasCancelled { get; init; }

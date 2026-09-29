@@ -7,6 +7,31 @@ namespace WindowAnchor.Tests;
 public class RestorePlannerTests
 {
     [Fact]
+    public void Newly_launched_window_receives_a_post_readiness_virtual_desktop_move()
+    {
+        WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Quarterly notes", "primary");
+        Guid desktopId = Guid.NewGuid();
+        entry.Position.VirtualDesktopId = desktopId.ToString("D");
+        RestorePlan plan = RestorePlanner.Build(
+            Snapshot(entry),
+            new RestoreLiveInventory
+            {
+                VirtualDesktopAssociationEnabled = true,
+                Resources = [new(0, RestoreResourceKind.Executable,
+                    RestoreResourceAvailability.Available, entry.ExecutablePath)]
+            },
+            Topology(Monitor("primary", 0, 96, primary: true)),
+            RestoreMode.Resume);
+
+        Assert.Contains(plan.Actions, action => action.Kind == RestoreActionKind.LaunchApplication);
+        Assert.Contains(plan.Actions, action => action.Kind == RestoreActionKind.AwaitWindowAppearance);
+        RestoreAction move = Assert.Single(plan.Actions,
+            action => action.Kind == RestoreActionKind.MoveWindowToVirtualDesktop);
+        Assert.Null(move.WindowHandle);
+        Assert.Equal(desktopId.ToString("D"), move.Target);
+    }
+
+    [Fact]
     public void Planning_exact_match_is_side_effect_free_and_explained()
     {
         WorkspaceEntry entry = Entry(@"C:\Apps\editor.exe", "Quarterly notes", "primary");

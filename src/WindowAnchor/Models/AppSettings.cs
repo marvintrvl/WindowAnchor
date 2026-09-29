@@ -162,7 +162,7 @@ public class AppSettings
     public TemporaryDisplayRecoveryMode TemporaryDisplayRecoveryMode { get; set; } =
         TemporaryDisplayRecoveryMode.Ask;
 
-    /// <summary>Opt-in association with existing Windows 10+ virtual desktops.</summary>
+    /// <summary>Legacy v1.6.1 preview setting retained only for settings-file compatibility.</summary>
     public bool EnableVirtualDesktopAssociation { get; set; }
 
     /// <summary>Minimum foreground-window area that must remain in a current work area before rescue acts.</summary>

@@ -87,11 +87,12 @@ public partial class SaveWorkspaceDialog : FluentWindow
     /// </param>
     public SaveWorkspaceDialog(
         List<(MonitorInfo Monitor, List<WindowRecord> Windows)> windowData,
-        Services.SettingsService? settingsService = null)
+        Services.SettingsService? settingsService = null,
+        IReadOnlyList<Services.VirtualDesktopInfo>? desktops = null)
     {
         InitializeComponent();
 
-        _monitorGroups.AddRange(BuildGroups(windowData, settingsService));
+        _monitorGroups.AddRange(BuildGroups(windowData, settingsService, desktops));
 
         WindowGroupList.ItemsSource = _monitorGroups;
         Loaded += (_, _) => WorkspaceNameInput.Focus();
@@ -99,10 +100,11 @@ public partial class SaveWorkspaceDialog : FluentWindow
 
     internal static List<MonitorWindowGroup> BuildGroups(
         List<(MonitorInfo Monitor, List<WindowRecord> Windows)> windowData,
-        Services.SettingsService? settingsService = null)
+        Services.SettingsService? settingsService = null,
+        IReadOnlyList<Services.VirtualDesktopInfo>? desktops = null)
     {
         WindowRecord[] allWindows = windowData.SelectMany(item => item.Windows).ToArray();
-        bool showVirtualDesktops = allWindows.Any(window =>
+        bool showVirtualDesktops = desktops?.Count > 1 || allWindows.Any(window =>
             window.IsOnCurrentVirtualDesktop == false &&
             Guid.TryParse(window.VirtualDesktopId, out _));
 
@@ -126,7 +128,11 @@ public partial class SaveWorkspaceDialog : FluentWindow
             .ToArray();
 
         var desktopLabels = new List<(string Id, string Label)>();
-        if (!string.IsNullOrWhiteSpace(currentDesktopId))
+        if (desktops is not null)
+            desktopLabels.AddRange(desktops.Select(desktop => (
+                desktop.Id.ToString("D"), desktop.Name + (desktop.IsCurrent ? " (Current)" : ""))));
+        if (!string.IsNullOrWhiteSpace(currentDesktopId) &&
+            !desktopLabels.Any(desktop => string.Equals(desktop.Id, currentDesktopId, StringComparison.OrdinalIgnoreCase)))
             desktopLabels.Add((currentDesktopId, "Current virtual desktop"));
         int inactiveIndex = 0;
         int observedIndex = 0;
@@ -135,6 +141,8 @@ public partial class SaveWorkspaceDialog : FluentWindow
                      currentDesktopId,
                      StringComparison.OrdinalIgnoreCase)))
         {
+            if (desktopLabels.Any(desktop => string.Equals(desktop.Id, desktopId, StringComparison.OrdinalIgnoreCase)))
+                continue;
             bool inactive = allWindows.Any(window =>
                 string.Equals(window.VirtualDesktopId, desktopId, StringComparison.OrdinalIgnoreCase) &&
                 window.IsOnCurrentVirtualDesktop == false);
@@ -148,6 +156,7 @@ public partial class SaveWorkspaceDialog : FluentWindow
         var groups = new List<MonitorWindowGroup>();
         foreach ((string desktopId, string desktopLabel) in desktopLabels)
         {
+            int groupCountBefore = groups.Count;
             foreach ((MonitorInfo monitor, List<WindowRecord> windows) in windowData)
             {
                 List<WindowRecord> desktopWindows = windows.Where(window => string.Equals(
@@ -163,6 +172,8 @@ public partial class SaveWorkspaceDialog : FluentWindow
                         settingsService));
                 }
             }
+            if (groups.Count == groupCountBefore)
+                groups.Add(new MonitorWindowGroup { GroupHeader = $"{desktopLabel}  ·  No capturable windows" });
         }
 
         foreach ((MonitorInfo monitor, List<WindowRecord> windows) in windowData)

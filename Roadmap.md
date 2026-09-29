@@ -1,137 +1,51 @@
 # WindowAnchor Roadmap
 
-This document summarizes shipped capabilities and the next implementation themes. The detailed,
-dependency-checked ticket graph lives in the companion
-[WindowAnchor-Planning repository](https://github.com/marvintrvl/WindowAnchor-Planning); this file
-is intentionally a product-level view rather than a second issue tracker.
+WindowAnchor stays focused on dependable local workspace capture and restoration. Its distinction
+from PowerToys Workspaces is preserving supported application, file, folder, browser, Explorer-tab,
+Terminal-tab, and virtual-desktop context.
 
-## Current release: v1.6.1 — Session Fidelity
+The detailed ticket history lives in the private planning repository. This public roadmap lists
+only shipped work and the small active pipeline.
 
-WindowAnchor 1.6.1 extends the safe restore pipeline with Windows 11 File Explorer multi-tab
-capture/restore and profile-aware Chromium/Firefox session handling. It also includes the v1.6.0
-diagnostics, deterministic simulation, display-topology stabilization, layout variants,
-application adapters, and practical recovery controls:
+## Current release: v1.7.0 — Desktop Context
 
-- Manual tray and Settings restores show a per-entry plan before changing the desktop.
-- Users can disable entries while keeping the original match evidence and preview immutable.
-- Approved plans are rejected if HWND/PID identity, eligible candidates, launch resources, or
-  browser capability changed while the preview was open.
-- Restore intent and execution results are structured and privacy-redactable.
-- Matching uses stable PWA, packaged-app, dedicated-browser, document/project, executable, class,
-  title, monitor, and geometry evidence with session-wide one-HWND ownership.
-- Workspace/settings schemas are versioned and use stable IDs.
-- Named workspaces, recovery checkpoints, and temporary captures have isolated atomic stores.
-- Capture construction is separate from persistence and optional browser enrichment.
-- Window enumeration is policy-free; capture, matching, switch, risk, and minimize consumers choose
-  explicit policies.
-- Structured diagnostics centrally redact paths, URLs, titles, names, identifiers, command lines,
-  and secrets.
-- The service suite characterizes planning, migrations, matching, persistence, preview approval,
-  stale-plan handling, execution boundaries, and compatibility behavior.
-- Matching confidence uses explicit thresholds and an ambiguity margin; close candidates are shown
-  for user resolution, and optional composite hints remember choices without HWND/PID persistence.
-- Launched applications use cancellable per-entry readiness polling with safe matching,
-  responsiveness and stability signals, app-strategy extension points, and structured timeouts.
-- Exact topology retains pixel placement, while changed topology uses normalized work-area geometry,
-  semantic anchors, and visible-monitor clamping.
-- Every approved mutation is preceded by an atomic recovery checkpoint; Undo Last Restore runs
-  through the same planner and captures an undo-of-undo safety point.
-- Placement is verified after settling with DPI-aware tolerance and bounded corrections to the same
-  assigned HWND.
-- Workspace switching preserves approved destination windows, tracks only requested closures, and
-  serializes/cancels overlapping requests.
-- Native style, ownership, and DWM-cloaking capabilities define eligible task windows without
-  product-specific process, class, or title exclusions.
-- Restore progress identifies the active checkpoint, resource, browser, launch, readiness,
-  close-wait, and placement-verification stage with elapsed/limit timing and cancellation.
-- Recognized Squirrel `app-<version>` executables are rebound to the newest immediate version
-  sibling with the same executable name; arbitrary wildcard execution is not accepted.
-- Routine restore preview and checkpoint creation are independent Settings options. Plans requiring
-  an ambiguity or blocker decision still open the preview, and mutation remains single-flight.
-- Undo performs full desktop reconciliation, while visible-frame compensation prevents invisible
-  DWM resize borders from producing gaps after topology adaptation.
-- Workspaces expose Repair, Move Existing, Resume, Launch Fresh, Exact Switch, and Preview Only,
-  composed with persisted per-entry reuse, launch, close, and switch policies.
-- Fresh interactive installs receive one visible tray-app introduction. A permanent Help & Guide
-  page in the tray and Settings documents operation, restore variants, policies, privacy, and limits.
-- Restore reports produce structured, privacy-redactable action and entry outcomes, and deterministic
-  simulation fixtures make planner behavior reproducible without mutating the live desktop.
-- Startup and display-change restoration use bounded topology stabilization. After a temporary
-  resolution, docking, or monitor excursion returns, users can decline the tray recovery offer,
-  disable it, or opt into checkpointed automatic recovery; fullscreen activity pauses automatic
-  moves. Workspaces retain named topology-specific layout variants alongside shared application
-  context.
-- Logical path aliases, persistent keep-open app identities, and active-window rescue support safer
-  recovery after device, path, or display changes.
-- Chromium PWA, dedicated-browser URL, Explorer-folder, and generic Win32 behavior is owned by
-  independently testable capture and launch adapters.
-- Explorer windows retain every saved folder tab plus the active tab; restore adds only missing
-  tabs to the revalidated window, preserves unrelated tabs, and is idempotent on repeat runs.
-- Firefox Desktop has a separate AMO-ready connector with native-host registration, profile-aware
-  URL reuse, tab-group parity, private-window exclusion, and per-tab restore isolation. Publication
-  and a live signed-add-on smoke remain release gates.
+Version 1.7.0 adds:
 
-## How the restore pipeline now works
+- Windows Terminal tab profiles, starting directories, order, and active-tab restoration through
+  an optional PowerShell integration and save-time editor.
+- Automatic capture across Windows virtual desktops, recreation of missing desktops, and placement
+  of existing or launched windows onto their saved desktop.
+- ATLauncher startup through its stable launcher instead of an invalid bare Java runtime command.
+- Temporary display recovery after a stabilized resolution, docking, or monitor excursion.
+- Non-fatal diagnostics for applications that allow launch/desktop movement but reject geometry.
 
-1. Observe live windows, resources, browser capability, and monitor topology without mutation.
-2. Build an immutable `RestorePlan` with candidate evidence, placements, actions, warnings, and
-   blockers after resolving Repair, Move Existing, Resume, Launch Fresh, Exact Switch, or Preview
-   Only plus any per-entry override.
-3. For manual restores, project that plan into the preview and derive approval from disabled entry
-   IDs; automatic restores keep their one-click path.
-4. Preflight the approved plan against current external state. Never silently replan a stale
-   preview.
-5. Persist a complete pre-mutation recovery checkpoint; reject the operation with zero mutation if
-   the durability gate fails.
-6. Execute only approved, predeclared actions through isolated process, browser, Explorer-tab,
-   resource, clock,
-   readiness, inventory, and window-mutation boundaries. Position each entry when its matched
-   window becomes responsive and stable; never wait forever.
-7. Verify final placement with DPI-aware tolerance and bounded corrections to the assigned HWND,
-   then reconcile any saved Explorer tabs and active-tab selection.
-8. Return structured per-action and per-entry outcomes for UI and privacy-safe diagnostics.
+It also includes the v1.6.x Explorer multi-tab, browser-profile, matching, recovery, diagnostics,
+and adaptive-layout work.
 
-## Release verification limits
+## Active pipeline
 
-The following v1.6.1 capabilities are covered by the service-level suite and the isolated live
-Explorer smoke. See
-[`docs/implementation-status.md`](docs/implementation-status.md) for explicit verification limits.
+1. **Checkpoint and Undo verification (WA-006A)** — finish the real-Windows Restore, Exact Switch,
+   Undo, and undo-of-undo checklist.
+2. **Restore simulation coverage (WA-046)** — complete the deterministic topology, application,
+   corrupt-input, and path-alias fixture matrix.
+3. **Local workspace import/export (WA-033)** — add a small versioned UI, conflict preview, and old
+   transfer-schema migration without accounts or cloud sync.
 
-- Structured per-entry restore diagnostics, deterministic planner simulation, display-topology
-  stabilization, topology-specific layout variants, persistent application identities, active-window
-  rescue, logical path aliases, and application adapters are implemented.
-- WA-021's Windows Terminal adapter and opt-in PowerShell tab tracking are implemented in the
-  development tree; a real two-tab/profile/directory round trip is still a release gate.
-- Internal workspace transfer and generic-folder sync foundations are deliberately partial. They do
-  not yet provide a user-facing import/export or synchronization workflow.
-- Real-Windows Restore/Switch/Undo, changed-topology rescue, and warm exact-topology Resume checks
-  remain release gates; service-layer tests do not substitute for those desktop interactions.
+The only open public GitHub ticket, [#12](https://github.com/marvintrvl/WindowAnchor/issues/12), has
+an implemented update-safe Squirrel path resolver and remains open only for reporter verification.
+Firefox AMO publication and a signed-add-on smoke are external distribution gates, not unfinished
+desktop restore architecture.
 
-## Next priorities
+## Not in the active roadmap
 
-The dependency-checked ready queue is maintained in the companion planning repository. Its current
-order is:
-
-1. **WA-006A restore recovery verification** — finish the real-Windows Undo verification gate.
-2. **WA-022 virtual desktop association** — supported, opt-in virtual-desktop placement with a
-   graceful ordinary-window fallback.
-3. **WA-046/WA-033 reliability and portability** — deterministic restore fixtures plus a narrow,
-   local-first workspace export/import flow.
-
-Cross-device restoration, cloud sync, community templates/recipes, and ecosystem catalog features
-are retained only as historical planning records and are not active product commitments.
-
-## Later themes
-
-- Non-mutating workspace health/diff views.
-- Automatic checkpoint triggers, quick temporary captures, and recovery-timeline UX.
-- Complete portable import/export, conflict preview, transfer-schema migration, staging validation,
-  manifests, device identity, and conflict-copy orchestration.
-- Stable workspace catalog metadata, desk profiles, templates, and broader ecosystem integrations.
+Cross-device restoration, cloud synchronization, community templates/recipes, general automation
+engines, scheduled or unlock-triggered desktop mutation, audio/device profiles, monitor-mode
+switching, and a public compatibility database are not current product commitments. Their old
+planning records are retained only for traceability.
 
 ## Release quality bar
 
-Each release must keep pure planning free of I/O, preserve one-to-one window assignment, reject
-stale destructive intent, avoid logging private user content, migrate older data without loss, and
-pass the Release service test suite. Published Windows and browser-connector assets must be built
-from the tagged commit and accompanied by matching SHA-256 checksums.
+Every release must preserve one-to-one window assignment, reject stale destructive intent, keep
+private user content out of logs, migrate older stores without data loss, pass the Release test
+suite, and publish tagged artifacts with matching SHA-256 checksums. Features that depend on real
+Windows applications also require a recorded live smoke before they are described as verified.

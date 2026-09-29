@@ -11,8 +11,6 @@ public partial class SettingsWindow
         _suppressToggle = true;
         RestorePreviewToggle.IsChecked = _settingsService.Settings.ShowRestorePreview;
         RestoreCheckpointToggle.IsChecked = _settingsService.Settings.CreateRestoreCheckpoints;
-        VirtualDesktopAssociationToggle.IsChecked =
-            _settingsService.Settings.EnableVirtualDesktopAssociation;
         TemporaryDisplayRecoveryModeCombo.SelectedValue =
             _settingsService.Settings.TemporaryDisplayRecoveryMode.ToString();
         BrowserTabRestorePolicyCombo.SelectedIndex = (int)_settingsService.Settings.BrowserTabRestorePolicy;
@@ -29,8 +27,6 @@ public partial class SettingsWindow
             RestorePreviewToggle.IsChecked.GetValueOrDefault();
         _settingsService.Settings.CreateRestoreCheckpoints =
             RestoreCheckpointToggle.IsChecked.GetValueOrDefault();
-        _settingsService.Settings.EnableVirtualDesktopAssociation =
-            VirtualDesktopAssociationToggle.IsChecked.GetValueOrDefault();
         _settingsService.Save();
     }
 

@@ -398,28 +398,6 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <StackPanel VerticalAlignment="Center" Margin="0,0,18,0">
-                                <TextBlock Text="Remember virtual desktops"
-                                           FontSize="13" FontWeight="Medium"
-                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                <TextBlock Text="Include windows from inactive desktops, group them in Save Workspace, and restore each existing association. WindowAnchor never creates, enumerates, names, or switches desktops; if a saved desktop no longer exists, the window stays accessible where it is."
-                                           FontSize="12" TextWrapping="Wrap"
-                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                            </StackPanel>
-                            <ui:ToggleSwitch x:Name="VirtualDesktopAssociationToggle"
-                                             Grid.Column="1"
-                                             VerticalAlignment="Center"
-                                             Checked="OnRestoreWorkflowToggleChanged"
-                                             Unchecked="OnRestoreWorkflowToggleChanged"/>
-                        </Grid>
-
-                        <Separator Margin="0,14,0,14" Opacity="0.4"/>
-
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel VerticalAlignment="Center" Margin="0,0,18,0">
                                 <TextBlock Text="Temporary display recovery"
                                            FontSize="13" FontWeight="Medium"
                                            Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>

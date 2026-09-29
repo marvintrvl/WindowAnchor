@@ -22,12 +22,16 @@ internal sealed class AppAdapterRegistry
         CaptureResourceResolver resourceResolver) => new(
         [new ChromiumWebAppAdapter(webAppService), new DedicatedBrowserWindowAdapter(), new ExplorerFolderAdapter(),
          new WindowsTerminalAdapter(),
+         new IobitUninstallerAdapter(),
+         new AtLauncherAdapter(),
          new VsCodeWorkspaceAdapter(resourceResolver)],
         new GenericWindowsAppAdapter(resourceResolver));
 
     internal static AppAdapterRegistry CreatePlanningDefault() => new(
         [new ChromiumWebAppAdapter(new WebAppService()), new DedicatedBrowserWindowAdapter(), new ExplorerFolderAdapter(),
          new WindowsTerminalAdapter(),
+         new IobitUninstallerAdapter(),
+         new AtLauncherAdapter(),
          new VsCodeWorkspaceAdapter()],
         new GenericPlanningAppAdapter());
 

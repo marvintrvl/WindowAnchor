@@ -203,6 +203,8 @@ internal sealed class FakeVirtualDesktopAssociation : IVirtualDesktopAssociation
     internal VirtualDesktopMoveResult MoveResult { get; set; } =
         new(VirtualDesktopAssociationStatus.Available);
     internal List<(IntPtr WindowHandle, Guid DesktopId)> MoveCalls { get; } = new();
+    internal VirtualDesktopTopologyResult TopologyResult { get; set; } =
+        new(VirtualDesktopAssociationStatus.Available, new Dictionary<Guid, Guid>());
 
     public VirtualDesktopCaptureResult TryGetWindowDesktopId(IntPtr hWnd) => CaptureResult;
 
@@ -211,6 +213,9 @@ internal sealed class FakeVirtualDesktopAssociation : IVirtualDesktopAssociation
         MoveCalls.Add((hWnd, desktopId));
         return MoveResult;
     }
+
+    public VirtualDesktopTopologyResult EnsureTopology(IReadOnlyList<SavedVirtualDesktop> savedDesktops) =>
+        TopologyResult;
 }
 
 internal sealed class RecordingRestoreProcessLauncher : IRestoreProcessLauncher

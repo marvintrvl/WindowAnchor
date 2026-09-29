@@ -12,6 +12,7 @@ public enum WindowPlacementVerificationState
 {
     Applied,
     Settling,
+    Unavailable,
     Rejected,
     MovedByApp,
     WindowGone
@@ -52,6 +53,7 @@ public sealed record WindowPlacementVerificationPolicy
     public TimeSpan RetryDelay { get; init; } = TimeSpan.FromMilliseconds(350);
     public int MaxRetries { get; init; } = 2;
     public int BaseTolerancePixels { get; init; } = 8;
+    public bool TreatRejectionAsUnavailable { get; init; }
 
     public static WindowPlacementVerificationPolicy Default { get; } = new();
 

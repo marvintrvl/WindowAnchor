@@ -90,12 +90,13 @@ npx --yes web-ext@10.7.0 lint
 npx --yes web-ext@10.7.0 build --filename "windowanchor-firefox-connector-amo-$tag.zip" --artifacts-dir ..
 Pop-Location
 Move-Item "windowanchor-firefox-connector-amo-$tag.zip" "WindowAnchor-Firefox-Connector-AMO-$tag.zip"
-Get-FileHash -Algorithm SHA256 "WindowAnchor-$tag.exe", "WindowAnchor-Browser-Connector-$tag.zip", "WindowAnchor-Firefox-Connector-AMO-$tag.zip"
+Copy-Item scripts/WindowAnchor.Terminal.ps1 "WindowAnchor-Terminal-Integration-$tag.ps1"
+Get-FileHash -Algorithm SHA256 "WindowAnchor-$tag.exe", "WindowAnchor-Browser-Connector-$tag.zip", "WindowAnchor-Firefox-Connector-AMO-$tag.zip", "WindowAnchor-Terminal-Integration-$tag.ps1"
 ```
 
 The GitHub release workflow repeats the Release test and publish process from the tagged commit,
-packages the Chromium connector, validates/builds the Firefox AMO submission ZIP, and uploads all
-three versioned assets plus `SHA256SUMS.txt`. The Firefox ZIP is not installable in normal
+packages the Chromium connector, validates/builds the Firefox AMO submission ZIP, and uploads the
+four versioned assets plus `SHA256SUMS.txt`. The Firefox ZIP is not installable in normal
 Release/Beta Firefox until Mozilla signs it through AMO. Keep
 `Version`, `AssemblyVersion`, and `FileVersion` synchronized in
 `src/WindowAnchor/WindowAnchor.csproj` before tagging.

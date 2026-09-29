@@ -173,7 +173,7 @@ public sealed class WindowsTerminalAdapterTests
             JsonSerializer.Serialize(snapshot, options), "old.workspace.json", options);
 
         Assert.True(migrated.WasMigrated);
-        Assert.Equal(10, migrated.Value.SchemaVersion);
+        Assert.Equal(WorkspaceSnapshot.CurrentSchemaVersion, migrated.Value.SchemaVersion);
         Assert.Empty(Assert.Single(migrated.Value.Entries).TerminalTabs);
     }
 

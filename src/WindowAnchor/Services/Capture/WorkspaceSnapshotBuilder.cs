@@ -17,17 +17,20 @@ internal sealed class WorkspaceSnapshotBuilder
     private readonly IMonitorInventory _monitorInventory;
     private readonly CaptureResourceResolver _resourceResolver;
     private readonly CapturedWindowEntryFactory _entryFactory;
+    private readonly Func<IReadOnlyList<VirtualDesktopInfo>> _readVirtualDesktops;
 
     internal WorkspaceSnapshotBuilder(
         IWindowInventory windowInventory,
         IMonitorInventory monitorInventory,
         CaptureResourceResolver resourceResolver,
-        CapturedWindowEntryFactory entryFactory)
+        CapturedWindowEntryFactory entryFactory,
+        Func<IReadOnlyList<VirtualDesktopInfo>>? readVirtualDesktops = null)
     {
         _windowInventory = windowInventory ?? throw new ArgumentNullException(nameof(windowInventory));
         _monitorInventory = monitorInventory ?? throw new ArgumentNullException(nameof(monitorInventory));
         _resourceResolver = resourceResolver ?? throw new ArgumentNullException(nameof(resourceResolver));
         _entryFactory = entryFactory ?? throw new ArgumentNullException(nameof(entryFactory));
+        _readVirtualDesktops = readVirtualDesktops ?? (() => []);
     }
 
     internal WorkspaceSnapshot Build(WorkspaceCaptureRequest request)
@@ -134,7 +137,14 @@ internal sealed class WorkspaceSnapshotBuilder
             SavedAt = DateTime.UtcNow,
             SavedWithFiles = request.SaveFiles,
             Monitors = monitorsToSave,
-            Entries = entries
+            Entries = entries,
+            VirtualDesktops = _readVirtualDesktops().Select((desktop, index) => new SavedVirtualDesktop
+            {
+                DesktopId = desktop.Id.ToString("D"),
+                Name = desktop.Name,
+                Index = index,
+                IsCurrent = desktop.IsCurrent
+            }).ToList()
         };
         snapshot.EnsureLayoutVariants();
 

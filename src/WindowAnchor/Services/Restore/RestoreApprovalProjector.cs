@@ -177,7 +177,7 @@ internal static class RestoreApprovalProjector
                 "",
                 false,
                 null,
-                "Move the user-selected window to its saved virtual desktop when that desktop still exists.",
+                "Move the user-selected window to its mapped saved virtual desktop.",
                 LogSensitivity.Identifier));
         }
         if (entry.ExplorerSession is not null && entry.RestorePolicy.LaunchIfMissing)

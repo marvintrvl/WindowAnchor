@@ -17,6 +17,7 @@ internal sealed class RestoreExecutionContext
             entry => new RestoreEntryExecutionState(entry));
         Results = new Dictionary<int, RestoreExecutionActionResult>();
         AssignedHwnds = new HashSet<IntPtr>();
+        VirtualDesktopMap = new Dictionary<Guid, Guid>();
         Timing = new RestoreExecutionTimingCollector();
         Timing.AddPriorStage(
             RestoreProgressStage.ObservingAndPlanning,
@@ -33,6 +34,7 @@ internal sealed class RestoreExecutionContext
     internal Dictionary<int, RestoreEntryExecutionState> Entries { get; }
     internal Dictionary<int, RestoreExecutionActionResult> Results { get; }
     internal HashSet<IntPtr> AssignedHwnds { get; }
+    internal Dictionary<Guid, Guid> VirtualDesktopMap { get; }
     internal RestoreExecutionTimingCollector Timing { get; }
     internal IndexedRestoreAction[] IndexedActions { get; }
     internal bool? BrowserSessionSucceeded { get; set; }

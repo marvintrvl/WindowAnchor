@@ -6,12 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-09-29
+
 ### Added
-- **Virtual desktop association (WA-022)** — An opt-in Windows 10/11 setting captures a
-  top-level window's documented virtual-desktop GUID, includes task windows on inactive desktops,
-  groups the Save dialog by observed desktop and monitor, and restores a revalidated match to that
-  existing desktop. WindowAnchor never creates, enumerates, names, or switches desktops; an
-  unavailable/deleted target is reported as skipped and leaves the window accessible.
+- **Virtual desktop topology restore (WA-022/WA-048)** — Windows 10/11 desktop discovery
+  automatically includes eligible task windows on inactive desktops.
+  Save Workspace groups by desktop and monitor, reading names/order from Explorer's read-only
+  registry metadata with an observed-membership fallback; empty desktops remain visible.
+  Restore now persists the ordered desktop topology, recreates missing desktops, maps legacy
+  desktop IDs, and returns existing or newly launched windows to their mapped desktop automatically.
+  The obsolete opt-in toggle was removed. Windows 11 uses build-selected private Shell interfaces
+  for 23H2 and 24H2/25H2 because the public manager cannot create desktops or reliably move
+  cross-process windows; failures remain non-destructive and are reported as skipped.
+  Fixed the disabled-setting gate that previously hid desktop 2 even after the
+  Shell-cloaked-window fix.
+  Capture and matching also recognize application UIs owned by hidden/zero-area task proxies
+  (such as IObit Uninstaller), using the owner's desktop membership without capturing its
+  shadow windows. Restore moves both the hidden root-owner and visible Shell views; moving only
+  the visible view left an owned application visible on the source desktop. Executable paths use
+  limited-information process queries, including where
+  enumerating another process's modules is denied. IObit's elevated UI rejects external geometry
+  writes; WindowAnchor now records that one capability as a non-fatal warning without retrying or
+  misreporting the otherwise successful restore. Close/minimize policies remain unchanged.
+- **ATLauncher restore adapter** — Saved ATLauncher Java windows now start through the stable
+  `ATLauncher.exe` bootstrapper. The primary window launches it once and the saved console entry
+  waits for the same application instance, avoiding invalid bare `javaw.exe` launches.
 - **Temporary display recovery (WA-030B)** — After a settled resolution, docking, or monitor
   excursion returns to the prior saved layout, WindowAnchor offers recovery from the tray. Users
   can disable it, keep the default ask-first behavior, or opt into automatic recovery; automatic

@@ -15,7 +15,7 @@ namespace WindowAnchor.Models;
 public class WorkspaceSnapshot
 {
     /// <summary>Current persisted workspace schema version.</summary>
-    public const int CurrentSchemaVersion = 10;
+    public const int CurrentSchemaVersion = 11;
 
     /// <summary>Schema version used to serialize this workspace document.</summary>
     [System.Text.Json.Serialization.JsonInclude]
@@ -54,6 +54,9 @@ public class WorkspaceSnapshot
     public RestoreModeKind DefaultRestoreMode { get; set; } = RestoreModeKind.Resume;
 
     public List<WorkspaceEntry> Entries        { get; set; } = new();
+
+    /// <summary>Ordered virtual-desktop topology observed when this workspace was saved.</summary>
+    public List<SavedVirtualDesktop> VirtualDesktops { get; set; } = new();
 
     /// <summary>Browser tab sessions captured by the optional WindowAnchor extension.</summary>
     public List<BrowserSession> BrowserSessions { get; set; } = new();
@@ -113,4 +116,12 @@ public class WorkspaceSnapshot
             $"workspace-default-layout-variant\u001f{WorkspaceId}\u001f{MonitorFingerprint}"));
         return new Guid(hash.AsSpan(0, 16)).ToString("D");
     }
+}
+
+public sealed class SavedVirtualDesktop
+{
+    public string DesktopId { get; set; } = "";
+    public string Name { get; set; } = "";
+    public int Index { get; set; }
+    public bool IsCurrent { get; set; }
 }

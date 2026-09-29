@@ -1,72 +1,62 @@
-# WindowAnchor v1.6.1 — Session Fidelity
+# WindowAnchor v1.7.0 — Desktop Context
 
 ## Summary
 
-WindowAnchor 1.6.1 restores more of the context inside application windows. Windows 11 File
-Explorer workspaces now retain all folder tabs in each saved Explorer window and the active tab.
-Browser sessions gain profile-aware matching, and a separately packaged Firefox connector reaches
-the supported Chromium connector's tab, group, active/pinned state, and window-geometry coverage.
+WindowAnchor 1.7.0 restores workspace context across Windows Terminal tabs and Windows virtual
+desktops. It also adds temporary display recovery and targeted compatibility for applications whose
+normal process or ownership model cannot be restored generically.
 
 ## Highlights
 
-- Save all folder tabs associated with a Windows 11 File Explorer window when file/folder capture
-  is enabled, instead of retaining only the active folder.
-- Restore only missing Explorer tab occurrences into the revalidated assigned window, preserve
-  unrelated tabs, reselect the saved active tab, and avoid duplicates on repeated restores.
-- Keep Explorer tab paths out of saves made without file/folder capture, redacted restore
-  diagnostics, and portable-redacted workspace exports.
-- Match reusable Chromium and Firefox tabs only inside the opaque connector profile that captured
-  them. Legacy sessions without a profile identity and `file://` tabs continue to open separately.
-- Package an AMO-ready Firefox Desktop 142+ connector with private-window exclusion, per-tab
-  failure isolation, native-host registration, and declared data categories.
-- Preserve explicit VS Code `.code-workspace` and project-folder context through the application
-  adapter pipeline.
+- Capture Terminal tabs with their PowerShell profile, current directory, order, and active tab.
+- Review or correct Terminal tab metadata before saving; restore the complete tab set with one
+  supported `wt` command.
+- Capture eligible applications across all current Windows virtual desktops and show them grouped
+  by desktop and monitor in Save Workspace.
+- Recreate missing virtual desktops and return existing or newly launched windows to their saved
+  desktop without deleting extra desktops or switching the visible desktop.
+- Restore ATLauncher through `ATLauncher.exe` instead of launching its bundled `javaw.exe` without
+  the required command line.
+- Recover a saved layout after a temporary, stabilized display change with ask-first, disabled, or
+  checkpointed automatic behavior.
+- Treat elevated IObit geometry rejection as a non-fatal limitation after its launch and desktop
+  placement succeed.
 
 ## Compatibility and migration
 
-- Workspace schema v9 migrates older Explorer entries by retaining their one legacy active folder
-  as a one-tab session; it never invents tabs that were not captured.
-- Existing named workspaces, monitor layouts, restore policies, browser sessions, learned matches,
-  checkpoints, hotkeys, startup behavior, and settings are retained.
-- Explorer multi-tab capture remains controlled by the existing **Save open files** choice.
+- Workspace schema v11 stores ordered virtual-desktop topology and per-entry association. Older
+  workspaces continue to load and simply contain no topology to recreate.
+- Existing settings keep loading; the obsolete virtual-desktop opt-in is ignored because capture
+  and restore now follow saved workspace data automatically.
+- Terminal workspaces created by the earlier prototype did not contain trustworthy per-tab data and
+  should be recaptured.
+- The private Windows Shell path is build-selected for Windows 11 23H2 and 24H2/25H2. Unsupported
+  versions skip only topology operations and leave windows accessible.
 
 ## Verification
 
-- 326/326 Release tests pass with no failures or skips.
-- An isolated live Windows 11 25H2 smoke restored three real Explorer folder tabs, selected the
-  saved active tab, and opened zero duplicate tabs on a second restore.
-- The Firefox connector's four Node tests pass; `web-ext` 10.7.0 reports zero errors, notices, or
-  warnings.
-- The configured NuGet sources report no known vulnerable direct or transitive packages.
-- The release workflow rebuilds and retests the tagged commit before uploading versioned assets
-  and SHA-256 checksums.
+- 371/371 Release tests pass with no failures or skips.
+- A live two-tab Windows Terminal round trip restored distinct directories and tab selection.
+- A reversible live desktop smoke created a desktop, moved a controlled window, verified
+  membership, returned it, and removed the temporary desktop.
+- A complete live workspace restore recreated desktop 2 and restored IObit plus both ATLauncher
+  windows to it; the same restore also passed when desktop 2 already existed.
+- The prior Windows 11 25H2 Explorer three-tab smoke remains covered.
 
 ## Release assets
 
-- `WindowAnchor-v1.6.1.exe` — self-contained Windows x64 desktop application.
-- `WindowAnchor-Browser-Connector-v1.6.1.zip` — optional Chromium connector and native-host setup.
-- `WindowAnchor-Firefox-Connector-AMO-v1.6.1.zip` — Firefox AMO submission package.
-- `SHA256SUMS.txt` — SHA-256 checksums for all three versioned assets.
+- `WindowAnchor-v1.7.0.exe` — self-contained Windows x64 application.
+- `WindowAnchor-Browser-Connector-v1.7.0.zip` — optional Chromium connector.
+- `WindowAnchor-Firefox-Connector-AMO-v1.7.0.zip` — unsigned AMO submission package.
+- `WindowAnchor-Terminal-Integration-v1.7.0.ps1` — optional PowerShell prompt integration.
+- `SHA256SUMS.txt` — checksums for all versioned assets.
 
-The Firefox ZIP is intended for Mozilla review/signing and is not installable in normal Firefox
-Release/Beta until Mozilla signs it through AMO. A live signed Firefox multi-profile smoke remains
-an external publication gate.
-
-## Suggested verification after updating
-
-1. Save a workspace with **Save open files** enabled and an Explorer window containing several
-   folder tabs, close that Explorer window, and restore the workspace.
-2. Repeat the restore while the tabs are present and confirm no duplicates are added.
-3. If using a browser connector, capture and restore normal windows in each intended profile and
-   review the configured exact-URL reuse policy.
-4. Review any `CompletedWithFailures` result when a saved folder no longer exists; WindowAnchor
-   leaves unrelated tabs untouched.
+The executable is not digitally signed, so Windows may show a security prompt. Firefox Release and
+Beta require Mozilla to sign the Firefox connector before normal installation.
 
 ## Updating
 
-1. Exit the running WindowAnchor instance from its tray menu.
-2. Download `WindowAnchor-v1.6.1.exe` and replace the previous executable, or run it directly.
-3. Existing data under `%AppData%\WindowAnchor` is migrated and retained automatically.
-
-The desktop executable is self-contained for 64-bit Windows and does not require a separate .NET
-installation. It is not digitally signed, so Windows may display a security prompt.
+1. Exit WindowAnchor from its tray menu.
+2. Download `WindowAnchor-v1.7.0.exe` from this release and verify its checksum.
+3. Replace the previous executable or run the new file directly.
+4. Existing data under `%AppData%\WindowAnchor` migrates automatically.

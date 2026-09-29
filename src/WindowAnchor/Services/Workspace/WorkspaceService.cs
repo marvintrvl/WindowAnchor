@@ -135,6 +135,7 @@ public class WorkspaceService : IAsyncDisposable
         _browserSessionConnector = browserSessionConnector;
         _settingsService = settingsService;
         _restoreResources = restoreResources ?? new FileSystemRestoreResourceBoundary();
+        AppAdapterRegistry planningAdapters = AppAdapterRegistry.CreatePlanningDefault();
         _restoreExecutor = new RestoreExecutor(
             _windowInventory,
             _windowMutation,
@@ -144,12 +145,12 @@ public class WorkspaceService : IAsyncDisposable
             _browserSessionConnector,
             appReadinessProbe ?? new SystemAppReadinessProbe(_windowInventory),
             appReadinessPolicy,
-            appReadinessStrategies,
+            appReadinessStrategies ?? planningAdapters.ReadinessStrategies,
             placementProbe ?? (_windowInventory is WindowService
                 ? new SystemWindowPlacementProbe()
                 : new InventoryWindowPlacementProbe(_windowInventory)),
             placementPolicy,
-            placementStrategies);
+            placementStrategies ?? planningAdapters.PlacementVerificationStrategies);
         _restoreObservationBuilder = new RestoreObservationBuilder(
             _windowInventory,
             _monitorInventory,
@@ -165,7 +166,8 @@ public class WorkspaceService : IAsyncDisposable
             _windowInventory,
             _monitorInventory,
             captureResourceResolver,
-            capturedWindowEntryFactory);
+            capturedWindowEntryFactory,
+            _windowInventory is WindowService ? VirtualDesktopCatalog.Read : null);
         _workspaceCaptureBuilder = new WorkspaceCaptureBuilder(_browserSessionConnector);
         _layoutVariants = new WorkspaceLayoutVariantService(_storageService, _monitorInventory);
         _checkpoints = new WorkspaceCheckpointService(

@@ -41,9 +41,11 @@ internal sealed class SaveWorkspaceWorkflow
     internal async Task<SaveWorkspaceWorkflowResult> RunAsync(Window? owner = null)
     {
         List<(MonitorInfo Monitor, List<WindowRecord> Windows)> windowPreview;
+        IReadOnlyList<VirtualDesktopInfo> desktops = [];
         try
         {
-            windowPreview = await Task.Run(_workspaceService.GetWindowPreviewForDialog);
+            (windowPreview, desktops) = await Task.Run(() =>
+                (_workspaceService.GetWindowPreviewForDialog(), VirtualDesktopCatalog.Read()));
         }
         catch (Exception ex)
         {
@@ -55,7 +57,7 @@ internal sealed class SaveWorkspaceWorkflow
             windowPreview = [];
         }
 
-        var dialog = new SaveWorkspaceDialog(windowPreview, _settingsService);
+        var dialog = new SaveWorkspaceDialog(windowPreview, _settingsService, desktops);
         if (owner != null)
             dialog.Owner = owner;
         if (dialog.ShowDialog() != true)
