@@ -446,12 +446,12 @@ produces a cancelled result and zero mutation. A later executor failure leaves t
 checkpoint available.
 
 “Undo Last Restore” selects the newest healthy, non-expired checkpoint, builds the same restore
-plan, and sends it through the workspace-switch reconciliation path. Windows absent from the
+plan with Exact Switch policy, and sends it through the workspace-switch reconciliation path. Windows absent from the
 checkpoint are therefore closed normally rather than left behind, while saved windows use the
 same staleness, readiness, placement, and verification phases. Undo uses the `Undo` trigger and,
-when checkpoint capture is enabled, commits the state being replaced first so undo-of-undo remains
-possible. Because Undo is destructive reconciliation, its pre-undo checkpoint is mandatory even
-when routine checkpoint capture is disabled.
+before its first close request, commits the state being replaced so undo-of-undo remains possible.
+Because Undo is destructive reconciliation, its pre-undo checkpoint is mandatory even when routine
+checkpoint capture is disabled.
 
 ### Settings UI ownership
 
@@ -660,8 +660,8 @@ Display-change request
 
 Undo Last Restore
     → CheckpointRepository.GetLatest() isolates corrupt/expired documents
-    → RestorePlanner.Build(checkpoint, current inventory, topology, Standard)
-    → optionally capture + commit a new Undo safety checkpoint
+    → RestorePlanner.Build(checkpoint, current inventory, topology, ExactSwitch)
+    → capture + commit a new mandatory Undo safety checkpoint
     → WorkspaceSwitchEngine closes unrelated windows
     → RestoreExecutor executes and verifies the checkpoint plan
 ```

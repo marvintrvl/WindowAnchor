@@ -410,24 +410,14 @@ public class WorkspaceService : IAsyncDisposable
         _checkpoints.GetLatest();
 
     /// <summary>
-    /// Restores the newest healthy checkpoint through the normal planner. The transactional
-    /// execution creates a new safety checkpoint first, making an undo itself undoable.
+    /// Builds the only supported Undo plan. Undo is an exact switch so windows introduced by the
+    /// original operation are reconciled through the close-request safety boundary rather than
+    /// being left behind by an ordinary restore.
     /// </summary>
-    public async Task<RestoreExecutionResult?> UndoLastRestoreAsync(
-        CancellationToken ct = default,
-        IProgress<RestoreProgressReport>? progress = null)
+    internal RestorePlan CreateUndoRestorePlan(WorkspaceSnapshot checkpoint)
     {
-        WorkspaceSnapshot? checkpoint = _checkpoints.GetLatest();
-        if (checkpoint is null)
-            return null;
-
-        RestorePlan plan = CreateRestorePlan(checkpoint, RestoreMode.Standard);
-        return await ExecuteApprovedRestorePlanTransactionalAsync(
-            checkpoint,
-            plan,
-            WorkspaceCheckpointTrigger.Undo,
-            ct,
-            progress).ConfigureAwait(false);
+        ArgumentNullException.ThrowIfNull(checkpoint);
+        return CreateRestorePlan(checkpoint, RestoreMode.ExactSwitch);
     }
 
     /// <summary>

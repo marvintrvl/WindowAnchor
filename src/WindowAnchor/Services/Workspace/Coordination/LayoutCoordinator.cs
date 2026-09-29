@@ -689,7 +689,7 @@ public class LayoutCoordinator : IAsyncDisposable
 
         WorkspaceSnapshot? checkpoint = _workspaceService.GetLatestRestoreCheckpoint();
         if (checkpoint is null) return null;
-        RestorePlan plan = CreateRestorePlan(checkpoint, RestoreMode.ExactSwitch);
+        RestorePlan plan = _workspaceService.CreateUndoRestorePlan(checkpoint);
         return await SwitchWorkspaceAsync(
             checkpoint,
             plan,

@@ -98,6 +98,127 @@ public class WorkspaceSwitchEngineTests
     }
 
     [Fact]
+    public async Task Coordinator_undo_reconciles_new_windows_and_undo_of_undo_restores_the_replaced_state()
+    {
+        using var directory = new TestDirectory();
+        var clock = new FakeCheckpointClock();
+        var storage = new StorageService(directory.Path, checkpointClock: clock);
+        const string exe = @"C:\Apps\editor.exe";
+        WindowRecord prior = Record(exe, left: 10);
+        WorkspaceSnapshot recovery = Snapshot("Before restore", exe, prior);
+        storage.Checkpoints.Save(
+            recovery,
+            WorkspaceCheckpointTrigger.Restore,
+            Guid.NewGuid().ToString("D"));
+
+        clock.UtcNow = clock.UtcNow.AddHours(1);
+        WindowRecord current = Record(exe, left: 700);
+        var windows = new FakeWindowInventory
+        {
+            Snapshot = [current],
+            Live = new Dictionary<IntPtr, (uint Pid, WindowRecord Record)>
+            {
+                [new IntPtr(701)] = (7001, current)
+            }
+        };
+        var mutation = new RecordingWindowMutation();
+        MonitorInfo monitor = Monitor();
+        var service = new WorkspaceService(
+            storage,
+            windows,
+            mutation,
+            new FakeMonitorInventory { Fingerprint = "current", Monitors = [monitor] },
+            new JumpListService(),
+            restoreClock: new FakeRestoreClock());
+        int undoCheckpointCount = 0;
+        var switchWindows = new FakeSwitchWindows([new IntPtr(702)], [new IntPtr(702)])
+        {
+            Alive = _ => false,
+            OnRequestClose = () =>
+            {
+                WorkspaceSnapshot safety = Assert.IsType<WorkspaceSnapshot>(storage.Checkpoints.GetLatest());
+                Assert.Equal(WorkspaceCheckpointTrigger.Undo, safety.Checkpoint?.Trigger);
+                int expectedLeft = ++undoCheckpointCount == 1 ? 700 : 10;
+                Assert.Equal(expectedLeft, Assert.Single(safety.Entries).Position.NormalLeft);
+            }
+        };
+        await using var coordinator = new LayoutCoordinator(
+            new MonitorService(),
+            service,
+            Engine(switchWindows));
+
+        RestoreExecutionResult firstUndo = Assert.IsType<RestoreExecutionResult>(
+            await coordinator.UndoLastRestoreAsync());
+
+        Assert.Equal(WorkspaceCheckpointTrigger.Undo, firstUndo.Checkpoint?.Trigger);
+        Assert.Equal([new IntPtr(702)], switchWindows.LastRequested.OrderBy(handle => handle.ToInt64()));
+        Assert.Equal(10, mutation.Restores.Last().Record.NormalLeft);
+
+        // The first Undo captured the post-restore state before it changed it. A second Undo must
+        // therefore return to that state through the same exact-switch reconciliation path.
+        clock.UtcNow = clock.UtcNow.AddHours(1);
+        windows.Snapshot = [prior];
+        windows.Live[new IntPtr(701)] = (7001, prior);
+
+        RestoreExecutionResult undoOfUndo = Assert.IsType<RestoreExecutionResult>(
+            await coordinator.UndoLastRestoreAsync());
+
+        Assert.Equal(WorkspaceCheckpointTrigger.Undo, undoOfUndo.Checkpoint?.Trigger);
+        Assert.Equal(700, mutation.Restores.Last().Record.NormalLeft);
+        Assert.Equal(2, undoCheckpointCount);
+    }
+
+    [Fact]
+    public async Task Coordinator_undo_checkpoint_failure_preserves_the_original_checkpoint_and_skips_close_requests()
+    {
+        using var directory = new TestDirectory();
+        var baseline = new StorageService(directory.Path);
+        const string exe = @"C:\Apps\editor.exe";
+        WindowRecord prior = Record(exe, left: 10);
+        WorkspaceSnapshot recovery = Snapshot("Before restore", exe, prior);
+        baseline.Checkpoints.Save(
+            recovery,
+            WorkspaceCheckpointTrigger.Restore,
+            Guid.NewGuid().ToString("D"));
+
+        WindowRecord current = Record(exe, left: 700);
+        var windows = new FakeWindowInventory
+        {
+            Snapshot = [current],
+            Live = new Dictionary<IntPtr, (uint Pid, WindowRecord Record)>
+            {
+                [new IntPtr(711)] = (7101, current)
+            }
+        };
+        var mutation = new RecordingWindowMutation();
+        var service = new WorkspaceService(
+            new StorageService(directory.Path, new ThrowingAtomicFileWriter()),
+            windows,
+            mutation,
+            new FakeMonitorInventory { Fingerprint = "current", Monitors = [Monitor()] },
+            new JumpListService(),
+            restoreClock: new FakeRestoreClock());
+        var switchWindows = new FakeSwitchWindows([new IntPtr(712)], [new IntPtr(712)])
+        {
+            Alive = _ => false
+        };
+        await using var coordinator = new LayoutCoordinator(
+            new MonitorService(),
+            service,
+            Engine(switchWindows));
+
+        RestoreExecutionResult result = Assert.IsType<RestoreExecutionResult>(
+            await coordinator.UndoLastRestoreAsync());
+
+        Assert.Equal(RestoreExecutionStatus.Rejected, result.Status);
+        Assert.Equal(RestoreCheckpointStatus.Failed, result.Checkpoint?.Status);
+        Assert.Empty(mutation.Restores);
+        Assert.Empty(switchWindows.LastRequested);
+        WorkspaceSnapshot retained = Assert.IsType<WorkspaceSnapshot>(baseline.Checkpoints.GetLatest());
+        Assert.Equal(recovery.WorkspaceId, retained.WorkspaceId);
+    }
+
+    [Fact]
     public async Task Waits_only_for_handles_that_received_close_requests()
     {
         var windows = new FakeSwitchWindows(
@@ -266,6 +387,49 @@ public class WorkspaceSwitchEngineTests
         pollInterval: TimeSpan.FromMilliseconds(1),
         timeout: TimeSpan.FromSeconds(1),
         notificationInterval: TimeSpan.FromMilliseconds(10));
+
+    private static MonitorInfo Monitor() => new()
+    {
+        MonitorId = "primary",
+        DeviceName = @"\\.\DISPLAY1",
+        Index = 0,
+        IsPrimary = true,
+        WidthPixels = 1920,
+        HeightPixels = 1080
+    };
+
+    private static WindowRecord Record(string executablePath, int left) => new()
+    {
+        ExecutablePath = executablePath,
+        ProcessName = "editor",
+        ClassName = "EditorWindow",
+        TitleSnippet = "notes",
+        MonitorId = "primary",
+        MonitorIndex = 0,
+        SavedDpi = 96,
+        NormalLeft = left,
+        NormalTop = 0,
+        NormalRight = left + 800,
+        NormalBottom = 600
+    };
+
+    private static WorkspaceSnapshot Snapshot(string name, string executablePath, WindowRecord record) => new()
+    {
+        Name = name,
+        MonitorFingerprint = "current",
+        Monitors = [Monitor()],
+        Entries =
+        [
+            new WorkspaceEntry
+            {
+                ExecutablePath = executablePath,
+                ProcessName = "editor",
+                WindowClassName = "EditorWindow",
+                MonitorId = "primary",
+                Position = record
+            }
+        ]
+    };
 
     private static RestoreExecutionResult Completed() => new(
         "workspace",
