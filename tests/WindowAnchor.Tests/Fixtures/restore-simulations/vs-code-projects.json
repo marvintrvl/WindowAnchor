@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "name": "multiple-vs-code-projects",
+  "snapshot": {
+    "schemaVersion": 6,
+    "workspaceId": "73000000-0000-4000-8000-000000000001",
+    "name": "VS Code fixture",
+    "savedAt": "2026-09-30T08:00:00Z",
+    "monitors": [
+      { "monitorId": "primary", "index": 0, "widthPixels": 1920, "heightPixels": 1080, "boundsRight": 1920, "boundsBottom": 1080, "workAreaRight": 1920, "workAreaBottom": 1040, "dpi": 96, "isPrimary": true }
+    ],
+    "entries": [
+      { "entryId": "73000000-0000-4000-8000-000000000011", "executablePath": "C:\\Apps\\Code.exe", "processName": "code", "windowClassName": "Chrome_WidgetWin_1", "launchArg": "C:\\Projects\\alpha.code-workspace", "editorWorkspaceKind": "workspaceFile", "monitorId": "primary", "monitorIndex": 0, "position": { "executablePath": "C:\\Apps\\Code.exe", "processName": "code", "className": "Chrome_WidgetWin_1", "titleSnippet": "alpha.code-workspace - Visual Studio Code", "monitorId": "primary", "normalLeft": 40, "normalTop": 40, "normalRight": 900, "normalBottom": 800, "savedDpi": 96 } },
+      { "entryId": "73000000-0000-4000-8000-000000000012", "executablePath": "C:\\Apps\\Code.exe", "processName": "code", "windowClassName": "Chrome_WidgetWin_1", "launchArg": "C:\\Projects\\beta.code-workspace", "editorWorkspaceKind": "workspaceFile", "monitorId": "primary", "monitorIndex": 0, "position": { "executablePath": "C:\\Apps\\Code.exe", "processName": "code", "className": "Chrome_WidgetWin_1", "titleSnippet": "beta.code-workspace - Visual Studio Code", "monitorId": "primary", "normalLeft": 960, "normalTop": 40, "normalRight": 1820, "normalBottom": 800, "savedDpi": 96 } }
+    ]
+  },
+  "currentTopology": { "isExactMatch": true, "monitors": [ { "monitorId": "primary", "monitorIndex": 0, "left": 0, "top": 0, "right": 1920, "bottom": 1080, "dpi": 96, "isPrimary": true, "workAreaRight": 1920, "workAreaBottom": 1040 } ] },
+  "mode": { "kind": "moveExisting" },
+  "liveWindows": [
+    { "windowHandle": 1401, "processId": 2401, "window": { "executablePath": "C:\\Apps\\Code.exe", "processName": "code", "className": "Chrome_WidgetWin_1", "titleSnippet": "alpha.code-workspace - Visual Studio Code", "monitorId": "primary", "normalLeft": 40, "normalTop": 40, "normalRight": 900, "normalBottom": 800, "savedDpi": 96 } },
+    { "windowHandle": 1402, "processId": 2402, "window": { "executablePath": "C:\\Apps\\Code.exe", "processName": "code", "className": "Chrome_WidgetWin_1", "titleSnippet": "beta.code-workspace - Visual Studio Code", "monitorId": "primary", "normalLeft": 960, "normalTop": 40, "normalRight": 1820, "normalBottom": 800, "savedDpi": 96 } }
+  ],
+  "expected": {
+    "entryOutcomes": [ "matched", "matched" ],
+    "entryPlans": [
+      { "outcome": "matched", "selectedWindowHandle": 1401, "matchConfidence": "exact", "targetMonitorId": "primary", "monitorMapping": "exactStableId", "placementStrategy": "exactPixels", "wasDpiScaled": false, "wasClamped": false },
+      { "outcome": "matched", "selectedWindowHandle": 1402, "matchConfidence": "exact", "targetMonitorId": "primary", "monitorMapping": "exactStableId", "placementStrategy": "exactPixels", "wasDpiScaled": false, "wasClamped": false }
+    ],
+    "actionKinds": [ "restoreExistingWindow", "restoreExistingWindow" ],
+    "protectedWindowHandles": [],
+    "warningCodes": [],
+    "blockingErrorCodes": [],
+    "canExecute": true
+  }
+}

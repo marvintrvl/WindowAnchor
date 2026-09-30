@@ -31,5 +31,18 @@
   ],
   "resources": [
     { "entryIndex": 2, "kind": "executable", "availability": "missing", "resolvedTarget": "C:\\Missing\\missing.exe" }
-  ]
+  ],
+  "expected": {
+    "entryOutcomes": [ "matched", "matched", "blocked" ],
+    "entryPlans": [
+      { "outcome": "matched", "selectedWindowHandle": 201, "matchConfidence": "exact", "targetMonitorId": "laptop", "monitorMapping": "savedIndexFallback", "placementStrategy": "normalized", "wasDpiScaled": true, "wasClamped": false },
+      { "outcome": "matched", "selectedWindowHandle": 203, "matchConfidence": "exact", "targetMonitorId": "laptop", "monitorMapping": "savedIndexFallback", "placementStrategy": "normalized", "wasDpiScaled": true, "wasClamped": false },
+      { "outcome": "blocked", "selectedWindowHandle": null, "matchConfidence": null, "targetMonitorId": "laptop", "monitorMapping": "savedIndexFallback", "placementStrategy": "normalized", "wasDpiScaled": true, "wasClamped": false }
+    ],
+    "actionKinds": [ "restoreExistingWindow", "restoreExistingWindow" ],
+    "protectedWindowHandles": [],
+    "warningCodes": [ "savedMonitorUnavailable" ],
+    "blockingErrorCodes": [ "missingResource" ],
+    "canExecute": false
+  }
 }

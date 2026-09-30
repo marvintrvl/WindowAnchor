@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "name": "browser-pwa-and-missing-resource",
+  "snapshot": {
+    "schemaVersion": 6,
+    "workspaceId": "75000000-0000-4000-8000-000000000001",
+    "name": "Browser fixture",
+    "savedAt": "2026-09-30T08:00:00Z",
+    "monitors": [
+      { "monitorId": "primary", "index": 0, "widthPixels": 1920, "heightPixels": 1080, "boundsRight": 1920, "boundsBottom": 1080, "workAreaRight": 1920, "workAreaBottom": 1040, "dpi": 96, "isPrimary": true }
+    ],
+    "entries": [
+      { "entryId": "75000000-0000-4000-8000-000000000011", "executablePath": "C:\\Apps\\chrome.exe", "processName": "chrome", "windowClassName": "Chrome_WidgetWin_1", "appUserModelId": "Chrome._crx_productivity", "isWebApp": true, "webAppLaunchTarget": "C:\\Apps\\chrome_proxy.exe", "webAppLaunchArguments": "--app-id=productivity", "monitorId": "primary", "monitorIndex": 0, "position": { "executablePath": "C:\\Apps\\chrome.exe", "processName": "chrome", "className": "Chrome_WidgetWin_1", "appUserModelId": "Chrome._crx_productivity", "titleSnippet": "Productivity app", "monitorId": "primary", "normalLeft": 20, "normalTop": 20, "normalRight": 900, "normalBottom": 700, "savedDpi": 96 } },
+      { "entryId": "75000000-0000-4000-8000-000000000012", "executablePath": "C:\\Apps\\chrome.exe", "processName": "chrome", "windowClassName": "Chrome_WidgetWin_1", "browserUrl": "https://example.test/docs", "monitorId": "primary", "monitorIndex": 0, "position": { "executablePath": "C:\\Apps\\chrome.exe", "processName": "chrome", "className": "Chrome_WidgetWin_1", "titleSnippet": "Documentation", "monitorId": "primary", "normalLeft": 940, "normalTop": 20, "normalRight": 1820, "normalBottom": 700, "savedDpi": 96 } },
+      { "entryId": "75000000-0000-4000-8000-000000000013", "executablePath": "C:\\Missing\\gone.exe", "processName": "gone", "windowClassName": "MissingWindow", "monitorId": "primary", "monitorIndex": 0, "position": { "executablePath": "C:\\Missing\\gone.exe", "processName": "gone", "className": "MissingWindow", "titleSnippet": "Missing app", "monitorId": "primary", "normalLeft": 500, "normalTop": 200, "normalRight": 1400, "normalBottom": 900, "savedDpi": 96 } }
+    ]
+  },
+  "currentTopology": { "isExactMatch": true, "monitors": [ { "monitorId": "primary", "monitorIndex": 0, "left": 0, "top": 0, "right": 1920, "bottom": 1080, "dpi": 96, "isPrimary": true, "workAreaRight": 1920, "workAreaBottom": 1040 } ] },
+  "mode": { "kind": "resume" },
+  "liveWindows": [
+    { "windowHandle": 1601, "processId": 2601, "window": { "executablePath": "C:\\Apps\\chrome.exe", "processName": "chrome", "className": "Chrome_WidgetWin_1", "appUserModelId": "Chrome._crx_productivity", "titleSnippet": "Productivity app", "monitorId": "primary", "normalLeft": 20, "normalTop": 20, "normalRight": 900, "normalBottom": 700, "savedDpi": 96 } },
+    { "windowHandle": 1602, "processId": 2602, "window": { "executablePath": "C:\\Apps\\chrome.exe", "processName": "chrome", "className": "Chrome_WidgetWin_1", "titleSnippet": "Documentation", "monitorId": "primary", "normalLeft": 940, "normalTop": 20, "normalRight": 1820, "normalBottom": 700, "savedDpi": 96 } }
+  ],
+  "resources": [
+    { "entryIndex": 2, "kind": "executable", "availability": "missing", "resolvedTarget": "C:\\Missing\\gone.exe" }
+  ],
+  "expected": {
+    "entryOutcomes": [ "matched", "matched", "blocked" ],
+    "entryPlans": [
+      { "outcome": "matched", "selectedWindowHandle": 1601, "matchConfidence": "exact", "targetMonitorId": "primary", "monitorMapping": "exactStableId", "placementStrategy": "exactPixels", "wasDpiScaled": false, "wasClamped": false },
+      { "outcome": "matched", "selectedWindowHandle": 1602, "matchConfidence": "probable", "targetMonitorId": "primary", "monitorMapping": "exactStableId", "placementStrategy": "exactPixels", "wasDpiScaled": false, "wasClamped": false },
+      { "outcome": "blocked", "selectedWindowHandle": null, "matchConfidence": null, "targetMonitorId": "primary", "monitorMapping": "exactStableId", "placementStrategy": "exactPixels", "wasDpiScaled": false, "wasClamped": false }
+    ],
+    "actionKinds": [],
+    "protectedWindowHandles": [],
+    "warningCodes": [],
+    "blockingErrorCodes": [ "missingResource" ],
+    "canExecute": false
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "name": "path-alias-remap",
+  "snapshot": {
+    "schemaVersion": 6,
+    "workspaceId": "74000000-0000-4000-8000-000000000001",
+    "name": "Path alias fixture",
+    "savedAt": "2026-09-30T08:00:00Z",
+    "monitors": [
+      { "monitorId": "primary", "index": 0, "widthPixels": 1920, "heightPixels": 1080, "boundsRight": 1920, "boundsBottom": 1080, "workAreaRight": 1920, "workAreaBottom": 1040, "dpi": 96, "isPrimary": true }
+    ],
+    "entries": [
+      { "entryId": "74000000-0000-4000-8000-000000000011", "executablePath": "C:\\Users\\OldMachine\\Tools\\editor.exe", "logicalExecutablePath": "${TOOLS}\\editor.exe", "processName": "editor", "windowClassName": "FixtureWindow", "monitorId": "primary", "monitorIndex": 0, "position": { "executablePath": "C:\\Users\\OldMachine\\Tools\\editor.exe", "processName": "editor", "className": "FixtureWindow", "titleSnippet": "Aliased editor", "monitorId": "primary", "normalLeft": 80, "normalTop": 80, "normalRight": 1000, "normalBottom": 760, "savedDpi": 96 } }
+    ]
+  },
+  "currentTopology": { "isExactMatch": true, "monitors": [ { "monitorId": "primary", "monitorIndex": 0, "left": 0, "top": 0, "right": 1920, "bottom": 1080, "dpi": 96, "isPrimary": true, "workAreaRight": 1920, "workAreaBottom": 1040 } ] },
+  "mode": { "kind": "moveExisting" },
+  "resources": [
+    { "entryIndex": 0, "kind": "executable", "availability": "available", "resolvedTarget": "D:\\PortableTools\\editor.exe" }
+  ],
+  "liveWindows": [
+    { "windowHandle": 1501, "processId": 2501, "window": { "executablePath": "D:\\PortableTools\\editor.exe", "processName": "editor", "className": "FixtureWindow", "titleSnippet": "Aliased editor", "monitorId": "primary", "normalLeft": 80, "normalTop": 80, "normalRight": 1000, "normalBottom": 760, "savedDpi": 96 } }
+  ],
+  "expected": {
+    "entryOutcomes": [ "matched" ],
+    "entryPlans": [
+      { "outcome": "matched", "selectedWindowHandle": 1501, "matchConfidence": "probable", "targetMonitorId": "primary", "monitorMapping": "exactStableId", "placementStrategy": "exactPixels", "wasDpiScaled": false, "wasClamped": false }
+    ],
+    "actionKinds": [ "restoreExistingWindow" ],
+    "protectedWindowHandles": [],
+    "warningCodes": [ "updatedExecutablePath" ],
+    "blockingErrorCodes": [],
+    "canExecute": true
+  }
+}

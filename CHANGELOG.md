@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Complete deterministic restore simulation matrix (WA-046)** — Eight versioned synthetic
+  fixtures now cover monitor topology/mapping, mixed DPI, browser/PWA identity, VS Code projects,
+  unavailable resources, and logical path aliases. Every valid fixture asserts complete entry-plan
+  output; a corrupt-schema fixture proves rejection before planning. The runner remains read-only
+  and never discovers or changes the real desktop.
+
 ### Changed
 - **Firefox connector published** — The Mozilla-signed
   [WindowAnchor Browser Connector](https://addons.mozilla.org/en-US/firefox/addon/windowanchor-browser-connector/)

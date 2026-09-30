@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "name": "dual-monitor-negative-origin",
+  "snapshot": {
+    "schemaVersion": 6,
+    "workspaceId": "70000000-0000-4000-8000-000000000001",
+    "name": "Dual monitor fixture",
+    "savedAt": "2026-09-30T08:00:00Z",
+    "monitors": [
+      { "monitorId": "left", "index": 0, "boundsLeft": -1920, "boundsRight": 0, "boundsBottom": 1080, "workAreaLeft": -1920, "workAreaRight": 0, "workAreaBottom": 1040, "dpi": 96 },
+      { "monitorId": "right", "index": 1, "boundsRight": 2560, "boundsBottom": 1440, "workAreaRight": 2560, "workAreaBottom": 1400, "dpi": 144, "isPrimary": true }
+    ],
+    "entries": [
+      { "entryId": "70000000-0000-4000-8000-000000000011", "executablePath": "C:\\Apps\\left.exe", "processName": "left", "windowClassName": "FixtureWindow", "monitorId": "left", "monitorIndex": 0, "position": { "executablePath": "C:\\Apps\\left.exe", "processName": "left", "className": "FixtureWindow", "titleSnippet": "Left fixture", "monitorId": "left", "monitorIndex": 0, "normalLeft": -1800, "normalTop": 30, "normalRight": -900, "normalBottom": 730, "savedDpi": 96 } },
+      { "entryId": "70000000-0000-4000-8000-000000000012", "executablePath": "C:\\Apps\\right.exe", "processName": "right", "windowClassName": "FixtureWindow", "monitorId": "right", "monitorIndex": 1, "position": { "executablePath": "C:\\Apps\\right.exe", "processName": "right", "className": "FixtureWindow", "titleSnippet": "Right fixture", "monitorId": "right", "monitorIndex": 1, "normalLeft": 300, "normalTop": 40, "normalRight": 1600, "normalBottom": 940, "savedDpi": 144 } }
+    ]
+  },
+  "currentTopology": {
+    "isExactMatch": true,
+    "monitors": [
+      { "monitorId": "left", "monitorIndex": 0, "left": -1920, "top": 0, "right": 0, "bottom": 1080, "dpi": 96, "workAreaLeft": -1920, "workAreaRight": 0, "workAreaBottom": 1040 },
+      { "monitorId": "right", "monitorIndex": 1, "left": 0, "top": 0, "right": 2560, "bottom": 1440, "dpi": 144, "isPrimary": true, "workAreaRight": 2560, "workAreaBottom": 1400 }
+    ]
+  },
+  "mode": { "kind": "moveExisting" },
+  "liveWindows": [
+    { "windowHandle": 1101, "processId": 2101, "window": { "executablePath": "C:\\Apps\\left.exe", "processName": "left", "className": "FixtureWindow", "titleSnippet": "Left fixture", "monitorId": "left", "normalLeft": -1800, "normalTop": 30, "normalRight": -900, "normalBottom": 730, "savedDpi": 96 } },
+    { "windowHandle": 1102, "processId": 2102, "window": { "executablePath": "C:\\Apps\\right.exe", "processName": "right", "className": "FixtureWindow", "titleSnippet": "Right fixture", "monitorId": "right", "normalLeft": 300, "normalTop": 40, "normalRight": 1600, "normalBottom": 940, "savedDpi": 144 } }
+  ],
+  "expected": {
+    "entryOutcomes": [ "matched", "matched" ],
+    "entryPlans": [
+      { "outcome": "matched", "selectedWindowHandle": 1101, "matchConfidence": "probable", "targetMonitorId": "left", "monitorMapping": "exactStableId", "placementStrategy": "exactPixels", "wasDpiScaled": false, "wasClamped": false },
+      { "outcome": "matched", "selectedWindowHandle": 1102, "matchConfidence": "probable", "targetMonitorId": "right", "monitorMapping": "exactStableId", "placementStrategy": "exactPixels", "wasDpiScaled": false, "wasClamped": false }
+    ],
+    "actionKinds": [ "restoreExistingWindow", "restoreExistingWindow" ],
+    "protectedWindowHandles": [],
+    "warningCodes": [],
+    "blockingErrorCodes": [],
+    "canExecute": true
+  }
+}

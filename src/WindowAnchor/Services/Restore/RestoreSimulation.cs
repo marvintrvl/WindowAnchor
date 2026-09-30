@@ -47,10 +47,27 @@ public sealed record RestoreSimulationLiveWindow(
 public sealed record RestoreSimulationExpectation
 {
     public IReadOnlyList<RestorePlanEntryOutcome>? EntryOutcomes { get; init; }
+    public IReadOnlyList<RestoreSimulationEntryExpectation>? EntryPlans { get; init; }
     public IReadOnlyList<RestoreActionKind>? ActionKinds { get; init; }
     public IReadOnlyList<long>? ProtectedWindowHandles { get; init; }
     public IReadOnlyList<RestorePlanIssueCode>? WarningCodes { get; init; }
+    public IReadOnlyList<RestorePlanIssueCode>? BlockingErrorCodes { get; init; }
+    public bool? CanExecute { get; init; }
 }
+
+/// <summary>
+/// Golden projection for one planned entry. Every field is deliberate so monitor mapping,
+/// candidate assignment, confidence, and adapted placement regressions are diffable in CI.
+/// </summary>
+public sealed record RestoreSimulationEntryExpectation(
+    RestorePlanEntryOutcome Outcome,
+    long? SelectedWindowHandle,
+    WindowMatchConfidence? MatchConfidence,
+    string TargetMonitorId,
+    RestoreMonitorMappingKind MonitorMapping,
+    RestorePlacementStrategy PlacementStrategy,
+    bool WasDpiScaled,
+    bool WasClamped);
 
 /// <summary>Privacy-safe, deterministic simulation result suitable for CI output or sharing.</summary>
 public sealed record RestoreSimulationResult(
@@ -135,12 +152,30 @@ public static class RestoreSimulationRunner
         if (expected is null) return Array.Empty<string>();
         var failures = new List<string>();
         Compare("entryOutcomes", expected.EntryOutcomes, plan.Entries.Select(entry => entry.Outcome), failures);
+        Compare(
+            "entryPlans",
+            expected.EntryPlans,
+            plan.Entries.Select(entry => new RestoreSimulationEntryExpectation(
+                entry.Outcome,
+                entry.SelectedMatch?.WindowHandle,
+                entry.SelectedMatch?.Confidence,
+                entry.TargetPlacement.TargetMonitorId,
+                entry.TargetPlacement.MonitorMapping,
+                entry.TargetPlacement.Strategy,
+                entry.TargetPlacement.WasDpiScaled,
+                entry.TargetPlacement.WasClamped)),
+            failures);
         Compare("actionKinds", expected.ActionKinds, plan.Actions.Select(action => action.Kind), failures);
         Compare("protectedWindowHandles", expected.ProtectedWindowHandles,
             plan.ProtectedWindowHandles.OrderBy(handle => handle), failures);
         Compare("warningCodes", expected.WarningCodes,
             plan.Warnings.Concat(plan.Entries.SelectMany(entry => entry.Warnings))
                 .Select(warning => warning.Code).Distinct().OrderBy(code => code), failures);
+        Compare("blockingErrorCodes", expected.BlockingErrorCodes,
+            plan.BlockingErrors.Concat(plan.Entries.SelectMany(entry => entry.BlockingErrors))
+                .Select(error => error.Code).Distinct().OrderBy(code => code), failures);
+        if (expected.CanExecute.HasValue && expected.CanExecute.Value != plan.CanExecute)
+            failures.Add($"canExecute: expected {expected.CanExecute.Value}, actual {plan.CanExecute}.");
         return failures;
     }
 

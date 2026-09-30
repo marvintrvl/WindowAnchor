@@ -76,8 +76,13 @@
   ],
   "expected": {
     "entryOutcomes": [ "matched" ],
+    "entryPlans": [
+      { "outcome": "matched", "selectedWindowHandle": 101, "matchConfidence": "probable", "targetMonitorId": "primary", "monitorMapping": "exactStableId", "placementStrategy": "exactPixels", "wasDpiScaled": false, "wasClamped": false }
+    ],
     "actionKinds": [ "restoreExistingWindow" ],
     "protectedWindowHandles": [],
-    "warningCodes": []
+    "warningCodes": [],
+    "blockingErrorCodes": [],
+    "canExecute": true
   }
 }

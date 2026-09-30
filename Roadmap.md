@@ -26,10 +26,12 @@ and adaptive-layout work.
 
 1. **Checkpoint and Undo verification (WA-006A)** — finish the real-Windows Restore, Exact Switch,
    Undo, and undo-of-undo checklist.
-2. **Restore simulation coverage (WA-046)** — complete the deterministic topology, application,
-   corrupt-input, and path-alias fixture matrix.
-3. **Local workspace import/export (WA-033)** — add a small versioned UI, conflict preview, and old
+2. **Local workspace import/export (WA-033)** — add a small versioned UI, conflict preview, and old
    transfer-schema migration without accounts or cloud sync.
+
+The deterministic restore fixture matrix (WA-046) is complete: synthetic inputs cover monitor
+mapping, matching, mixed DPI, browser/PWA identity, VS Code projects, unavailable resources, and
+logical path aliases without changing the desktop.
 
 The only open public GitHub ticket, [#12](https://github.com/marvintrvl/WindowAnchor/issues/12), has
 an implemented update-safe Squirrel path resolver and remains open only for reporter verification.

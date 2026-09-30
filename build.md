@@ -19,6 +19,16 @@ visible-frame edge alignment, explicit restore-mode behavior, per-entry policy o
 fresh-window correlation, preview-only non-mutation, and readiness waits correlated to their own
 successful launch activity. The default suite does not move or launch real desktop windows.
 
+Run the deterministic restore-fixture subset, or inspect one redacted planner result, without
+querying or changing the desktop:
+
+```powershell
+dotnet test WindowAnchor.sln --configuration Release --no-restore `
+  --filter "FullyQualifiedName~RestoreSimulationTests"
+dotnet .\src\WindowAnchor\bin\Release\net8.0-windows\WindowAnchor.dll `
+  --simulate-restore .\tests\WindowAnchor.Tests\Fixtures\restore-simulations\single-monitor.json
+```
+
 The opt-in Windows 11 File Explorer integration gate creates and closes one temporary Explorer
 window, restores three folder tabs, verifies the active tab, and repeats the restore to prove it
 does not add duplicates:

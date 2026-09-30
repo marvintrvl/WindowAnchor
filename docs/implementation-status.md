@@ -1,8 +1,8 @@
 # Implemented Ticket Verification
 
-**Audit date:** 2026-09-29
+**Audit date:** 2026-09-30
 
-**Automated gate:** 371 passed, 0 failed, 0 skipped in Release
+**Automated gate:** 373 passed, 0 failed, 0 skipped in Release
 
 **Dependency audit:** no known vulnerable direct or transitive NuGet packages from configured sources
 
@@ -19,7 +19,7 @@ work. Automated tests do not replace live Windows application checks.
 | Virtual desktops (WA-022/WA-048) | Automated topology mapping plus live inactive-desktop capture, temporary desktop create/move/return/remove, and complete deleted/existing desktop-2 workspace restores with IObit and ATLauncher. |
 | Temporary display recovery (WA-030B) | Synthetic stabilization, return-only triggering, duplicate suppression, fullscreen deferral, and checkpoint gates pass. A physical dock/resolution smoke remains useful release validation. |
 | App adapters | Chromium PWA, dedicated browser, Explorer, Terminal, VS Code, ATLauncher, IObit placement policy, and generic fallback have focused tests. |
-| Restore simulation foundation (WA-046) | Versioned, redacted planner fixtures run without native mutation and fail deterministically on expectation differences. |
+| Restore simulation (WA-046) | Eight versioned, redacted planner fixtures cover topology mapping, matching, DPI, browser/PWA, VS Code, missing resources, and path aliases; corrupt input is rejected before planning. |
 
 ## External or manual gates
 
@@ -33,8 +33,6 @@ work. Automated tests do not replace live Windows application checks.
 
 ## Partial work kept in scope
 
-- **WA-046:** add the remaining dual/laptop topology, identical-monitor, mixed-DPI, multiple VS Code,
-  corrupt-input, and path-alias fixtures.
 - **WA-033:** internal exact and portable/redacted transfer is atomic and bounded, but the user-facing
   import/export flow, conflict preview, and old transfer-schema migration are incomplete.
 

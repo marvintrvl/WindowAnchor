@@ -603,7 +603,7 @@ Stateless utility class. `ExtractFilePath(processName, titleSnippet)` applies a 
 identity, resource, browser, hint, and persistent-app observations and calls only `RestorePlanner`.
 `--simulate-restore <fixture.json>` prints a deterministic redacted plan plus golden expectation
 failures and never constructs a Win32 inventory or mutation boundary. See
-[`restore-simulation.md`](restore-simulation.md) for the command and current fixture gaps.
+[`restore-simulation.md`](restore-simulation.md) for the command and complete fixture matrix.
 
 ---
 

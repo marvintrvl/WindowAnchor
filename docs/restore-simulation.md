@@ -4,16 +4,19 @@
 saved snapshot, synthetic topology, live-window records, and observed resources in the fixture.
 It does not enumerate monitors, read processes, launch applications, or mutate windows.
 
-Fixtures use schema version `1`. Optional `expected` values are golden assertions. A mismatch
+Fixtures use schema version `1`. Valid fixtures include golden assertions for every planned entry
+(outcome, selected handle, match confidence, monitor mapping, placement strategy, DPI/clamping),
+ordered action kinds, warnings, blocking errors, and executability. A mismatch
 prints a redacted, deterministic report and exits with code `2`, making CI failures diffable.
 The report redacts paths, titles, URLs, tokens, workspace names, and application IDs.
 
-Representative fixtures live in `tests/WindowAnchor.Tests/Fixtures/restore-simulations/`.
+Fixtures live in `tests/WindowAnchor.Tests/Fixtures/restore-simulations/`. They are complete
+synthetic observations: the runner does not query Win32, the file system, processes, or a network.
 
 Run a fixture from the repository root:
 
 ```powershell
-dotnet run --project .\src\WindowAnchor\WindowAnchor.csproj --no-restore -- `
+dotnet .\src\WindowAnchor\bin\Release\net8.0-windows\WindowAnchor.dll `
   --simulate-restore .\tests\WindowAnchor.Tests\Fixtures\restore-simulations\single-monitor.json
 ```
 
@@ -24,12 +27,16 @@ fixture schema is reported as an error and never falls through to normal applica
 ## Current coverage
 
 - `single-monitor.json` covers an existing generic application on an exact topology.
-- `adversarial-topology.json` covers changed topology, ambiguity, a PWA/browser distinction,
-  unavailable resources, persistent applications, and privacy-safe output.
-
-The requested matrix is not complete yet. Dedicated fixtures for dual monitor, laptop-to-dual,
-two-to-one, identical displays, mixed DPI, multiple VS Code projects, corrupt input, and path-alias
-remapping still need to be added before WA-046 can be marked complete.
+- `dual-monitor-negative-origin.json` covers two displays with negative coordinates.
+- `laptop-to-dual-mixed-dpi.json` covers a laptop snapshot restored to a mixed-DPI dual display.
+- `missing-and-identical-monitors.json` covers unavailable, identical, and fallback monitor mapping.
+- `browser-pwa-and-missing-resource.json` covers multiple browser windows, a PWA, and a blocking
+  missing resource.
+- `vs-code-projects.json` covers same-executable VS Code project identity.
+- `path-alias-remap.json` covers an observed logical path-alias remap.
+- `adversarial-topology.json` covers topology change, ambiguity, unavailable resources, persistent
+  applications, and privacy-safe output.
+- `corrupt-input.json` intentionally uses an unsupported schema and proves rejection before planning.
 
 The simulation boundary is planner-only. It proves deterministic observation-to-plan behavior; it
 does not validate Win32 placement, application launch, WPF interaction, or a real multi-monitor
