@@ -786,6 +786,30 @@
                     </Grid>
                 </Border>
 
+                <!-- Local import card -->
+                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="8"
+                        Padding="16,12" Margin="0,0,0,8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Import a local workspace copy"
+                                       FontSize="13" FontWeight="Medium"
+                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                            <TextBlock Text="Preview the file first; matching names or IDs are always imported as a separate copy"
+                                       FontSize="12"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <ui:Button Grid.Column="1" Content="Import Workspace"
+                                   Icon="{ui:SymbolIcon ArrowImport24}"
+                                   Click="OnImportWorkspace"/>
+                    </Grid>
+                </Border>
+
                 <!-- Bulk selection bar (visible only while rows are checked) -->
                 <Border x:Name="BulkActionBar"
                         Visibility="Collapsed"

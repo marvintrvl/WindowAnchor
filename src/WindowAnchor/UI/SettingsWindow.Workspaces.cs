@@ -4,6 +4,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using Microsoft.Win32;
 using Wpf.Ui.Controls;
 using WindowAnchor.Models;
 using WindowAnchor.Services;
@@ -168,6 +169,119 @@ public partial class SettingsWindow
             Refresh();
     }
 
+    // ── Local workspace transfer ────────────────────────────────────────────
+
+    private void OnImportWorkspace(object sender, RoutedEventArgs e)
+    {
+        var picker = new OpenFileDialog
+        {
+            Title = "Import WindowAnchor Workspace",
+            Filter = "WindowAnchor workspace (*.windowanchor.json)|*.windowanchor.json|JSON files (*.json)|*.json",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+        if (picker.ShowDialog(this) != true) return;
+
+        try
+        {
+            var transfer = new WorkspaceTransferService(_storageService);
+            WorkspaceImportPreview preview = transfer.PreviewImport(picker.FileName);
+            var confirmation = new WorkspaceImportPreviewDialog(preview) { Owner = this };
+            if (confirmation.ShowDialog() != true) return;
+
+            WorkspaceSnapshot imported = transfer.Import(
+                picker.FileName,
+                WorkspaceImportCollisionPolicy.Clone,
+                preview.ContentHash);
+            AppLogger.Info(
+                "workspace.import_completed",
+                "Imported a local workspace copy",
+                LogField.Identifier("workspaceId", imported.WorkspaceId),
+                LogField.Workspace("workspaceName", imported.Name),
+                LogField.Public("mode", preview.Mode.ToString()),
+                LogField.Public("wasMigrated", preview.WasMigrated));
+            Refresh();
+            System.Windows.MessageBox.Show(
+                this,
+                $"“{imported.Name}” was imported as a separate workspace.",
+                "Workspace Imported",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn(
+                "workspace.import_failed",
+                "Could not import a local workspace",
+                ex,
+                LogField.Path("sourcePath", picker.FileName),
+                LogField.Public("errorCategory", "workspace_import"));
+            System.Windows.MessageBox.Show(
+                this,
+                "WindowAnchor could not import that file. It was not added to your saved workspaces.\n\n" + ex.Message,
+                "Workspace Import",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Warning);
+        }
+    }
+
+    private void ExportWorkspace(WorkspaceRow row)
+    {
+        var optionsDialog = new WorkspaceExportDialog(row.Source) { Owner = this };
+        if (optionsDialog.ShowDialog() != true || optionsDialog.Options is null) return;
+
+        var picker = new SaveFileDialog
+        {
+            Title = "Export WindowAnchor Workspace",
+            Filter = "WindowAnchor workspace (*.windowanchor.json)|*.windowanchor.json",
+            DefaultExt = ".windowanchor.json",
+            AddExtension = true,
+            FileName = SafeExportFileName(row.Name)
+        };
+        if (picker.ShowDialog(this) != true) return;
+
+        try
+        {
+            new WorkspaceTransferService(_storageService).Export(row.Source, optionsDialog.Options, picker.FileName);
+            AppLogger.Info(
+                "workspace.export_completed",
+                "Exported one local workspace",
+                LogField.Identifier("workspaceId", row.Source.WorkspaceId),
+                LogField.Workspace("workspaceName", row.Name),
+                LogField.Public("mode", optionsDialog.Options.Mode.ToString()));
+            System.Windows.MessageBox.Show(
+                this,
+                $"“{row.Name}” was exported. Keep this file private if you included local paths or browser URLs.",
+                "Workspace Exported",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn(
+                "workspace.export_failed",
+                "Could not export a local workspace",
+                ex,
+                LogField.Identifier("workspaceId", row.Source.WorkspaceId),
+                LogField.Workspace("workspaceName", row.Name),
+                LogField.Path("destinationPath", picker.FileName),
+                LogField.Public("errorCategory", "workspace_export"));
+            System.Windows.MessageBox.Show(
+                this,
+                "WindowAnchor could not write that export file.\n\n" + ex.Message,
+                "Workspace Export",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Warning);
+        }
+    }
+
+    private static string SafeExportFileName(string workspaceName)
+    {
+        string candidate = string.Concat(workspaceName.Select(character =>
+            Array.IndexOf(System.IO.Path.GetInvalidFileNameChars(), character) >= 0 ? '_' : character));
+        return string.IsNullOrWhiteSpace(candidate) ? "workspace.windowanchor.json" : candidate + ".windowanchor.json";
+    }
+
     // ── Workspace row — ⋯ popup ───────────────────────────────────────────────
 
     private void OnWorkspaceMoreClick(object sender, RoutedEventArgs e)
@@ -212,6 +326,11 @@ public partial class SettingsWindow
         viewWindows.Icon = new Wpf.Ui.Controls.SymbolIcon { Symbol = Wpf.Ui.Controls.SymbolRegular.AppsList24 };
         viewWindows.Click += (_, _) => DoViewWindows(row);
         menu.Items.Add(viewWindows);
+
+        var export = new System.Windows.Controls.MenuItem { Header = "Export…" };
+        export.Icon = new Wpf.Ui.Controls.SymbolIcon { Symbol = Wpf.Ui.Controls.SymbolRegular.ArrowExport24 };
+        export.Click += (_, _) => ExportWorkspace(row);
+        menu.Items.Add(export);
 
         menu.Items.Add(new Separator());
 

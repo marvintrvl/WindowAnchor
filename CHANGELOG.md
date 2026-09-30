@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   unavailable resources, and logical path aliases. Every valid fixture asserts complete entry-plan
   output; a corrupt-schema fixture proves rejection before planning. The runner remains read-only
   and never discovers or changes the real desktop.
+- **Local workspace import/export (WA-033)** — Saved Workspaces now offers per-workspace exact or
+  portable/redacted export with explicit metadata categories, plus a staged import preview that
+  always creates a separate copy. Transfer schema v1 migrates to v2; changed, malformed, future,
+  or oversized files never write local workspace storage.
 
 ### Changed
 - **Firefox connector published** — The Mozilla-signed
@@ -113,10 +117,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   storage/repositories/migrations, system integration, and workspace coordination now live in
   logical service subfolders. `WorkspaceService` delegates checkpoint, diagnostics, and layout-
   variant policy to focused collaborators.
-- **Transfer and sync groundwork (WA-033/WA-034, partial)** — Internal exact/portable workspace
-  transfer and an atomic generic folder transport are present with focused tests. Import/export UI,
-  configurable redaction, transfer-schema migration, staged validation, manifests, device IDs, and
-  conflict orchestration are not yet implemented and are not documented as shipped workflows.
+- **Transfer and sync groundwork (WA-034, partial)** — The atomic generic folder transport remains
+  internal groundwork only. It has no user-facing sync workflow, account integration, or automatic
+  cross-device behavior.
 
 ### Fixed
 - **Checkpoint and Undo hardening (WA-006A)** — Automated coverage verifies durability before

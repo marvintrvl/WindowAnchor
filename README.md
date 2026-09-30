@@ -138,6 +138,7 @@ a pull request.
 - [Architecture](docs/architecture.md)
 - [Implementation and verification status](docs/implementation-status.md)
 - [Browser integration](docs/browser-integration.md)
+- [Workspace import and export](docs/workspace-import-export.md)
 - [Restore simulation](docs/restore-simulation.md)
 - [Changelog](CHANGELOG.md)
 

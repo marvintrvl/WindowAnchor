@@ -86,6 +86,168 @@ public class WorkspaceTransferAndSyncTests
     }
 
     [Fact]
+    public void Import_preview_reports_name_and_stable_id_conflicts_before_any_write()
+    {
+        using var directory = new TestDirectory();
+        var storage = new StorageService(directory.Path);
+        WorkspaceSnapshot existing = Workspace("Existing");
+        storage.NamedWorkspaces.Save(existing);
+        string source = WriteTransfer(directory, existing);
+
+        WorkspaceImportPreview preview = new WorkspaceTransferService(storage).PreviewImport(source);
+
+        Assert.Equal(WorkspaceImportConflictKind.NameAndWorkspaceId, preview.ConflictKind);
+        Assert.True(preview.HasConflict);
+        Assert.Equal("Existing", Assert.Single(storage.LoadAllWorkspaces()).Name);
+    }
+
+    [Fact]
+    public void Import_migrates_a_v1_transfer_envelope_before_saving()
+    {
+        using var directory = new TestDirectory();
+        WorkspaceSnapshot workspace = Workspace("Old transfer");
+        workspace.EnsureLayoutVariants();
+        string source = Path.Combine(directory.Path, "old.windowanchor.json");
+        File.WriteAllText(source, JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1,
+            mode = (int)WorkspaceExportMode.PortableRedacted,
+            workspace
+        }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+
+        var service = new WorkspaceTransferService(new StorageService(directory.Path));
+        WorkspaceImportPreview preview = service.PreviewImport(source);
+        WorkspaceSnapshot imported = service.Import(source, expectedContentHash: preview.ContentHash);
+
+        Assert.True(preview.WasMigrated);
+        Assert.Equal(WorkspaceExportMode.PortableRedacted, preview.Mode);
+        Assert.False(preview.Options.IncludeFilesAndFolders);
+        Assert.Equal("Old transfer", imported.Name);
+    }
+
+    [Fact]
+    public void Import_rejects_a_file_changed_after_the_preview_without_mutating_storage()
+    {
+        using var directory = new TestDirectory();
+        var storage = new StorageService(directory.Path);
+        var service = new WorkspaceTransferService(storage);
+        string source = WriteTransfer(directory, Workspace("Reviewed"));
+        WorkspaceImportPreview preview = service.PreviewImport(source);
+        WorkspaceSnapshot tampered = Workspace("Tampered");
+        tampered.EnsureLayoutVariants();
+        File.WriteAllText(source, JsonSerializer.Serialize(
+            new WorkspaceTransferDocument { Mode = WorkspaceExportMode.ExactBackup, Workspace = tampered },
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+
+        InvalidDataException exception = Assert.Throws<InvalidDataException>(() => service.Import(
+            source,
+            WorkspaceImportCollisionPolicy.Clone,
+            preview.ContentHash));
+
+        Assert.Contains("changed after preview", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(storage.LoadAllWorkspaces());
+    }
+
+    [Fact]
+    public void Import_rejects_a_future_transfer_schema_without_mutating_storage()
+    {
+        using var directory = new TestDirectory();
+        var storage = new StorageService(directory.Path);
+        string source = Path.Combine(directory.Path, "future.windowanchor.json");
+        File.WriteAllText(source, "{\"schemaVersion\":999,\"workspace\":{}}");
+
+        Assert.Throws<InvalidDataException>(() => new WorkspaceTransferService(storage).PreviewImport(source));
+        Assert.Empty(storage.LoadAllWorkspaces());
+    }
+
+    [Fact]
+    public void Import_atomic_commit_failure_preserves_existing_workspace_storage()
+    {
+        using var directory = new TestDirectory();
+        string source = WriteTransfer(directory, Workspace("Interrupted"));
+        string destinationDirectory = Path.Combine(directory.Path, "destination");
+        Directory.CreateDirectory(destinationDirectory);
+        File.WriteAllText(Path.Combine(destinationDirectory, ".migrated_v2"), "");
+        var failingStorage = new StorageService(
+            destinationDirectory,
+            new ThrowingAtomicFileWriter());
+
+        Assert.Throws<IOException>(() => new WorkspaceTransferService(failingStorage).Import(source));
+        Assert.Empty(failingStorage.LoadAllWorkspaces());
+    }
+
+    [Fact]
+    public void Explicit_export_options_remove_unselected_metadata_categories()
+    {
+        using var directory = new TestDirectory();
+        var service = new WorkspaceTransferService(new StorageService(directory.Path));
+        string destination = Path.Combine(directory.Path, "minimal.windowanchor.json");
+        WorkspaceSnapshot workspace = Workspace("Minimal");
+        WorkspaceEntry entry = Assert.Single(workspace.Entries);
+        entry.ExecutablePath = @"C:\Users\Alice\private.exe";
+        entry.FilePath = @"C:\Users\Alice\private.txt";
+        entry.LaunchArg = @"C:\Users\Alice\project";
+        entry.BrowserUrl = "https://private.example/secret";
+        entry.Position = new WindowRecord
+        {
+            ExecutablePath = entry.ExecutablePath,
+            ProcessName = entry.ProcessName,
+            ClassName = entry.WindowClassName,
+            BrowserUrl = entry.BrowserUrl,
+            TitleSnippet = "Private title",
+            FolderPath = @"C:\Users\Alice\folder",
+            NormalRight = 800,
+            NormalBottom = 600
+        };
+        workspace.Monitors = [Monitor("private-monitor")];
+        workspace.MonitorFingerprint = "private-fingerprint";
+        workspace.EnsureLayoutVariants();
+
+        service.Export(workspace, new WorkspaceExportOptions
+        {
+            IncludeLayout = false,
+            IncludeApplicationIdentities = false,
+            IncludeFilesAndFolders = false,
+            IncludeBrowserUrls = false,
+            IncludeMachineIdentifiers = false,
+            IncludeLogicalPathAliases = false
+        }, destination);
+
+        string json = File.ReadAllText(destination);
+        Assert.DoesNotContain("C:\\Users\\Alice", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("private.example", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("private-monitor", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("private-fingerprint", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Private title", json, StringComparison.OrdinalIgnoreCase);
+        WorkspaceTransferDocument document = JsonSerializer.Deserialize<WorkspaceTransferDocument>(json,
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase })!;
+        Assert.Equal(WorkspaceTransferDocument.CurrentSchemaVersion, document.SchemaVersion);
+        Assert.False(document.Options.IncludeFilesAndFolders);
+    }
+
+    [Fact]
+    public void Portable_export_without_aliases_removes_alias_references_and_absolute_fallbacks()
+    {
+        using var directory = new TestDirectory();
+        var service = new WorkspaceTransferService(new StorageService(directory.Path));
+        string destination = Path.Combine(directory.Path, "no-alias.windowanchor.json");
+        WorkspaceSnapshot workspace = Workspace("No aliases");
+        WorkspaceEntry entry = Assert.Single(workspace.Entries);
+        entry.ExecutablePath = @"C:\Users\Alice\editor.exe";
+        entry.LogicalExecutablePath = "${TOOLS}\\editor.exe";
+        workspace.EnsureLayoutVariants();
+
+        service.Export(workspace, WorkspaceExportOptions.PortableRedacted() with
+        {
+            IncludeLogicalPathAliases = false
+        }, destination);
+
+        string json = File.ReadAllText(destination);
+        Assert.DoesNotContain("C:\\Users\\Alice", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("${TOOLS}", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Malformed_import_does_not_mutate_storage()
     {
         using var directory = new TestDirectory();

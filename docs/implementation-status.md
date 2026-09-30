@@ -2,7 +2,7 @@
 
 **Audit date:** 2026-09-30
 
-**Automated gate:** 373 passed, 0 failed, 0 skipped in Release
+**Automated gate:** 380 passed, 0 failed, 0 skipped in Release
 
 **Dependency audit:** no known vulnerable direct or transitive NuGet packages from configured sources
 
@@ -20,6 +20,7 @@ work. Automated tests do not replace live Windows application checks.
 | Temporary display recovery (WA-030B) | Synthetic stabilization, return-only triggering, duplicate suppression, fullscreen deferral, and checkpoint gates pass. A physical dock/resolution smoke remains useful release validation. |
 | App adapters | Chromium PWA, dedicated browser, Explorer, Terminal, VS Code, ATLauncher, IObit placement policy, and generic fallback have focused tests. |
 | Restore simulation (WA-046) | Eight versioned, redacted planner fixtures cover topology mapping, matching, DPI, browser/PWA, VS Code, missing resources, and path aliases; corrupt input is rejected before planning. |
+| Local workspace import/export (WA-033) | Settings provides category-controlled exact or portable/redacted export and staged local import previews. Stable-ID/name conflicts always create a copy; transfer v1 and older supported workspace payloads migrate before an atomic save. |
 
 ## External or manual gates
 
@@ -32,9 +33,6 @@ work. Automated tests do not replace live Windows application checks.
   remains open for reporter verification against updated Discord Canary/PTB installs.
 
 ## Partial work kept in scope
-
-- **WA-033:** internal exact and portable/redacted transfer is atomic and bounded, but the user-facing
-  import/export flow, conflict preview, and old transfer-schema migration are incomplete.
 
 Provider/cloud sync groundwork is not a shipped feature and is no longer an active product
 commitment. See [Roadmap.md](../Roadmap.md) for the intentionally narrow active pipeline.

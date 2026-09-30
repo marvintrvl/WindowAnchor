@@ -566,10 +566,11 @@ from being mixed.
 - `LogicalPathAliasResolver` records the most-specific `${ALIAS}` form alongside each local path.
   Restore observes the exact saved path first, then the current device mapping, then existing repair
   behavior; an unavailable mapping never rewrites the workspace.
-- `WorkspaceTransferService` is partial WA-033 groundwork: exact and portable/redacted exports are
-  atomically written, imports are bounded/validated, and stable-ID/name collisions cannot silently
-  overwrite a workspace. It has no user-facing workflow, configurable inclusion preview, or old
-  transfer-schema migration yet.
+- `WorkspaceTransferService` owns local-only WA-033 transfers: category-controlled exact and
+  portable/redacted exports use the atomic writer; staged imports validate size/schema, migrate
+  transfer v1 and supported workspace payloads, preview stable-ID/name collisions, detect a file
+  changed after preview, and always import a separate copy. It never transfers app settings,
+  credentials, cookies, document contents, or native browser-host data.
 - `ISyncProvider` and `FolderSyncProvider` are partial WA-034 transport groundwork. Provider writes
   are atomic and transport-neutral, but staged local migration/validation, manifests, device IDs,
   conflict copies, retries, exclusions, orchestration, and UI are intentionally not claimed.
