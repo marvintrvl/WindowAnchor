@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.7.0.1] - 2026-10-28
+
 ### Added
 - **Complete deterministic restore simulation matrix (WA-046)** — Eight versioned synthetic
   fixtures now cover monitor topology/mapping, mixed DPI, browser/PWA identity, VS Code projects,
@@ -21,6 +23,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Firefox connector published** — The Mozilla-signed
   [WindowAnchor Browser Connector](https://addons.mozilla.org/en-US/firefox/addon/windowanchor-browser-connector/)
   is now available from Firefox Add-ons, and **Set Up Firefox** opens the exact public listing.
+
+### Fixed
+- **Restore no longer closes WindowAnchor (issue #16)** — Wait for the progress window's first
+  render before running the restore, so WPF UI's title bar cannot access a destroyed window handle
+  after a fast restore and unregister the global hotkeys.
 
 ## [1.7.0] - 2026-09-29
 
