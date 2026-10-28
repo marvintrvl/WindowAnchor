@@ -206,9 +206,18 @@ internal static class RestorePlanPreviewWorkflow
         var progressWindow = new RestoreProgressWindow(workspaceName, isSwitch, owner);
         progressWindow.CancelRequested += (_, _) => linkedCancellation.Cancel();
         var progress = new Progress<RestoreProgressReport>(progressWindow.ApplyReport);
+        // WPF UI's TitleBar attaches a ContentRendered handler that requires a live HWND.
+        // A fast restore can otherwise close this window before WPF dispatches that event.
+        var contentRendered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        progressWindow.ContentRendered += (_, _) => contentRendered.TrySetResult();
+        progressWindow.Closed += (_, _) =>
+            contentRendered.TrySetException(new InvalidOperationException(
+                "The restore progress window closed before its content rendered."));
         progressWindow.Show();
         try
         {
+            await contentRendered.Task;
             return await operation(linkedCancellation.Token, progress);
         }
         finally
