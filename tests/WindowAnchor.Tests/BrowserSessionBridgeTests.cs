@@ -1,3 +1,5 @@
+using System.IO;
+using System.IO.Pipes;
 using System.Text.Json;
 using WindowAnchor.Models;
 using WindowAnchor.Services;
@@ -48,15 +50,100 @@ public class BrowserSessionBridgeTests
         Assert.Contains("protocol", result.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Capture_response_reads_the_connectors_camel_case_session_data()
+    {
+        using var response = JsonDocument.Parse("""
+            {"ok":true,"protocolVersion":2,"sessions":[{
+              "browser":"chrome","profileKey":"profile-1","browserWindowId":"42",
+              "activeTitle":"Example","left":120,"width":1000,"state":"maximized",
+              "tabs":[{"url":"https://example.com/","index":1,"active":true,"pinned":true,"groupIndex":2}],
+              "groups":[{"index":2,"title":"Work","color":"blue","collapsed":true}]
+            }]}
+            """);
+
+        BrowserCaptureResult result = BrowserSessionBridge.ParseCaptureResponse(response.RootElement);
+
+        Assert.Equal(BrowserCaptureStatus.Captured, result.Status);
+        BrowserSession session = Assert.Single(result.Sessions);
+        Assert.Equal("chrome", session.Browser);
+        Assert.Equal("profile-1", session.ProfileKey);
+        Assert.Equal("42", session.BrowserWindowId);
+        Assert.Equal("Example", session.ActiveTitle);
+        Assert.Equal(120, session.Left);
+        Assert.Equal(1000, session.Width);
+        Assert.Equal("maximized", session.State);
+        BrowserTab tab = Assert.Single(session.Tabs);
+        Assert.Equal("https://example.com/", tab.Url);
+        Assert.Equal(1, tab.Index);
+        Assert.True(tab.Active);
+        Assert.True(tab.Pinned);
+        Assert.Equal(2, tab.GroupIndex);
+        BrowserTabGroup group = Assert.Single(session.Groups);
+        Assert.Equal(2, group.Index);
+        Assert.Equal("Work", group.Title);
+        Assert.Equal("blue", group.Color);
+        Assert.True(group.Collapsed);
+    }
+
     [Theory]
-    [InlineData("{\"ok\":true,\"protocolVersion\":2}", true)]
+    [InlineData("{\"ok\":true,\"protocolVersion\":2,\"results\":[{\"status\":\"opened\"}]}", true)]
+    [InlineData("{\"ok\":true,\"protocolVersion\":2,\"results\":[{\"status\":\"conflict\"}]}", true)]
+    [InlineData("{\"ok\":true,\"protocolVersion\":2,\"results\":[]}", false)]
+    [InlineData("{\"ok\":true,\"protocolVersion\":2,\"results\":[{\"status\":\"skipped\"}]}", false)]
+    [InlineData("{\"ok\":true,\"protocolVersion\":2,\"results\":[{\"status\":\"profileUnavailable\"}]}", false)]
     [InlineData("{\"ok\":true,\"protocolVersion\":1}", false)]
     [InlineData("{\"ok\":false,\"protocolVersion\":2}", false)]
-    public void Restore_response_requires_the_current_protocol(string json, bool expected)
+    public void Restore_response_requires_a_compatible_result_for_each_session(string json, bool expected)
     {
         using var response = JsonDocument.Parse(json);
 
-        Assert.Equal(expected, BrowserSessionBridge.ParseRestoreResponse(response.RootElement));
+        Assert.Equal(expected, BrowserSessionBridge.ParseRestoreResponse(response.RootElement, 1));
+    }
+
+    [Fact]
+    public async Task Restore_request_sends_session_data_in_the_connectors_camel_case_format()
+    {
+        string pipe = $"WindowAnchor.Tests.{Guid.NewGuid():N}";
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var server = new NamedPipeServerStream(pipe, PipeDirection.InOut, 1,
+            PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        Task listening = server.WaitForConnectionAsync(timeout.Token);
+        Task<JsonDocument> restore = BrowserSessionBridge.SendRestoreRequestAsync(
+            pipe, "test workspace", [new BrowserSession
+            {
+                BrowserSessionId = "session-1",
+                ProfileKey = "profile-1",
+                RestorePolicy = BrowserTabRestorePolicy.OpenDuplicate,
+                Left = 120,
+                State = "maximized",
+                Tabs = [new BrowserTab { Url = "https://example.com/", Pinned = true, GroupIndex = 2 }],
+                Groups = [new BrowserTabGroup { Index = 2, Title = "Work" }]
+            }], timeout.Token);
+
+        await listening;
+        using var reader = new StreamReader(server, leaveOpen: true);
+        using var writer = new StreamWriter(server, leaveOpen: true) { AutoFlush = true };
+        string? line = await reader.ReadLineAsync(timeout.Token);
+        await writer.WriteLineAsync("""{"ok":true,"protocolVersion":2,"results":[{"status":"opened"}]}""");
+        using JsonDocument response = await restore;
+        Assert.True(BrowserSessionBridge.ParseRestoreResponse(response.RootElement, 1));
+
+        using JsonDocument request = JsonDocument.Parse(Assert.IsType<string>(line));
+        Assert.Equal("restore", request.RootElement.GetProperty("type").GetString());
+        JsonElement session = Assert.Single(request.RootElement.GetProperty("sessions").EnumerateArray());
+        Assert.Equal("session-1", session.GetProperty("browserSessionId").GetString());
+        Assert.Equal("profile-1", session.GetProperty("profileKey").GetString());
+        Assert.Equal(1, session.GetProperty("restorePolicy").GetInt32());
+        Assert.Equal(120, session.GetProperty("left").GetInt32());
+        Assert.Equal("maximized", session.GetProperty("state").GetString());
+        JsonElement tab = Assert.Single(session.GetProperty("tabs").EnumerateArray());
+        Assert.Equal("https://example.com/", tab.GetProperty("url").GetString());
+        Assert.True(tab.GetProperty("pinned").GetBoolean());
+        Assert.Equal(2, tab.GetProperty("groupIndex").GetInt32());
+        JsonElement group = Assert.Single(session.GetProperty("groups").EnumerateArray());
+        Assert.Equal(2, group.GetProperty("index").GetInt32());
+        Assert.Equal("Work", group.GetProperty("title").GetString());
     }
 
     [Fact]

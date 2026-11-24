@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.7.0.2] - 2026-11-24
+
+### Fixed
+- **Browser tab capture and restore (issue #19)** — The desktop app now reads and writes the
+  connector's JSON field names, preserving browser profiles, tabs, and tab groups through
+  capture and restore. The browser bridge keeps the pipe open until both stream wrappers finish,
+  and restore reports when the connector could not process a saved session.
+
 ## [1.7.0.1] - 2026-10-28
 
 ### Added
