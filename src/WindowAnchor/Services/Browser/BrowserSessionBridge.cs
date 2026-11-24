@@ -22,6 +22,11 @@ public sealed class BrowserSessionBridge : IBrowserSessionConnector
     private const int ConnectionTimeoutMs = 350;
     // Native hosts apply their own 5-second extension timeout. Leave room for that response.
     private const int ResponseTimeoutMs = 6000;
+    private static readonly JsonSerializerOptions ProtocolJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true
+    };
     private readonly Func<int, BrowserTabRestorePolicy?> _resolveTabConflict;
 
     public BrowserSessionBridge(Func<int, BrowserTabRestorePolicy?>? resolveTabConflict = null) =>
@@ -166,7 +171,7 @@ public sealed class BrowserSessionBridge : IBrowserSessionConnector
                 workspaceName,
                 sessions,
                 ct).ConfigureAwait(false);
-            bool success = ParseRestoreResponse(response.RootElement);
+            bool success = ParseRestoreResponse(response.RootElement, sessions.Count);
             string[] conflictedSessionIds = GetConflictSessionIds(response.RootElement);
             if (success && conflictedSessionIds.Length > 0)
             {
@@ -183,7 +188,7 @@ public sealed class BrowserSessionBridge : IBrowserSessionConnector
                         workspaceName,
                         conflictedSessions.ToList(),
                         ct).ConfigureAwait(false);
-                    success = ParseRestoreResponse(retry.RootElement) &&
+                    success = ParseRestoreResponse(retry.RootElement, conflictedSessions.Length) &&
                         GetConflictSessionIds(retry.RootElement).Length == 0;
                 }
             }
@@ -253,12 +258,17 @@ public sealed class BrowserSessionBridge : IBrowserSessionConnector
         if (!root.TryGetProperty("sessions", out JsonElement sessions))
             return BrowserCaptureResult.Captured([]);
         return BrowserCaptureResult.Captured(
-            JsonSerializer.Deserialize<List<BrowserSession>>(sessions.GetRawText()) ?? []);
+            sessions.Deserialize<List<BrowserSession>>(ProtocolJsonOptions) ?? []);
     }
 
-    internal static bool ParseRestoreResponse(JsonElement root) =>
+    internal static bool ParseRestoreResponse(JsonElement root, int expectedSessionCount) =>
         HasCompatibleProtocolVersion(root) &&
-        root.TryGetProperty("ok", out JsonElement ok) && ok.ValueKind == JsonValueKind.True;
+        root.TryGetProperty("ok", out JsonElement ok) && ok.ValueKind == JsonValueKind.True &&
+        root.TryGetProperty("results", out JsonElement results) && results.ValueKind == JsonValueKind.Array &&
+        results.GetArrayLength() == expectedSessionCount &&
+        results.EnumerateArray().All(result => result.ValueKind == JsonValueKind.Object &&
+            result.TryGetProperty("status", out JsonElement status) && status.ValueKind == JsonValueKind.String &&
+            status.GetString() is "opened" or "reused" or "partiallyReused" or "partiallyOpened" or "conflict");
 
     internal static string[] GetConflictSessionIds(JsonElement root)
     {
@@ -284,7 +294,7 @@ public sealed class BrowserSessionBridge : IBrowserSessionConnector
         version.ValueKind == JsonValueKind.Number &&
         version.TryGetInt32(out int value) && value == ProtocolVersion;
 
-    private static Task<JsonDocument> SendRestoreRequestAsync(
+    internal static Task<JsonDocument> SendRestoreRequestAsync(
         string pipeName,
         string workspaceName,
         List<BrowserSession> sessions,
@@ -323,7 +333,7 @@ public sealed class BrowserSessionBridge : IBrowserSessionConnector
 
     private static async Task<JsonDocument> SendAsync(string pipeName, object request, CancellationToken ct)
     {
-        string json = JsonSerializer.Serialize(request);
+        string json = JsonSerializer.Serialize(request, ProtocolJsonOptions);
         using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
         using var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         connectTimeout.CancelAfter(ConnectionTimeoutMs);
@@ -340,8 +350,8 @@ public sealed class BrowserSessionBridge : IBrowserSessionConnector
         responseTimeout.CancelAfter(ResponseTimeoutMs);
         try
         {
-            using var writer = new StreamWriter(client) { AutoFlush = true };
-            using var reader = new StreamReader(client);
+            using var writer = new StreamWriter(client, leaveOpen: true) { AutoFlush = true };
+            using var reader = new StreamReader(client, leaveOpen: true);
             await writer.WriteLineAsync(json).ConfigureAwait(false);
             string? line = await reader.ReadLineAsync(responseTimeout.Token).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(line)) throw new IOException("Browser host returned no response.");
